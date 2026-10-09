@@ -7,9 +7,11 @@ use crate::test_util::{env_lock, EnvGuard};
 use std::fmt::Debug;
 use std::sync::MutexGuard;
 
+mod add;
 mod and;
 mod cast;
 mod equal;
+mod exp;
 mod gt;
 mod gte;
 mod inequal;
@@ -17,6 +19,7 @@ mod lt;
 mod lte;
 mod not;
 mod or;
+mod subtract;
 mod xor;
 
 /// The C++ `UnitTest` (test/test.cpp), recording instead of printing.
@@ -42,6 +45,16 @@ impl UnitTest {
     #[allow(dead_code)] // Used by the operator suites.
     pub(super) fn notok(&mut self, expression: bool, name: &str) {
         self.ok(!expression, name);
+    }
+
+    /// C++ `UnitTest::pass`.
+    pub(super) fn pass(&mut self, name: &str) {
+        self.ok(true, name);
+    }
+
+    /// C++ `UnitTest::fail`.
+    pub(super) fn fail(&mut self, name: &str) {
+        self.ok(false, name);
     }
 
     /// C++ `UnitTest::is` (exact comparison overloads).
@@ -445,4 +458,68 @@ fn operators_propagate_cast_errors() {
     let same = Variant::from_string("13.02.2009");
     assert!(same.op_lt(&date).unwrap());
     assert!(date.op_gt(&same).unwrap());
+}
+
+#[test]
+fn arithmetic_details() {
+    let _u = Upstream::setup(Some("UTC"));
+    let err = |r: Result<Variant>| r.unwrap_err().to_string();
+    let b = Variant::from_bool(true);
+    let i = Variant::from_int(2);
+    let r = Variant::from_real(1.5);
+    let s = Variant::from_string("x");
+    let date = Variant::from_time(100, Type::Date).unwrap();
+    let dur = Variant::from_time(10, Type::Duration).unwrap();
+
+    // Exact error texts.
+    assert_eq!(err(b.op_exp(&i)), "Cannot exponentiate Booleans");
+    assert_eq!(err(i.op_exp(&r)), "Cannot exponentiate to a non-integer power");
+    assert_eq!(err(r.op_exp(&s)), "Cannot exponentiate strings");
+    assert_eq!(err(i.op_exp(&date)), "Cannot exponentiate dates");
+    assert_eq!(err(dur.op_exp(&i)), "Cannot exponentiate durations");
+    assert_eq!(err(b.op_sub(&i)), "Cannot subtract from a Boolean value");
+    assert_eq!(err(i.op_sub(&s)), "Cannot subtract strings");
+    assert_eq!(err(dur.op_sub(&date)), "Cannot subtract a date");
+    assert_eq!(err(b.op_add(&b)), "Cannot add two Boolean values");
+    assert_eq!(err(date.op_add(&date)), "Cannot add two date values");
+
+    // Integer power goes through (int) pow (...): truncation, negative
+    // exponents, and INT_MIN for an out-of-range result.
+    assert_eq!(Variant::from_int(2).op_exp(&Variant::from_int(-1)).unwrap().get_integer(), 0);
+    assert_eq!(Variant::from_int(-3).op_exp(&Variant::from_int(3)).unwrap().get_integer(), -27);
+    assert_eq!(Variant::from_int(10).op_exp(&Variant::from_int(10)).unwrap().get_integer(), i64::from(i32::MIN));
+
+    // Signed overflow wraps.
+    let mut max = Variant::from_string("9223372036854775807");
+    max.cast(Type::Integer).unwrap();
+    assert_eq!(max.op_add(&Variant::from_int(1)).unwrap().get_integer(), i64::MIN);
+
+    // Real + date: (unsigned)(int) _real widened to time_t.
+    let v = Variant::from_real(-1.5).op_add(&date).unwrap();
+    assert_eq!(v.type_(), Type::Date);
+    assert_eq!(v.get_date(), 4_294_967_295 + 100);
+    let v = Variant::from_real(-1.5).op_add(&dur).unwrap();
+    assert_eq!(v.type_(), Type::Duration);
+    assert_eq!(v.get_duration(), 4_294_967_295 + 10);
+
+    // Duration + date and date - date.
+    let v = dur.op_add(&date).unwrap();
+    assert_eq!((v.type_(), v.get_date()), (Type::Date, 110));
+    let v = date.op_sub(&Variant::from_time(40, Type::Date).unwrap()).unwrap();
+    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 60));
+
+    // += dequotes the right operand only; -= dequotes neither.
+    assert_eq!(Variant::from_string("'a'").op_add(&Variant::from_string("'b'")).unwrap().get_string(), "'a'b");
+    assert_eq!(Variant::from_string("'a'").op_sub(&Variant::from_string("'b'")).unwrap().get_string(), "'a'-'b'");
+    assert_eq!(Variant::from_int(1).op_add(&Variant::from_string("\"z\"")).unwrap().get_string(), "1z");
+
+    // Compound forms modify in place; the source is kept.
+    let mut v = Variant::from_int(5);
+    v.set_source("due");
+    v.op_sub_assign(&Variant::from_int(7)).unwrap();
+    assert_eq!((v.get_integer(), v.source()), (-2, "due"));
+    v.op_exp_assign(&Variant::from_int(2)).unwrap();
+    assert_eq!(v.get_integer(), 4);
+    v.op_add_assign(&Variant::from_real(0.5)).unwrap();
+    assert_eq!((v.type_(), v.get_real()), (Type::Real, 4.5));
 }

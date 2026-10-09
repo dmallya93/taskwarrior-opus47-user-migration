@@ -34,6 +34,11 @@
 //!   The C++ returns `bool`; the comparisons return `Result<bool>` because
 //!   their string to date casts can throw. They are not `PartialEq` /
 //!   `PartialOrd` impls, since those cannot be fallible.
+//! * Arithmetic: `operator^=` / `^` -> `op_exp_assign` / `op_exp`,
+//!   `operator-=` / `-` -> `op_sub_assign` / `op_sub`, `operator+=` / `+` ->
+//!   `op_add_assign` / `op_add`. The compound forms return `Result<()>`
+//!   (C++ returns `*this`), the binary forms `Result<Variant>`; they are not
+//!   `std::ops` impls because the C++ throws.
 //! * `Task::customOrder` (read by the ordering operators) is defined here
 //!   until the Task port, see [`Task::custom_order`].
 //! * The `Task&` parameters of `operator_match` / `operator_hastag` are
@@ -1157,7 +1162,318 @@ impl Variant {
         !left._bool
     }
 
-    // `operator^=` .. `operator%` (Variant.cpp lines 1183-1860) come here.
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant& Variant::operator^= (const Variant& other)`.
+    ///
+    /// Integer ^ integer is `(int) pow ((double) _integer, (double)
+    /// other._integer)`, real ^ integer is `pow (_real, (double)
+    /// other._integer)`; every other combination throws.
+    ///
+    /// Deviation: the C++ `(int)` conversion of an out-of-range or NaN `pow`
+    /// result is undefined; [`c_double_to_int`] reproduces the x86-64
+    /// `INT_MIN` result.
+    ///
+    /// # Errors
+    /// `Cannot exponentiate Booleans`, `Cannot exponentiate to a non-integer
+    /// power`, `Cannot exponentiate strings`, `Cannot exponentiate dates` or
+    /// `Cannot exponentiate durations`, per the operand types.
+    pub fn op_exp_assign(&mut self, other: &Variant) -> Result<()> {
+        match self._type {
+            Type::Boolean => return Err(TwError::Message(STRING_VARIANT_EXP_BOOL.to_string())),
+
+            Type::Integer => match other._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_EXP_BOOL.to_string())),
+                Type::Integer => {
+                    self._integer = i64::from(c_double_to_int((self._integer as f64).powf(other._integer as f64)));
+                }
+                Type::Real => return Err(TwError::Message(STRING_VARIANT_EXP_NON_INT.to_string())),
+                Type::String => return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string())),
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_EXP_DATE.to_string())),
+                Type::Duration => return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string())),
+            },
+
+            Type::Real => match other._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_EXP_BOOL.to_string())),
+                Type::Integer => self._real = self._real.powf(other._integer as f64),
+                Type::Real => return Err(TwError::Message(STRING_VARIANT_EXP_NON_INT.to_string())),
+                Type::String => return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string())),
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_EXP_DATE.to_string())),
+                Type::Duration => return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string())),
+            },
+
+            Type::String => return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string())),
+
+            Type::Date => return Err(TwError::Message(STRING_VARIANT_EXP_DATE.to_string())),
+
+            Type::Duration => return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string())),
+        }
+
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant Variant::operator^ (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_exp_assign`].
+    pub fn op_exp(&self, other: &Variant) -> Result<Variant> {
+        let mut left = self.clone();
+        left.op_exp_assign(other)?;
+        Ok(left)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant& Variant::operator-= (const Variant& other)`.
+    ///
+    /// As in C++, neither operand is dequoted, and string - string
+    /// concatenates as `left + '-' + right`.
+    ///
+    /// Deviation: signed `long long` / `time_t` overflow is undefined in C++;
+    /// the integer, date and duration subtractions wrap (two's complement,
+    /// what the reference binary does). The C++ `(int) right._real` uses
+    /// [`c_double_to_int`] (x86-64 `INT_MIN` for out-of-range / NaN).
+    ///
+    /// # Errors
+    /// `Cannot subtract from a Boolean value`, `Cannot subtract strings` or
+    /// `Cannot subtract a date`, per the operand types.
+    pub fn op_sub_assign(&mut self, other: &Variant) -> Result<()> {
+        let mut right = other.clone();
+
+        match self._type {
+            Type::Boolean => return Err(TwError::Message(STRING_VARIANT_SUB_BOOL.to_string())),
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    self._integer = self._integer.wrapping_sub(right._integer);
+                }
+                Type::Integer => self._integer = self._integer.wrapping_sub(right._integer),
+                Type::Real => {
+                    self.cast(Type::Real)?;
+                    self._real -= right._real;
+                }
+                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::Date => {
+                    self.cast(Type::Date)?;
+                    self._date = self._date.wrapping_sub(right._date);
+                }
+                Type::Duration => {
+                    self.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_sub(right._duration);
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+
+                Type::Boolean | Type::Integer | Type::Real | Type::Date | Type::Duration => {
+                    right.cast(Type::Real)?;
+                    self._real -= right._real;
+                }
+            },
+
+            Type::String => match right._type {
+                Type::String => {
+                    self.cast(Type::String)?;
+                    self._string.push('-');
+                    self._string.push_str(&right._string);
+                }
+                Type::Boolean | Type::Integer | Type::Real | Type::Date | Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string()));
+                }
+            },
+
+            Type::Date => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    self._date = self._date.wrapping_sub(right._integer);
+                }
+                Type::Integer => self._date = self._date.wrapping_sub(right._integer),
+                Type::Real => self._date = self._date.wrapping_sub(i64::from(c_double_to_int(right._real))),
+                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::Date => {
+                    self._type = Type::Duration;
+                    self._duration = self._date.wrapping_sub(right._date);
+                }
+                Type::Duration => self._date = self._date.wrapping_sub(right._duration),
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    self._duration = self._duration.wrapping_sub(right._integer);
+                }
+                Type::Integer => self._duration = self._duration.wrapping_sub(right._integer),
+                Type::Real => self._duration = self._duration.wrapping_sub(i64::from(c_double_to_int(right._real))),
+                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_SUB_DATE.to_string())),
+                Type::Duration => self._duration = self._duration.wrapping_sub(right._duration),
+            },
+        }
+
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant Variant::operator- (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_sub_assign`].
+    pub fn op_sub(&self, other: &Variant) -> Result<Variant> {
+        let mut left = self.clone();
+        left.op_sub_assign(other)?;
+        Ok(left)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant& Variant::operator+= (const Variant& other)`.
+    ///
+    /// As in C++, only the right operand is dequoted. A string on either side
+    /// concatenates (the non-string left side is cast to string first; a
+    /// string left side appends `(std::string) right`). Real + date / duration
+    /// is `(unsigned)(int) _real + right._date` (resp. `_duration`): the
+    /// 32-bit unsigned value is widened to `time_t`, so a negative real adds
+    /// `2^32 + (int) _real`. Duration + date is `_date += right._date +
+    /// _duration`, i.e. it also adds the left operand's (normally 0) `_date`.
+    ///
+    /// Deviation: signed `long long` / `time_t` overflow is undefined in C++;
+    /// the integer, date and duration additions wrap (two's complement, what
+    /// the reference binary does). The C++ `(int) _real` uses
+    /// [`c_double_to_int`] (x86-64 `INT_MIN` for out-of-range / NaN).
+    ///
+    /// # Errors
+    /// `Cannot add two Boolean values` or `Cannot add two date values`.
+    pub fn op_add_assign(&mut self, other: &Variant) -> Result<()> {
+        let mut right = other.clone();
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match self._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_ADD_BOOL.to_string())),
+                Type::Integer => {
+                    self.cast(Type::Integer)?;
+                    self._integer = self._integer.wrapping_add(right._integer);
+                }
+                Type::Real => {
+                    self.cast(Type::Real)?;
+                    self._real += right._real;
+                }
+                Type::String => {
+                    self.cast(Type::String)?;
+                    self._string.push_str(&right._string);
+                }
+                Type::Date => {
+                    self.cast(Type::Date)?;
+                    self._date = self._date.wrapping_add(right._date);
+                }
+                Type::Duration => {
+                    self.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_add(right._duration);
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    self._integer = self._integer.wrapping_add(right._integer);
+                }
+                Type::Integer => self._integer = self._integer.wrapping_add(right._integer),
+                Type::Real => {
+                    self.cast(Type::Real)?;
+                    self._real += right._real;
+                }
+                Type::String => {
+                    self.cast(Type::String)?;
+                    self._string.push_str(&right._string);
+                }
+                Type::Date => {
+                    self.cast(Type::Date)?;
+                    self._date = self._date.wrapping_add(right._date);
+                }
+                Type::Duration => {
+                    self.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_add(right._duration);
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::Real)?;
+                    self._real += right._real;
+                }
+
+                Type::String => {
+                    self.cast(Type::String)?;
+                    self._string.push_str(&right._string);
+                }
+
+                Type::Date => {
+                    self._type = Type::Date;
+                    // (unsigned)(int) _real, widened to time_t.
+                    self._date = i64::from(c_double_to_int(self._real) as u32).wrapping_add(right._date);
+                }
+
+                Type::Duration => {
+                    self._type = Type::Duration;
+                    // (unsigned)(int) _real, widened to time_t.
+                    self._duration = i64::from(c_double_to_int(self._real) as u32).wrapping_add(right._duration);
+                }
+            },
+
+            Type::String => self._string.push_str(&right.to_string()),
+
+            Type::Date => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Date)?;
+                    self._date = self._date.wrapping_add(right._date);
+                }
+                Type::Integer => self._date = self._date.wrapping_add(right._integer),
+                Type::Real => self._date = self._date.wrapping_add(i64::from(c_double_to_int(right._real))),
+                Type::String => {
+                    self.cast(Type::String)?;
+                    self._string.push_str(&right._string);
+                }
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_ADD_DATE.to_string())),
+                Type::Duration => self._date = self._date.wrapping_add(right._duration),
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_add(right._duration);
+                }
+                Type::Integer => self._duration = self._duration.wrapping_add(right._integer),
+                Type::Real => self._duration = self._duration.wrapping_add(i64::from(c_double_to_int(right._real))),
+                Type::String => {
+                    self.cast(Type::String)?;
+                    self._string.push_str(&right._string);
+                }
+                Type::Date => {
+                    self._type = Type::Date;
+                    self._date = self._date.wrapping_add(right._date.wrapping_add(self._duration));
+                }
+                Type::Duration => self._duration = self._duration.wrapping_add(right._duration),
+            },
+        }
+
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant Variant::operator+ (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_add_assign`].
+    pub fn op_add(&self, other: &Variant) -> Result<Variant> {
+        let mut left = self.clone();
+        left.op_add_assign(other)?;
+        Ok(left)
+    }
+
+    // `operator*=` .. `operator%` (Variant.cpp lines 1526-1860) come here.
 
     ////////////////////////////////////////////////////////////////////////////
     /// `cast (new_type)` where `new_type` is not [`Type::Date`]: only the
