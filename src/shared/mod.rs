@@ -2,6 +2,8 @@
 //!
 //! One module per libshared source file.
 
+// Mirrors libshared's `shared.cpp`; the name intentionally matches its parent.
+#[allow(clippy::module_inception)]
 pub mod shared;
 pub mod format;
 pub mod utf8;
