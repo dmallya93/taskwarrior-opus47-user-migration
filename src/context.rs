@@ -37,7 +37,8 @@
 //! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics
 //!   (including the `Variant::dateFormat` half of `Lexer::dateFormat =
 //!   Variant::dateFormat`),
-//!   `Eval::getOperators` / `getBinaryOperators` entities, and the
+//!   `Eval::getOperators` / `getBinaryOperators` entities (done, via
+//!   [`Eval::get_operators`] / [`Eval::get_binary_operators`]), and the
 //!   `colorize*` functions (identity until the colour rules exist; libshared
 //!   `Color` and `Table` themselves are already ported).
 //! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
@@ -72,6 +73,7 @@ use crate::cli2::{self, Cli2};
 use crate::columns::column::Column;
 use crate::commands::command::{self, Registry};
 use crate::error::{Result, TwError};
+use crate::eval::Eval;
 use crate::hooks::Hooks;
 use crate::lexer::Lexer;
 use crate::recur;
@@ -840,8 +842,13 @@ impl Context {
             self.cli2.entity("modifier", modifier_name);
         }
 
-        // Milestone 3 hook: `Eval::getOperators ()` -> "operator" entities and
-        // `Eval::getBinaryOperators ()` -> "binary_operator" entities.
+        for op in Eval::get_operators() {
+            self.cli2.entity("operator", &op);
+        }
+
+        for op in Eval::get_binary_operators() {
+            self.cli2.entity("binary_operator", &op);
+        }
 
         ////////////////////////////////////////////////////////////////////////
         //
@@ -2280,6 +2287,21 @@ mod tests {
         let (status, _, stderr) = init(&mut context, &["task", "alpha"]);
         assert_eq!(status, 2);
         assert_eq!(stderr, "Custom report 'alpha' conflicts with built-in task command.\n");
+    }
+
+    #[test]
+    fn initialize_registers_operator_entities() {
+        let f = fixture();
+        write(&format!("{}/.taskrc", f.home), "");
+        let mut context = context();
+        let (status, _, _) = init(&mut context, &["task", "alpha"]);
+        assert_eq!(status, 0);
+        assert_eq!(context.cli2.entities["operator"], Eval::get_operators());
+        assert_eq!(context.cli2.entities["operator"].len(), 26);
+        assert_eq!(context.cli2.entities["binary_operator"], Eval::get_binary_operators());
+        assert_eq!(context.cli2.entities["binary_operator"].len(), 21);
+        assert!(context.cli2.entities["binary_operator"].iter().any(|o| o == "_hastag_"));
+        assert!(!context.cli2.entities["binary_operator"].iter().any(|o| o == "_neg_"));
     }
 
     #[test]
