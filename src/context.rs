@@ -33,14 +33,16 @@
 //!   `staticInitialization`; `Datetime` formatting is done with libc here.
 //! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics,
 //!   `Eval::getOperators` / `getBinaryOperators` entities, and the
-//!   `colorize*` functions (identity until `Color` exists).
+//!   `colorize*` functions (identity until the colour rules exist; libshared
+//!   `Color` and `Table` themselves are already ported).
 //! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
 //!   coefficients, `TDB2::open_replica`, `TDB2::gc` ([`crate::tdb2::Tdb2`]).
 //! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the full `CLI2` parser
 //!   ([`crate::cli2::Cli2`] is a bootstrap that only selects the command),
 //!   `prepareFilter`, `dump`.
 //! - **Milestone 6** (reports and columns): `Column::factory`, column
-//!   attribute entities and types, `initializeColorRules`.
+//!   attribute entities and types, `initializeColorRules` (only its
+//!   `color ()` short-circuit is ported, in [`crate::rules`]).
 //! - **Milestone 7** (mutations, hooks, recurrence, undo, sync):
 //!   `Hooks::initialize` / `onLaunch` / `onExit` ([`crate::hooks::Hooks`]),
 //!   `handleUntil` / `handleRecurrence` ([`crate::recur`]).
@@ -67,6 +69,7 @@ use crate::commands::command::{self, Registry};
 use crate::error::{Result, TwError};
 use crate::hooks::Hooks;
 use crate::recur;
+use crate::rules;
 use crate::shared::configuration::Configuration;
 use crate::shared::format::{format, printf_f};
 use crate::shared::fs::{Directory, File, Path};
@@ -74,7 +77,7 @@ use crate::shared::shared::{close_enough, confirm, split};
 use crate::shared::timer::Timer;
 use crate::task::Task;
 use crate::tdb2::Tdb2;
-use crate::version::{Version, PACKAGE_STRING};
+use crate::version::{Version, COMMIT, PACKAGE_STRING};
 
 /// C++ `std::map<std::string, Column*>` as held by `Context::columns`.
 pub type ColumnRegistry = BTreeMap<String, Rc<dyn Column>>;
@@ -446,9 +449,9 @@ pub const MODIFIER_NAMES: [&str; 22] = [
     "startswith", "left", "endswith", "right", "word", "noword",
 ];
 
-/// The C++ `COMMIT` macro (`HAVE_COMMIT`), or `-` when the build has none.
-/// Set the `TASK_COMMIT` environment variable at build time to embed one.
-const COMMIT: &str = match option_env!("TASK_COMMIT") {
+/// The commit field of the `rc.debug` Perf line: C++ `COMMIT` with
+/// `HAVE_COMMIT`, otherwise `-`.
+const PERF_COMMIT: &str = match COMMIT {
     Some(commit) => commit,
     None => "-",
 };
@@ -511,7 +514,7 @@ pub fn stdout_is_tty() -> bool {
 }
 
 /// The current time as a broken-down `struct tm`, local or UTC.
-fn now_tm(local: bool) -> libc::tm {
+pub(crate) fn now_tm(local: bool) -> libc::tm {
     // SAFETY: time(NULL) cannot fail; localtime_r/gmtime_r fill `tm` from a
     // valid time_t, and an all-zero tm is a valid initial value.
     unsafe {
@@ -903,7 +906,8 @@ impl Context {
         //
         ////////////////////////////////////////////////////////////////////////
 
-        // Milestone 6 hook: `initializeColorRules ()`.
+        // Milestone 6 hook: only the `color ()` short-circuit is ported.
+        rules::initialize_color_rules(self);
         self.static_initialization()?;
         self.propagate_debug();
         self.load_aliases();
@@ -1105,7 +1109,7 @@ impl Context {
             - self.time_render_us
             - self.time_hooks_us;
         let s = format!(
-            "Perf {PACKAGE_STRING} {COMMIT} {} init:{} load:{} gc:{} filter:{} commit:{} sort:{} render:{} hooks:{} other:{} total:{}\n",
+            "Perf {PACKAGE_STRING} {PERF_COMMIT} {} init:{} load:{} gc:{} filter:{} commit:{} sort:{} render:{} hooks:{} other:{} total:{}\n",
             now_iso(),
             self.time_init_us,
             self.time_load_us,
@@ -2276,7 +2280,7 @@ mod tests {
         assert!(stderr.contains("Parse Tree (before command-specif\u{456}c processing)"));
         let perf = lines.iter().find(|l| l.starts_with("Perf task 3.5.0 ")).expect(&stderr);
         let fields: Vec<&str> = perf.split(' ').collect();
-        assert_eq!(fields[3], COMMIT);
+        assert_eq!(fields[3], PERF_COMMIT);
         assert_eq!(fields[4].len(), 16);
         let names: Vec<&str> = fields[5..].iter().map(|f| f.split(':').next().unwrap()).collect();
         assert_eq!(

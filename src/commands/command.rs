@@ -787,9 +787,9 @@ mod tests {
         ("waiting", "Waiting (hidden) tasks"),
     ];
 
-    /// Commands whose `execute` has been ported (task #10 adds `version`,
+    /// Commands whose `execute` has been ported (milestone 1: `version`,
     /// `_version` and `_show`); every other one must still be a stub.
-    const PORTED: [&str; 0] = [];
+    const PORTED: [&str; 3] = ["_show", "_version", "version"];
 
     fn default_config() -> Configuration {
         let mut config = Configuration::new();
@@ -976,5 +976,19 @@ mod tests {
             stubs += 1;
         }
         assert_eq!(stubs, all.len() - PORTED.len());
+    }
+
+    #[test]
+    fn ported_commands_execute() {
+        let mut all = Registry::new();
+        factory(&mut all, &default_config()).unwrap();
+        let mut context = Context::new();
+        context.config = default_config();
+        for keyword in PORTED {
+            let mut output = String::new();
+            let rc = all[keyword].execute(&mut context, &mut output).unwrap();
+            assert_eq!(rc, 0, "{keyword}");
+            assert!(output.ends_with('\n') && output.len() > 1, "{keyword}: {output:?}");
+        }
     }
 }

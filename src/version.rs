@@ -20,6 +20,16 @@ pub const PACKAGE_STRING: &str = "task 3.5.0";
 /// CMake `HOMEPAGE_URL` of the `project()` declaration.
 pub const PACKAGE_URL: &str = "https://taskwarrior.org/";
 
+/// The `COMMIT` macro of the generated `commit.h`: `Some` exactly when CMake
+/// would define `HAVE_COMMIT`.
+///
+/// `build.rs` mirrors `CMakeLists.txt`: when `.git/index` exists in the
+/// package directory it runs `git log -1 --pretty=format:%h
+/// --no-show-signature` there and exports the output as `TASK_COMMIT`
+/// (possibly empty, as in CMake, if git fails). Otherwise a `TASK_COMMIT`
+/// set in the build environment is used, if any (e.g. by packagers).
+pub const COMMIT: Option<&str> = option_env!("TASK_COMMIT");
+
 /// A Taskwarrior version of the form `major.minor.patch`.
 ///
 /// An invalid version (C++ default constructor, or a failed parse) has all

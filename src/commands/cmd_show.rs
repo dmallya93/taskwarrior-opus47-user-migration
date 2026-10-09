@@ -1,12 +1,11 @@
 //! Rust translation of `src/commands/CmdShow.cpp`.
 //!
-//! Not yet ported: this module is filled in by milestone 1 (foundation).
-//!
-//! Milestone 1 ports `_show` (raw config output); `show` is completed by milestone 8.
+//! Milestone 1 ports `_show` (raw config output); `show` is still a stub,
+//! completed by milestone 8.
 //!
 //! Each struct below is one C++ class from `CmdShow.cpp`, carrying the exact
-//! metadata of its C++ constructor; `execute` is a stub returning
-//! [`TwError::NotImplemented`] until the port lands (foundation DD4).
+//! metadata of its C++ constructor; `CmdShow::execute` is a stub returning
+//! [`TwError::NotImplemented`] until its port lands (foundation DD4).
 
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
@@ -92,8 +91,48 @@ impl Command for CmdShowRaw {
         &self.meta
     }
 
-    /// C++ `CmdShowRaw::execute`: not yet implemented; ported by foundation task #10 (milestone 1).
-    fn execute(&self, _context: &mut Context, _output: &mut String) -> Result<i32> {
-        Err(TwError::NotImplemented(self.meta.keyword.clone()))
+    /// C++ `CmdShowRaw::execute`: every setting as `name=value`, sorted by
+    /// name.
+    fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
+        // Get all the settings and sort alphabetically by name.
+        let mut all = context.config.all();
+        all.sort();
+
+        // Display them all.
+        let mut out = String::new();
+        for i in &all {
+            out.push_str(i);
+            out.push('=');
+            out.push_str(&context.config.get(i));
+            out.push('\n');
+        }
+
+        *output = out;
+        Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn show_raw_sorted() {
+        let mut context = Context::new();
+        for (key, value) in [("zeta", "last"), ("alpha", "1"), ("Beta", ""), ("a.b", "x=y")] {
+            context.config.set(key, value);
+        }
+        let mut output = String::new();
+        assert_eq!(CmdShowRaw::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(output, "Beta=\na.b=x=y\nalpha=1\nzeta=last\n");
+    }
+
+    #[test]
+    fn show_raw_empty() {
+        let mut context = Context::new();
+        context.config = crate::shared::configuration::Configuration::new();
+        let mut output = String::from("stale");
+        CmdShowRaw::new().execute(&mut context, &mut output).unwrap();
+        assert_eq!(output, "");
     }
 }
