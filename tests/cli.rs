@@ -583,3 +583,70 @@ fn completion_config_lists_sorted_names() {
     assert!(names.contains(&"data.location".to_string()));
     assert_eq!(names.len(), show(&config_task(&env, &["_show"], "")).len());
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdCalc.cpp and calc.cpp
+
+#[test]
+fn task_calc() {
+    let env = Env::new("verbose=nothing\n");
+    // Bug 1254: no crash multiplying zero and negative numbers.
+    let output = env.task(&["calc", "0*-1"]);
+    assert_eq!((stdout(&output).as_str(), stderr(&output).as_str()), ("0\n", ""));
+    assert_eq!(output.status.code(), Some(0));
+
+    // Bare numbers are not durations (Context::staticInitialization).
+    let output = env.task(&["calc", "100", "*", "2"]);
+    assert_eq!(stdout(&output), "200\n");
+
+    let output = env.task(&["rc.expressions=postfix", "calc", "12 3600 * 34 60 * 56 + +"]);
+    assert_eq!(stdout(&output), "45296\n");
+
+    // Eval debug output goes to the Context debug sink (stderr).
+    let output = env.task(&["rc.debug=1", "calc", "2- -3"]);
+    assert_eq!(stdout(&output), "5\n");
+    assert!(stderr(&output).contains("Eval _neg_ ↓'3' → ↑'-3'\n"), "{}", stderr(&output));
+
+    // Evaluation errors are C++ `std::string` throws, caught by Context::run.
+    let output = env.task(&["calc", "1", "+"]);
+    assert_eq!(
+        (stdout(&output).as_str(), stderr(&output).as_str()),
+        ("", "The expression could not be evaluated.\n")
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+fn calc(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_calc")).args(args).output().unwrap()
+}
+
+#[test]
+fn calc_binary() {
+    let output = calc(&["12 * 3600 + 34 * 60 + 56"]);
+    assert_eq!((stdout(&output).as_str(), stderr(&output).as_str()), ("45296\n", ""));
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = calc(&["100*2"]);
+    assert_eq!(stdout(&output), "200\n");
+
+    let output = calc(&["--debug", "--postfix", "12 3600 * 34 60 * 56 + +"]);
+    let out = stdout(&output);
+    assert!(out.contains("\nEval literal number ↑'3600'\n"), "{out}");
+    assert!(out.ends_with("\n45296\n"), "{out}");
+
+    let output = calc(&["--debug", "15min"]);
+    assert!(stdout(&output).ends_with("Eval literal duration ↑'PT15M'\nPT15M\n"), "{}", stdout(&output));
+
+    let output = calc(&["--help"]);
+    let usage = format!("\nUsage: {} [options] '<expression>'\n\nOptions:\n", env!("CARGO_BIN_EXE_calc"));
+    assert!(stdout(&output).starts_with(&usage), "{}", stdout(&output));
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = calc(&["--version"]);
+    assert!(stdout(&output).starts_with("\ncalc 3.5.0 built for "), "{}", stdout(&output));
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = calc(&[]);
+    assert_eq!((stdout(&output).as_str(), stderr(&output).as_str()), ("", "No expression to evaluate.\n"));
+    assert_eq!(output.status.code(), Some(255));
+}
