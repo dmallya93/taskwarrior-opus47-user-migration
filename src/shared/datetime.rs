@@ -436,18 +436,14 @@ fn skip_format_byte(pig: &mut Pig, b: u8) -> bool {
 
 // -----------------------------------------------------------------------------
 // The grammar productions and named-date initializers (Datetime.cpp lines
-// 235-2927), in C++ order. `parse_named` and the `initialize*` bodies are
-// ported by the follow-up task; until then each returns `false`. Remove the
-// `unused_variables, dead_code` allow once every body is filled in.
-// The range checks and nested ifs are written as in C++ for line-by-line
-// review.
+// 235-2927), in C++ order. The range checks and nested ifs are written as in
+// C++ for line-by-line review.
 #[allow(
-    unused_variables,
-    dead_code,
     clippy::manual_range_contains,
     clippy::collapsible_if,
     clippy::collapsible_else_if,
-    clippy::nonminimal_bool
+    clippy::nonminimal_bool,
+    clippy::needless_range_loop
 )]
 impl Datetime {
     /// C++ `Datetime::parse_formatted` (Datetime.cpp line 235): parses
@@ -754,9 +750,86 @@ impl Datetime {
         true
     }
 
-    /// C++ `Datetime::parse_named` (Datetime.cpp line 611).
+    /// C++ `Datetime::parse_named` (Datetime.cpp line 611): the named dates
+    /// (`now`, `today`, `sow`, `eoq`, `easter`, `8am`, ...), tried in the C++
+    /// order.
     fn parse_named(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        // Experimental handling of date phrases, such as "first monday in march".
+        // Note that this requires that phrases are delimited by EOS or WS.
+        let mut token = String::new();
+        let mut tokens: Vec<String> = Vec::new();
+        while pig.get_until_ws(&mut token) {
+            tokens.push(token.clone());
+            if !pig.skip_ws() {
+                break;
+            }
+        }
+
+        // This group contains "1st monday ..." which must be processed before
+        // initialize_ordinal below.
+        // (Commented out upstream:)
+        // if self.initialize_nth_day_in_month(&tokens) {
+        //     return true;
+        // }
+
+        // Restoration necessary because of the tokenization.
+        pig.restore_to(checkpoint);
+
+        if self.initialize_now(pig)
+            || self.initialize_yesterday(pig)
+            || self.initialize_today(pig)
+            || self.initialize_tomorrow(pig)
+            || self.initialize_ordinal(pig)
+            || self.initialize_day_name(pig)
+            || self.initialize_month_name(pig)
+            || self.initialize_later(pig)
+            || self.initialize_sopd(pig)
+            || self.initialize_sod(pig)
+            || self.initialize_sond(pig)
+            || self.initialize_eopd(pig)
+            || self.initialize_eod(pig)
+            || self.initialize_eond(pig)
+            || self.initialize_sopw(pig)
+            || self.initialize_sow(pig)
+            || self.initialize_sonw(pig)
+            || self.initialize_eopw(pig)
+            || self.initialize_eow(pig)
+            || self.initialize_eonw(pig)
+            || self.initialize_sopww(pig) // Must appear after sopw
+            || self.initialize_sonww(pig) // Must appear after sonw
+            || self.initialize_soww(pig) // Must appear after sow
+            || self.initialize_eopww(pig) // Must appear after eopw
+            || self.initialize_eonww(pig) // Must appear after eonw
+            || self.initialize_eoww(pig) // Must appear after eow
+            || self.initialize_sopm(pig)
+            || self.initialize_som(pig)
+            || self.initialize_sonm(pig)
+            || self.initialize_eopm(pig)
+            || self.initialize_eom(pig)
+            || self.initialize_eonm(pig)
+            || self.initialize_sopq(pig)
+            || self.initialize_soq(pig)
+            || self.initialize_sonq(pig)
+            || self.initialize_eopq(pig)
+            || self.initialize_eoq(pig)
+            || self.initialize_eonq(pig)
+            || self.initialize_sopy(pig)
+            || self.initialize_soy(pig)
+            || self.initialize_sony(pig)
+            || self.initialize_eopy(pig)
+            || self.initialize_eoy(pig)
+            || self.initialize_eony(pig)
+            || self.initialize_easter(pig)
+            || self.initialize_midsommar(pig)
+            || self.initialize_midsommarafton(pig)
+            || self.initialize_informal_time(pig)
+        {
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
@@ -1319,291 +1392,1444 @@ impl Datetime {
         false
     }
 
-    /// C++ `Datetime::initializeNow` (Datetime.cpp line 1327).
+    /// C++ `Datetime::initializeNow` (Datetime.cpp line 1327):
+    /// `now [ !<alpha> && !<digit> ]`.
     fn initialize_now(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("now") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                self._date = localtime::time_now();
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeYesterday` (Datetime.cpp line 1348).
+    /// C++ `Datetime::initializeYesterday` (Datetime.cpp line 1348):
+    /// `yesterday/abbrev [ !<alpha> && !<digit> ]`.
+    ///
+    /// `token.length () >= static_cast <size_t> (minimumMatchLength)`: the
+    /// `as usize` cast wraps a negative setting exactly like the C++ cast.
     fn initialize_yesterday(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut token = String::new();
+        if pig.skip_partial("yesterday", &mut token, false)
+            && token.len() >= Datetime::minimum_match_length() as usize
+        {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                t.tm_mday -= 1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeToday` (Datetime.cpp line 1377).
+    /// C++ `Datetime::initializeToday` (Datetime.cpp line 1377):
+    /// `today/abbrev [ !<alpha> && !<digit> ]`.
     fn initialize_today(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut token = String::new();
+        if pig.skip_partial("today", &mut token, false) && token.len() >= Datetime::minimum_match_length() as usize {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeTomorrow` (Datetime.cpp line 1406).
+    /// C++ `Datetime::initializeTomorrow` (Datetime.cpp line 1406):
+    /// `tomorrow/abbrev [ !<alpha> && !<digit> ]`.
     fn initialize_tomorrow(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut token = String::new();
+        if pig.skip_partial("tomorrow", &mut token, false)
+            && token.len() >= Datetime::minimum_match_length() as usize
+        {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+
+                t.tm_mday += 1;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeOrdinal` (Datetime.cpp line 1435).
+    /// C++ `Datetime::initializeOrdinal` (Datetime.cpp line 1435):
+    /// `<digit>+ [ "st" | "nd" | "rd" | "th" ] [ !<alpha> && !<digit> ]`.
+    ///
+    /// `number` is the C++ `long long`; `remainder1/2` are `int`. As in C++,
+    /// the two suffix characters are consumed before they are checked, and
+    /// the cursor is only restored when the whole production fails.
     fn initialize_ordinal(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut number: i64 = 0;
+        if pig.get_digits_i64(&mut number) && number > 0 && number <= 31 {
+            let mut character1: i32 = 0;
+            let mut character2: i32 = 0;
+            if pig.get_character(&mut character1)
+                && pig.get_character(&mut character2)
+                && !unicode_latin_alpha(pig.peek() as u32)
+                && !unicode_latin_digit(pig.peek() as u32)
+            {
+                let remainder1 = (number % 10) as i32;
+                let remainder2 = (number % 100) as i32;
+                if (remainder2 != 11 && remainder1 == 1 && character1 == 's' as i32 && character2 == 't' as i32)
+                    || (remainder2 != 12 && remainder1 == 2 && character1 == 'n' as i32 && character2 == 'd' as i32)
+                    || (remainder2 != 13 && remainder1 == 3 && character1 == 'r' as i32 && character2 == 'd' as i32)
+                    || ((remainder2 == 11 || remainder2 == 12 || remainder2 == 13 || remainder1 == 0 || remainder1 > 3)
+                        && character1 == 't' as i32
+                        && character2 == 'h' as i32)
+                {
+                    let now = localtime::time_now();
+                    let mut t = localtime::localtime(now);
+
+                    let mut y = t.tm_year + 1900;
+                    let mut m = t.tm_mon + 1;
+                    let d = t.tm_mday;
+
+                    if Datetime::time_relative() && (1 <= number && number <= d as i64) {
+                        m += 1;
+                        if m > 12 {
+                            m = 1;
+                            y += 1;
+                        }
+                    } else if !Datetime::time_relative()
+                        && ((d as i64) < number && number <= Datetime::days_in_month(y, m) as i64)
+                    {
+                        m -= 1;
+                        if m < 1 {
+                            m = 12;
+                            y -= 1;
+                        }
+                    }
+
+                    t.tm_hour = 0;
+                    t.tm_min = 0;
+                    t.tm_sec = 0;
+                    t.tm_mon = m - 1;
+                    t.tm_mday = number as i32;
+                    t.tm_year = y - 1900;
+                    t.tm_isdst = -1;
+
+                    self._date = localtime::mktime(&mut t);
+
+                    return true;
+                }
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeDayName` (Datetime.cpp line 1505).
+    /// C++ `Datetime::initializeDayName` (Datetime.cpp line 1505):
+    /// `sunday/abbrev [ !<alpha> && !<digit> && !: && != ]`.
     fn initialize_day_name(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut token = String::new();
+        // Deliberate <= so that 'sunday' is either 0 or 7.
+        for day in 0..=7 {
+            if pig.skip_partial(DAY_NAMES[(day % 7) as usize], &mut token, true)
+                && token.len() >= Datetime::minimum_match_length() as usize
+            {
+                let following = pig.peek();
+                if !unicode_latin_alpha(following as u32)
+                    && !unicode_latin_digit(following as u32)
+                    && following != ':' as i32
+                    && following != '=' as i32
+                {
+                    let now = localtime::time_now();
+                    let mut t = localtime::localtime(now);
+
+                    if t.tm_wday >= day {
+                        t.tm_mday += day - t.tm_wday + if Datetime::time_relative() { 7 } else { 0 };
+                    } else {
+                        t.tm_mday += day - t.tm_wday - if Datetime::time_relative() { 0 } else { 7 };
+                    }
+
+                    t.tm_hour = 0;
+                    t.tm_min = 0;
+                    t.tm_sec = 0;
+                    t.tm_isdst = -1;
+                    self._date = localtime::mktime(&mut t);
+                    return true;
+                }
+            }
+
+            pig.restore_to(checkpoint);
+        }
+
         false
     }
 
-    /// C++ `Datetime::initializeMonthName` (Datetime.cpp line 1548).
+    /// C++ `Datetime::initializeMonthName` (Datetime.cpp line 1548):
+    /// `january/abbrev [ !<alpha> && !<digit> && !: && != ]`.
     fn initialize_month_name(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut token = String::new();
+        for month in 0..12 {
+            if pig.skip_partial(MONTH_NAMES[month as usize], &mut token, true)
+                && token.len() >= Datetime::minimum_match_length() as usize
+            {
+                let following = pig.peek();
+                if !unicode_latin_alpha(following as u32)
+                    && !unicode_latin_digit(following as u32)
+                    && following != ':' as i32
+                    && following != '=' as i32
+                {
+                    let now = localtime::time_now();
+                    let mut t = localtime::localtime(now);
+
+                    if t.tm_mon >= month && Datetime::time_relative() {
+                        t.tm_year += 1;
+                    }
+
+                    t.tm_mon = month;
+                    t.tm_mday = 1;
+                    t.tm_hour = 0;
+                    t.tm_min = 0;
+                    t.tm_sec = 0;
+                    t.tm_isdst = -1;
+                    self._date = localtime::mktime(&mut t);
+                    return true;
+                }
+            }
+
+            pig.restore_to(checkpoint);
+        }
+
         false
     }
 
-    /// C++ `Datetime::initializeLater` (Datetime.cpp line 1590).
+    /// C++ `Datetime::initializeLater` (Datetime.cpp line 1590):
+    /// `later/abbrev [ !<alpha> && !<digit> ]`,
+    /// `someday/abbrev [ !<alpha> && !<digit> ]`.
+    ///
+    /// As in C++, a too-short `later` prefix is not undone before `someday`
+    /// is tried (from the advanced cursor).
     fn initialize_later(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut token = String::new();
+        if (pig.skip_partial("later", &mut token, false) && token.len() >= Datetime::minimum_match_length() as usize)
+            || (pig.skip_partial("someday", &mut token, false)
+                && token.len() >= std::cmp::max(Datetime::minimum_match_length(), 4) as usize)
+        {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_year = 8099; // Year 9999
+                t.tm_mon = 11;
+                t.tm_mday = 30;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSopd` (Datetime.cpp line 1626).
+    /// C++ `Datetime::initializeSopd` (Datetime.cpp line 1626):
+    /// `sopd [ !<alpha> && !<digit> ]`.
     fn initialize_sopd(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sopd") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                t.tm_mday -= 1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSod` (Datetime.cpp line 1653).
+    /// C++ `Datetime::initializeSod` (Datetime.cpp line 1653):
+    /// `sod [ !<alpha> && !<digit> ]`.
     fn initialize_sod(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sod") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSond` (Datetime.cpp line 1679).
+    /// C++ `Datetime::initializeSond` (Datetime.cpp line 1679):
+    /// `sond [ !<alpha> && !<digit> ]`.
     fn initialize_sond(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sond") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 1;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEopd` (Datetime.cpp line 1706).
+    /// C++ `Datetime::initializeEopd` (Datetime.cpp line 1706):
+    /// `eopd [ !<alpha> && !<digit> ]`.
     fn initialize_eopd(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eopd") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEod` (Datetime.cpp line 1733).
+    /// C++ `Datetime::initializeEod` (Datetime.cpp line 1733):
+    /// `eod [ !<alpha> && !<digit> ]`.
     fn initialize_eod(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eod") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 1;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEond` (Datetime.cpp line 1761).
+    /// C++ `Datetime::initializeEond` (Datetime.cpp line 1761):
+    /// `eond [ !<alpha> && !<digit> ]`.
     fn initialize_eond(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eond") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 2;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSopw` (Datetime.cpp line 1789).
+    /// C++ `Datetime::initializeSopw` (Datetime.cpp line 1789):
+    /// `sopw [ !<alpha> && !<digit> ]`.
     fn initialize_sopw(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sopw") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+
+                let extra = (t.tm_wday + 6) % 7;
+                t.tm_mday -= extra;
+                t.tm_mday -= 7;
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSow` (Datetime.cpp line 1819).
+    /// C++ `Datetime::initializeSow` (Datetime.cpp line 1819):
+    /// `sow [ !<alpha> && !<digit> ]`.
     fn initialize_sow(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sow") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+
+                let extra = (t.tm_wday + 6) % 7;
+                t.tm_mday -= extra;
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSonw` (Datetime.cpp line 1848).
+    /// C++ `Datetime::initializeSonw` (Datetime.cpp line 1848):
+    /// `sonw [ !<alpha> && !<digit> ]`.
     fn initialize_sonw(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sonw") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+
+                let extra = (t.tm_wday + 6) % 7;
+                t.tm_mday -= extra;
+                t.tm_mday += 7;
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEopw` (Datetime.cpp line 1878).
+    /// C++ `Datetime::initializeEopw` (Datetime.cpp line 1878):
+    /// `eopw [ !<alpha> && !<digit> ]`.
     fn initialize_eopw(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eopw") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+
+                let extra = (t.tm_wday + 6) % 7;
+                t.tm_mday -= extra;
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEow` (Datetime.cpp line 1908).
+    /// C++ `Datetime::initializeEow` (Datetime.cpp line 1908):
+    /// `eow [ !<alpha> && !<digit> ]`.
     fn initialize_eow(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eow") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+
+                let extra = (t.tm_wday + 6) % 7;
+                t.tm_mday -= extra;
+                t.tm_mday += 7;
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEonw` (Datetime.cpp line 1939).
+    /// C++ `Datetime::initializeEonw` (Datetime.cpp line 1939):
+    /// `eonw [ !<alpha> && !<digit> ]`.
     fn initialize_eonw(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eonw") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+
+                let extra = (t.tm_wday + 6) % 7;
+                t.tm_mday += 14 - extra;
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSopww` (Datetime.cpp line 1969).
+    /// C++ `Datetime::initializeSopww` (Datetime.cpp line 1969):
+    /// `sopww [ !<alpha> && !<digit> ]`.
     fn initialize_sopww(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sopww") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += -6 - t.tm_wday;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSoww` (Datetime.cpp line 1996).
+    /// C++ `Datetime::initializeSoww` (Datetime.cpp line 1996):
+    /// `soww [ !<alpha> && !<digit> ]`.
     fn initialize_soww(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("soww") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 1 - t.tm_wday;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSonww` (Datetime.cpp line 2023).
+    /// C++ `Datetime::initializeSonww` (Datetime.cpp line 2023):
+    /// `sonww [ !<alpha> && !<digit> ]`.
     fn initialize_sonww(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sonww") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 8 - t.tm_wday;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEopww` (Datetime.cpp line 2050).
+    /// C++ `Datetime::initializeEopww` (Datetime.cpp line 2050):
+    /// `eopww [ !<alpha> && !<digit> ]`.
     fn initialize_eopww(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eopww") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday -= t.tm_wday + 1;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEoww` (Datetime.cpp line 2078).
+    /// C++ `Datetime::initializeEoww` (Datetime.cpp line 2078):
+    /// `eoww [ !<alpha> && !<digit> ]`.
     fn initialize_eoww(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eoww") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 6 - t.tm_wday;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEonww` (Datetime.cpp line 2106).
+    /// C++ `Datetime::initializeEonww` (Datetime.cpp line 2106):
+    /// `eonww [ !<alpha> && !<digit> ]`.
     fn initialize_eonww(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eonww") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mday += 13 - t.tm_wday;
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSopm` (Datetime.cpp line 2134).
+    /// C++ `Datetime::initializeSopm` (Datetime.cpp line 2134):
+    /// `sopm [ !<alpha> && !<digit> ]`.
     fn initialize_sopm(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sopm") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+
+                if t.tm_mon == 0 {
+                    t.tm_year -= 1;
+                    t.tm_mon = 11;
+                } else {
+                    t.tm_mon -= 1;
+                }
+
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSom` (Datetime.cpp line 2170).
+    /// C++ `Datetime::initializeSom` (Datetime.cpp line 2170):
+    /// `som [ !<alpha> && !<digit> ]`.
     fn initialize_som(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("som") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSonm` (Datetime.cpp line 2197).
+    /// C++ `Datetime::initializeSonm` (Datetime.cpp line 2197):
+    /// `sonm [ !<alpha> && !<digit> ]`.
     fn initialize_sonm(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sonm") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+
+                t.tm_mon += 1;
+                if t.tm_mon > 11 {
+                    t.tm_year += 1;
+                    t.tm_mon = 0;
+                }
+
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEopm` (Datetime.cpp line 2232).
+    /// C++ `Datetime::initializeEopm` (Datetime.cpp line 2232):
+    /// `eopm [ !<alpha> && !<digit> ]`.
     fn initialize_eopm(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eopm") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEom` (Datetime.cpp line 2260).
+    /// C++ `Datetime::initializeEom` (Datetime.cpp line 2260):
+    /// `eom [ !<alpha> && !<digit> ]`.
     fn initialize_eom(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eom") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+
+                t.tm_mon += 1;
+                if t.tm_mon > 11 {
+                    t.tm_year += 1;
+                    t.tm_mon = 0;
+                }
+
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEonm` (Datetime.cpp line 2296).
+    /// C++ `Datetime::initializeEonm` (Datetime.cpp line 2296):
+    /// `eonm [ !<alpha> && !<digit> ]`.
     fn initialize_eonm(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eonm") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mday = 1;
+                t.tm_mon += 2;
+                if t.tm_mon > 11 {
+                    t.tm_year += 1;
+                    t.tm_mon -= 12;
+                }
+
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSopq` (Datetime.cpp line 2331).
+    /// C++ `Datetime::initializeSopq` (Datetime.cpp line 2331):
+    /// `sopq [ !<alpha> && !<digit> ]`.
     fn initialize_sopq(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sopq") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mon -= t.tm_mon % 3;
+                t.tm_mon -= 3;
+                if t.tm_mon < 0 {
+                    t.tm_mon += 12;
+                    t.tm_year -= 1;
+                }
+
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSoq` (Datetime.cpp line 2366).
+    /// C++ `Datetime::initializeSoq` (Datetime.cpp line 2366):
+    /// `soq [ !<alpha> && !<digit> ]`.
     fn initialize_soq(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("soq") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mon -= t.tm_mon % 3;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSonq` (Datetime.cpp line 2394).
+    /// C++ `Datetime::initializeSonq` (Datetime.cpp line 2394):
+    /// `sonq [ !<alpha> && !<digit> ]`.
     fn initialize_sonq(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sonq") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mon += 3 - (t.tm_mon % 3);
+                if t.tm_mon > 11 {
+                    t.tm_mon -= 12;
+                    t.tm_year += 1;
+                }
+
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEopq` (Datetime.cpp line 2428).
+    /// C++ `Datetime::initializeEopq` (Datetime.cpp line 2428):
+    /// `eopq [ !<alpha> && !<digit> ]`.
     fn initialize_eopq(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eopq") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mon -= t.tm_mon % 3;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEoq` (Datetime.cpp line 2457).
+    /// C++ `Datetime::initializeEoq` (Datetime.cpp line 2457):
+    /// `eoq [ !<alpha> && !<digit> ]`.
     fn initialize_eoq(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eoq") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_mon += 3 - (t.tm_mon % 3);
+                if t.tm_mon > 11 {
+                    t.tm_mon -= 12;
+                    t.tm_year += 1;
+                }
+
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEonq` (Datetime.cpp line 2492).
+    /// C++ `Datetime::initializeEonq` (Datetime.cpp line 2492):
+    /// `eonq [ !<alpha> && !<digit> ]`.
     fn initialize_eonq(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eonq") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mon += 6 - (t.tm_mon % 3);
+                if t.tm_mon > 11 {
+                    t.tm_mon -= 12;
+                    t.tm_year += 1;
+                }
+
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSopy` (Datetime.cpp line 2527).
+    /// C++ `Datetime::initializeSopy` (Datetime.cpp line 2527):
+    /// `sopy [ !<alpha> && !<digit> ]`.
     fn initialize_sopy(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sopy") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mon = 0;
+                t.tm_mday = 1;
+                t.tm_year -= 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSoy` (Datetime.cpp line 2556).
+    /// C++ `Datetime::initializeSoy` (Datetime.cpp line 2556):
+    /// `soy [ !<alpha> && !<digit> ]`.
     fn initialize_soy(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("soy") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mon = 0;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeSony` (Datetime.cpp line 2584).
+    /// C++ `Datetime::initializeSony` (Datetime.cpp line 2584):
+    /// `sony [ !<alpha> && !<digit> ]`.
     fn initialize_sony(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("sony") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = 0;
+                t.tm_mon = 0;
+                t.tm_mday = 1;
+                t.tm_year += 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEopy` (Datetime.cpp line 2613).
+    /// C++ `Datetime::initializeEopy` (Datetime.cpp line 2613):
+    /// `eopy [ !<alpha> && !<digit> ]`.
     fn initialize_eopy(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eopy") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mon = 0;
+                t.tm_mday = 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEoy` (Datetime.cpp line 2642).
+    /// C++ `Datetime::initializeEoy` (Datetime.cpp line 2642):
+    /// `eoy [ !<alpha> && !<digit> ]`.
     fn initialize_eoy(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eoy") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mon = 0;
+                t.tm_mday = 1;
+                t.tm_year += 1;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEony` (Datetime.cpp line 2672).
+    /// C++ `Datetime::initializeEony` (Datetime.cpp line 2672):
+    /// `eony [ !<alpha> && !<digit> ]`.
     fn initialize_eony(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("eony") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                t.tm_hour = 0;
+                t.tm_min = 0;
+                t.tm_sec = -1;
+                t.tm_mon = 0;
+                t.tm_mday = 1;
+                t.tm_year += 2;
+                t.tm_isdst = -1;
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeEaster` (Datetime.cpp line 2706).
+    /// C++ `Datetime::initializeEaster` (Datetime.cpp line 2706):
+    /// `easter`, `eastermonday`, `ascension`, `pentecost`, `goodfriday`, each
+    /// `[ !<alpha> && !<digit> ]`.
+    ///
+    /// As in C++, a holiday literal followed by a letter or digit is not
+    /// undone inside the loop: the next holiday is tried from the advanced
+    /// cursor, and the checkpoint is only restored after the loop.
     fn initialize_easter(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let holidays: [&str; 5] = ["eastermonday", "easter", "ascension", "pentecost", "goodfriday"];
+        let offsets: [i32; 5] = [1, 0, 39, 49, -2];
+
+        for holiday in 0..5 {
+            if pig.skip_literal(holidays[holiday])
+                && !unicode_latin_alpha(pig.peek() as u32)
+                && !unicode_latin_digit(pig.peek() as u32)
+            {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+
+                self.easter(&mut t);
+                self._date = localtime::mktime(&mut t);
+
+                // If the result is earlier this year, then recalc for next year.
+                if self._date < now {
+                    t = localtime::localtime(now);
+                    t.tm_year += 1;
+                    self.easter(&mut t);
+                }
+
+                // Adjust according to holiday-specific offsets.
+                t.tm_mday += offsets[holiday];
+
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeMidsommar` (Datetime.cpp line 2748).
+    /// C++ `Datetime::initializeMidsommar` (Datetime.cpp line 2748):
+    /// `midsommar [ !<alpha> && !<digit> ]`.
     fn initialize_midsommar(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("midsommar") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                self.midsommar(&mut t);
+                self._date = localtime::mktime(&mut t);
+
+                // If the result is earlier this year, then recalc for next year.
+                if self._date < now {
+                    t = localtime::localtime(now);
+                    t.tm_year += 1;
+                    self.midsommar(&mut t);
+                }
+
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::initializeMidsommarafton` (Datetime.cpp line 2783).
+    /// C++ `Datetime::initializeMidsommarafton` (Datetime.cpp line 2783):
+    /// `midsommarafton [ !<alpha> && !<digit> ]`,
+    /// `juhannus [ !<alpha> && !<digit> ]`.
     fn initialize_midsommarafton(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if pig.skip_literal("midsommarafton") || pig.skip_literal("juhannus") {
+            let following = pig.peek();
+            if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+                self.midsommarafton(&mut t);
+                self._date = localtime::mktime(&mut t);
+
+                // If the result is earlier this year, then recalc for next year.
+                if self._date < now {
+                    t = localtime::localtime(now);
+                    t.tm_year += 1;
+                    self.midsommarafton(&mut t);
+                }
+
+                self._date = localtime::mktime(&mut t);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::initializeInformalTime` (Datetime.cpp line 2826).
+    ///
+    /// ```text
+    /// 8am
+    /// 8a
+    /// 8:30am
+    /// 8:30a
+    /// 8:30
+    /// 8:30:00
+    ///
+    /// \d+ [ : \d{2} ] [ am | a | pm | p ] [ !<alpha> && !<digit> && !: && !+ && !- ]
+    /// ```
+    ///
+    /// `seconds` is the C++ `long long`; `calc_seconds` is its `int`
+    /// conversion (two's complement wrap, as on the reference platforms).
     fn initialize_informal_time(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut digit: i32 = 0;
+        let mut need_designator = true; // Require am/pm.
+        let mut have_designator = false; // Provided am/pm.
+        if pig.get_digit(&mut digit) {
+            let mut hours = digit;
+            if pig.get_digit(&mut digit) {
+                hours = 10 * hours + digit;
+            }
+
+            let mut minutes: i32 = 0;
+            let mut seconds: i64 = 0;
+            if pig.skip(':') {
+                if !pig.get_digit2(&mut minutes) {
+                    pig.restore_to(checkpoint);
+                    return false;
+                }
+
+                if pig.skip(':') {
+                    if !pig.get_digits_i64(&mut seconds) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                need_designator = false;
+            }
+
+            if pig.skip_literal("am") || pig.skip_literal("a") {
+                have_designator = true;
+                if hours == 12 {
+                    hours = 0;
+                }
+            } else if pig.skip_literal("pm") || pig.skip_literal("p") {
+                // Note: '12pm is an exception:
+                //  12am = 0h
+                //  11am = 11h + 12h
+                //  12pm = 12h
+                //  1pm  = 1h + 12h
+                if hours != 12 {
+                    hours += 12;
+                }
+
+                have_designator = true;
+            }
+
+            // Informal time needs to be terminated.
+            let following = pig.peek();
+            if unicode_latin_alpha(following as u32)
+                || unicode_latin_digit(following as u32)
+                || following == ':' as i32
+                || following == '-' as i32
+                || following == '+' as i32
+            {
+                pig.restore_to(checkpoint);
+                return false;
+            }
+
+            if have_designator || !need_designator {
+                // Midnight today + hours:minutes:seconds.
+                let now = localtime::time_now();
+                let mut t = localtime::localtime(now);
+
+                let now_seconds = (t.tm_hour * 3600) + (t.tm_min * 60) + t.tm_sec;
+                let calc_seconds = ((hours as i64 * 3600) + (minutes as i64 * 60)).wrapping_add(seconds) as i32;
+
+                if Datetime::time_relative() && calc_seconds < now_seconds {
+                    t.tm_mday += 1;
+                }
+
+                // Basic validation.
+                if hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60 && seconds >= 0 && seconds < 60 {
+                    t.tm_hour = hours;
+                    t.tm_min = minutes;
+                    t.tm_sec = seconds as i32;
+                    t.tm_isdst = -1;
+                    self._date = localtime::mktime(&mut t);
+
+                    return true;
+                }
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 }
@@ -1616,7 +2842,6 @@ impl Datetime {
 impl Datetime {
     /// C++ `Datetime::easter (struct tm*)`: sets `t` to local midnight on
     /// Easter Sunday of `t`'s year (anonymous Gregorian algorithm).
-    #[allow(dead_code)] // Used by initialize_easter (follow-up task).
     fn easter(&self, t: &mut Tm) {
         let y = t.tm_year + 1900;
         let a = y % 19;
@@ -1647,7 +2872,6 @@ impl Datetime {
     /// C++ `Datetime::midsommar (struct tm*)`: midnight, the first Saturday
     /// after June 20th of `t`'s year (`tm_mday` may be left > 20 unnormalized,
     /// as in C++; `mktime` normalizes it).
-    #[allow(dead_code)] // Used by initialize_midsommar (follow-up task).
     fn midsommar(&self, t: &mut Tm) {
         t.tm_mon = 5; // June.
         t.tm_mday = 20; // Saturday after 20th.
@@ -1663,7 +2887,6 @@ impl Datetime {
 
     /// C++ `Datetime::midsommarafton (struct tm*)`: midnight, the first
     /// Friday after June 19th of `t`'s year.
-    #[allow(dead_code)] // Used by initialize_midsommarafton (follow-up task).
     fn midsommarafton(&self, t: &mut Tm) {
         t.tm_mon = 5; // June.
         t.tm_mday = 19; // Saturday after 20th.
@@ -2442,9 +3665,9 @@ impl Sub<&Datetime> for &Datetime {
 
 #[cfg(test)]
 mod tests {
-    //! Assertions from libshared `test/datetime.t.cpp` that do not need the
-    //! named dates (`parse_named` / `initialize*`, follow-up task), plus
-    //! direct tests of the ported private helpers and grammar productions. Tests that set `TZ` hold
+    //! Assertions from libshared `test/datetime.t.cpp` (including the named
+    //! dates, `parse_named` / `initialize*`), plus direct tests of the ported
+    //! private helpers, grammar productions and every named date. Tests that set `TZ` hold
     //! [`crate::test_util::env_lock`] and restore `TZ` (via
     //! [`crate::test_util::EnvGuard`]) before the lock is released.
     use super::*;
@@ -3780,7 +5003,13 @@ mod tests {
             test_parse("2013-12-06T12:34:56Z");
             test_parse("20131206T123456Z");
             test_parse_error("2013-12-06");
-            test_parse_error("12:34:56");
+            // Not as ISO time-ext, but (as in C++) as an informal time via
+            // parse_named, which leaves the ISO fields untouched.
+            let mut informal = Datetime::new();
+            let mut start = 0usize;
+            assert!(informal.parse("12:34:56", &mut start, ""), "isoEnabled=false '12:34:56' --> informal time");
+            assert_eq!(start, 8);
+            assert_eq!(informal._seconds, 0, "isoEnabled=false '12:34:56' is not parse_time_ext");
             Datetime::set_iso_enabled(true);
         });
     }
@@ -4107,5 +5336,853 @@ mod tests {
             assert_eq!(dt._seconds, 12 * 3600);
             assert!(!Datetime::valid_str("2/30/2015", "m/d/Y"));
         });
+    }
+
+    // -------------------------------------------------------------------------
+    // Named dates: `parse_named` and every `initialize*` production
+    // (Datetime.cpp lines 611-696 and 1327-2927), plus the named-date parts of
+    // datetime.t.cpp (informal-time rows of testParse, relative dates,
+    // ordinals, quarters, embedded parsing, month names and the named-date
+    // diagnostic dump).
+    //
+    // Expectations are computed from `Datetime::new ()` (the current time)
+    // with an independent proleptic-Gregorian day count and converted to an
+    // epoch through `Datetime::from_ymd` / `from_ymdhms` (local `mktime`).
+    // Each table is evaluated inside `same_second`, so the parse and the
+    // reference see the same "now".
+
+    /// Runs `f` until `time (nullptr)` is identical before and after it, so a
+    /// parse and its reference computation observe the same current second.
+    fn same_second<R, F: FnMut() -> R>(mut f: F) -> R {
+        loop {
+            let before = localtime::time_now();
+            let result = f();
+            if localtime::time_now() == before {
+                return result;
+            }
+        }
+    }
+
+    /// Days since 1970-01-01 of the proleptic Gregorian date `y-m-d`.
+    fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+        let y = if m <= 2 { y - 1 } else { y };
+        let era = if y >= 0 { y } else { y - 399 } / 400;
+        let yoe = y - era * 400;
+        let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        era * 146097 + doe - 719468
+    }
+
+    /// Inverse of [`days_from_civil`].
+    fn civil_from_days(z: i64) -> (i32, i32, i32) {
+        let z = z + 719468;
+        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let doe = z - era * 146097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        ((if m <= 2 { y + 1 } else { y }) as i32, m as i32, d as i32)
+    }
+
+    /// The calendar date `days` days after `y-m-d` (`d` may be out of range).
+    fn add_days(y: i32, m: i32, d: i32, days: i32) -> (i32, i32, i32) {
+        civil_from_days(days_from_civil(y as i64, m as i64, 1) + (d - 1 + days) as i64)
+    }
+
+    /// `y` / `m` moved by `delta` months.
+    fn add_months(y: i32, m: i32, delta: i32) -> (i32, i32) {
+        let index = y * 12 + (m - 1) + delta;
+        (index.div_euclid(12), index.rem_euclid(12) + 1)
+    }
+
+    /// Local midnight of `y-m-d + days`.
+    fn midnight(y: i32, m: i32, d: i32, days: i32) -> i64 {
+        let (y, m, d) = add_days(y, m, d, days);
+        Datetime::from_ymd(y, m, d)._date
+    }
+
+    /// Local `hh:mm:ss` on `y-m-d + days`.
+    fn local_at(y: i32, m: i32, d: i32, days: i32, hh: i32, mm: i32, ss: i32) -> i64 {
+        let (y, m, d) = add_days(y, m, d, days);
+        Datetime::from_ymdhms(y, m, d, hh, mm, ss)._date
+    }
+
+    /// One second before local midnight of `y-m-d + days` (C++ `tm_sec = -1`).
+    /// Neither UTC nor America/New_York has a transition at midnight.
+    fn end_before(y: i32, m: i32, d: i32, days: i32) -> i64 {
+        midnight(y, m, d, days) - 1
+    }
+
+    /// The current local date and time, from `Datetime ()`.
+    struct Today {
+        now: i64,
+        y: i32,
+        m: i32,
+        d: i32,
+        /// 0 = Sunday.
+        w: i32,
+        secs: i32,
+    }
+
+    fn today() -> Today {
+        let n = Datetime::new();
+        Today {
+            now: n.to_epoch(),
+            y: n.year(),
+            m: n.month(),
+            d: n.day(),
+            w: n.day_of_week(),
+            secs: n.hour() * 3600 + n.minute() * 60 + n.second(),
+        }
+    }
+
+    /// `Datetime::parse (input, start)` from 0: (success, cursor, `_date`).
+    fn parse_at(input: &str) -> (bool, usize, i64) {
+        let mut dt = Datetime::new();
+        let mut start = 0usize;
+        let ok = dt.parse(input, &mut start, "");
+        (ok, start, dt._date)
+    }
+
+    /// One evaluated row: input, parse result, expected epoch.
+    type Row = (String, (bool, usize, i64), i64);
+
+    /// Asserts each row parsed completely to its expected epoch.
+    fn check_rows(label: &str, rows: &[Row]) {
+        for (input, (ok, start, date), expected) in rows {
+            assert!(*ok, "{label}: Datetime::parse (\"{input}\") --> true");
+            assert_eq!(*start, input.len(), "{label}: Datetime::parse (\"{input}\") --> []");
+            assert_eq!(
+                *date,
+                *expected,
+                "{label}: Datetime::parse (\"{input}\") --> {} expected {}",
+                Datetime::from_epoch(*date).to_iso_local_extended(),
+                Datetime::from_epoch(*expected).to_iso_local_extended()
+            );
+        }
+    }
+
+    /// Runs `f` under each zone with both `timeRelative` settings and both
+    /// weekstarts (none of the named dates read `weekstart`).
+    fn for_each_setting<F: Fn(&str)>(f: F) {
+        for tz in ["UTC", "America/New_York"] {
+            with_tz(tz, || {
+                let _settings = SettingsGuard::save();
+                for relative in [true, false] {
+                    for wks in [0, 1] {
+                        Datetime::set_time_relative(relative);
+                        Datetime::set_weekstart(wks);
+                        f(&format!("TZ={tz} timeRelative={relative} weekstart={wks}"));
+                    }
+                }
+            });
+        }
+    }
+
+    /// Builds rows by parsing each input and pairing it with its expectation.
+    fn rows_of(cases: Vec<(&str, i64)>) -> Vec<Row> {
+        cases.into_iter().map(|(input, expected)| (input.to_string(), parse_at(input), expected)).collect()
+    }
+
+    #[test]
+    fn named_now_days_and_later() {
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let (y, m, d) = (t.y, t.m, t.d);
+                rows_of(vec![
+                    ("now", t.now),
+                    ("yes", midnight(y, m, d, -1)),
+                    ("yest", midnight(y, m, d, -1)),
+                    ("yesterday", midnight(y, m, d, -1)),
+                    ("tod", midnight(y, m, d, 0)),
+                    ("today", midnight(y, m, d, 0)),
+                    ("tom", midnight(y, m, d, 1)),
+                    ("tomorrow", midnight(y, m, d, 1)),
+                    ("sopd", midnight(y, m, d, -1)),
+                    ("sod", midnight(y, m, d, 0)),
+                    ("sond", midnight(y, m, d, 1)),
+                    ("eopd", end_before(y, m, d, 0)),
+                    ("eod", end_before(y, m, d, 1)),
+                    ("eond", end_before(y, m, d, 2)),
+                    ("lat", Datetime::from_ymd(9999, 12, 30)._date),
+                    ("later", Datetime::from_ymd(9999, 12, 30)._date),
+                    ("some", Datetime::from_ymd(9999, 12, 30)._date),
+                    ("someday", Datetime::from_ymd(9999, 12, 30)._date),
+                ])
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    #[test]
+    fn named_weeks() {
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let (y, m, d, w) = (t.y, t.m, t.d, t.w);
+                // Calendar weeks start on Monday regardless of weekstart.
+                let monday = -((w + 6) % 7);
+                rows_of(vec![
+                    ("sopw", midnight(y, m, d, monday - 7)),
+                    ("sow", midnight(y, m, d, monday)),
+                    ("sonw", midnight(y, m, d, monday + 7)),
+                    ("eopw", end_before(y, m, d, monday)),
+                    ("eow", end_before(y, m, d, monday + 7)),
+                    ("eonw", end_before(y, m, d, monday + 14)),
+                    // Work weeks: Monday (relative to this Sunday) .. Friday.
+                    ("sopww", midnight(y, m, d, -6 - w)),
+                    ("soww", midnight(y, m, d, 1 - w)),
+                    ("sonww", midnight(y, m, d, 8 - w)),
+                    ("eopww", end_before(y, m, d, -w - 1)),
+                    ("eoww", end_before(y, m, d, 6 - w)),
+                    ("eonww", end_before(y, m, d, 13 - w)),
+                ])
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    #[test]
+    fn named_months_quarters_years() {
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let (y, m) = (t.y, t.m);
+                let first = |delta: i32| {
+                    let (y, m) = add_months(y, m, delta);
+                    Datetime::from_ymd(y, m, 1)._date
+                };
+                let q = -((m - 1) % 3); // Months back to the quarter start.
+                rows_of(vec![
+                    ("sopm", first(-1)),
+                    ("som", first(0)),
+                    ("sonm", first(1)),
+                    ("eopm", first(0) - 1),
+                    ("eom", first(1) - 1),
+                    ("eonm", first(2) - 1),
+                    ("sopq", first(q - 3)),
+                    ("soq", first(q)),
+                    ("sonq", first(q + 3)),
+                    ("eopq", first(q) - 1),
+                    ("eoq", first(q + 3) - 1),
+                    ("eonq", first(q + 6) - 1),
+                    ("sopy", Datetime::from_ymd(y - 1, 1, 1)._date),
+                    ("soy", Datetime::from_ymd(y, 1, 1)._date),
+                    ("sony", Datetime::from_ymd(y + 1, 1, 1)._date),
+                    ("eopy", Datetime::from_ymd(y, 1, 1)._date - 1),
+                    ("eoy", Datetime::from_ymd(y + 1, 1, 1)._date - 1),
+                    ("eony", Datetime::from_ymd(y + 2, 1, 1)._date - 1),
+                ])
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    #[test]
+    fn named_day_names() {
+        let names = [
+            ["sunday", "sun", "Sunday", "SUNDAY"],
+            ["monday", "mon", "Monday", "MoN"],
+            ["tuesday", "tue", "Tuesday", "tues"],
+            ["wednesday", "wed", "Wednesday", "wedn"],
+            ["thursday", "thu", "Thursday", "thurs"],
+            ["friday", "fri", "Friday", "frid"],
+            ["saturday", "sat", "Saturday", "satur"],
+        ];
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let mut cases = Vec::new();
+                for (day, spellings) in names.iter().enumerate() {
+                    let day = day as i32;
+                    // Relative: the next such day after today (1..7 days ahead);
+                    // otherwise: the most recent one, today included.
+                    let offset = if Datetime::time_relative() {
+                        (day - t.w + 6).rem_euclid(7) + 1
+                    } else {
+                        -(t.w - day).rem_euclid(7)
+                    };
+                    for spelling in spellings {
+                        cases.push((*spelling, midnight(t.y, t.m, t.d, offset)));
+                    }
+                }
+                rows_of(cases)
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    #[test]
+    fn named_month_names() {
+        let names = [
+            ["january", "jan", "January", "JANU"],
+            ["february", "feb", "February", "febr"],
+            ["march", "mar", "March", "marc"],
+            ["april", "apr", "April", "apri"],
+            ["may", "may", "May", "MAY"],
+            ["june", "jun", "June", "JUNE"],
+            ["july", "jul", "July", "JULY"],
+            ["august", "aug", "August", "augu"],
+            ["september", "sep", "September", "sept"],
+            ["october", "oct", "October", "octo"],
+            ["november", "nov", "November", "nove"],
+            ["december", "dec", "December", "dece"],
+        ];
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let mut cases = Vec::new();
+                for (month, spellings) in names.iter().enumerate() {
+                    let month = month as i32 + 1;
+                    // Relative: months up to and including this one are next year.
+                    let year = if Datetime::time_relative() && t.m >= month { t.y + 1 } else { t.y };
+                    for spelling in spellings {
+                        cases.push((*spelling, Datetime::from_ymd(year, month, 1)._date));
+                    }
+                }
+                rows_of(cases)
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    /// `1st` .. `31st` with the English suffix of each number.
+    fn ordinal_spelling(n: i32) -> String {
+        let suffix = match (n % 10, n % 100) {
+            (_, 11..=13) => "th",
+            (1, _) => "st",
+            (2, _) => "nd",
+            (3, _) => "rd",
+            _ => "th",
+        };
+        format!("{n}{suffix}")
+    }
+
+    #[test]
+    fn named_ordinals() {
+        let spellings: Vec<String> = (1..=31).map(ordinal_spelling).collect();
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let mut cases = Vec::new();
+                for (k, spelling) in spellings.iter().enumerate() {
+                    let n = k as i32 + 1;
+                    let delta = if Datetime::time_relative() && n <= t.d {
+                        1
+                    } else if !Datetime::time_relative() && t.d < n && n <= Datetime::days_in_month(t.y, t.m) {
+                        -1
+                    } else {
+                        0
+                    };
+                    let (y, m) = add_months(t.y, t.m, delta);
+                    // mktime normalizes e.g. the 31st of a 30-day month.
+                    cases.push((spelling.as_str(), midnight(y, m, n, 0)));
+                }
+                rows_of(cases)
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    /// Easter Sunday (month, day) for 2020-2040.
+    const EASTER: [(i32, i32); 21] = [
+        (4, 12), // 2020
+        (4, 4),
+        (4, 17),
+        (4, 9),
+        (3, 31),
+        (4, 20), // 2025
+        (4, 5),
+        (3, 28),
+        (4, 16),
+        (4, 1),
+        (4, 21), // 2030
+        (4, 13),
+        (3, 28),
+        (4, 17),
+        (4, 9),
+        (3, 25), // 2035
+        (4, 13),
+        (4, 5),
+        (4, 25),
+        (4, 10),
+        (4, 1), // 2040
+    ];
+
+    fn easter_ymd(year: i32) -> (i32, i32, i32) {
+        if (2020..=2040).contains(&year) {
+            let (m, d) = EASTER[(year - 2020) as usize];
+            (year, m, d)
+        } else {
+            // Outside the table: the anonymous Gregorian algorithm (checked
+            // against known dates by `easter_dates`).
+            let dt = Datetime::new();
+            let mut t = Tm { tm_year: year - 1900, ..Tm::default() };
+            dt.easter(&mut t);
+            (year, t.tm_mon + 1, t.tm_mday)
+        }
+    }
+
+    #[test]
+    fn named_easter_and_midsommar() {
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+
+                // This year's date unless it is already past (midnight < now).
+                let upcoming = |date: &dyn Fn(i32) -> (i32, i32, i32)| {
+                    let (y, m, d) = date(t.y);
+                    if Datetime::from_ymd(y, m, d)._date < t.now {
+                        date(t.y + 1)
+                    } else {
+                        (y, m, d)
+                    }
+                };
+                let (ey, em, ed) = upcoming(&easter_ymd);
+                let midsommar = |year: i32| {
+                    (year, 6, 20 + 6 - Datetime::day_of_week_ymd(year, 6, 20)) // Saturday after June 20th.
+                };
+                let midsommarafton = |year: i32| {
+                    (year, 6, 19 + 5 - Datetime::day_of_week_ymd(year, 6, 19)) // Friday after June 19th.
+                };
+                let (my, mm, md) = upcoming(&midsommar);
+                let (ay, am, ad) = upcoming(&midsommarafton);
+
+                rows_of(vec![
+                    ("easter", midnight(ey, em, ed, 0)),
+                    ("eastermonday", midnight(ey, em, ed, 1)),
+                    ("ascension", midnight(ey, em, ed, 39)),
+                    ("pentecost", midnight(ey, em, ed, 49)),
+                    ("goodfriday", midnight(ey, em, ed, -2)),
+                    ("midsommar", midnight(my, mm, md, 0)),
+                    ("midsommarafton", midnight(ay, am, ad, 0)),
+                    ("juhannus", midnight(ay, am, ad, 0)),
+                    // C++ parity: a holiday literal followed by a letter is
+                    // not undone before the next holiday is tried.
+                    ("easterascension", midnight(ey, em, ed, 39)),
+                ])
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    #[test]
+    fn named_informal_times() {
+        let times: [(&str, i32, i32, i32); 22] = [
+            ("8am", 8, 0, 0),
+            ("8a", 8, 0, 0),
+            ("8:30am", 8, 30, 0),
+            ("8:30a", 8, 30, 0),
+            ("8:30", 8, 30, 0),
+            ("8:30:00", 8, 30, 0),
+            ("8:30:15", 8, 30, 15),
+            ("8:30:15pm", 20, 30, 15),
+            ("8pm", 20, 0, 0),
+            ("8p", 20, 0, 0),
+            ("8:30pm", 20, 30, 0),
+            ("8:30p", 20, 30, 0),
+            ("10:30am", 10, 30, 0),
+            ("10:30pm", 22, 30, 0),
+            ("10:30p", 22, 30, 0),
+            ("12am", 0, 0, 0),
+            ("12:30am", 0, 30, 0),
+            ("12pm", 12, 0, 0),
+            ("1pm", 13, 0, 0),
+            ("11pm", 23, 0, 0),
+            ("3am", 3, 0, 0),
+            ("0:00", 0, 0, 0),
+        ];
+        for_each_setting(|label| {
+            let rows = same_second(|| {
+                let t = today();
+                let cases = times
+                    .iter()
+                    .map(|&(input, hh, mm, ss)| {
+                        // timeRelative: a time already past today is tomorrow.
+                        let calc = hh * 3600 + mm * 60 + ss;
+                        let days = if Datetime::time_relative() && calc < t.secs { 1 } else { 0 };
+                        (input, local_at(t.y, t.m, t.d, days, hh, mm, ss))
+                    })
+                    .collect();
+                rows_of(cases)
+            });
+            check_rows(label, &rows);
+        });
+    }
+
+    #[test]
+    fn named_cursor_and_rejections() {
+        for_each_setting(|label| {
+            // Partial embedded parses stop at the first non-alphanumeric.
+            for (input, cursor) in [
+                ("now+1d", 3),
+                ("now-1d", 3),
+                ("now)", 3),
+                ("yest+1d", 4),
+                ("yest-1d", 4),
+                ("yest)", 4),
+                ("sod+1d", 3),
+                ("eow)", 3),
+                ("soww ", 4),
+                ("monday-1d", 6),
+                ("jan+1d", 3),
+                ("1st+1d", 3),
+                ("easter)", 6),
+                ("8am)", 3),
+                ("8:30 ", 4),
+            ] {
+                let (ok, start, _) = parse_at(input);
+                assert!(ok, "{label}: Datetime::parse (\"{input}\") --> true");
+                assert_eq!(start, cursor, "{label}: Datetime::parse (\"{input}\") --> []");
+            }
+
+            for input in [
+                "nowadays", "now7", "tomorrov", "yesteryear", "yest7", "to", "ye", "TODAY", "Now", "sodx", "sod7",
+                "eoww2", "sowx", "la", "lat3", "so", "su", "ju", "jan:", "jan=", "mon:", "mon=", "mo", "0th",
+                "32nd", "1th", "2th", "3th", "11st", "12nd", "13rd", "21th", "1st5", "1stx", "1s", "easterx",
+                "eastermondays", "midsommarx", "juhannusx", "pentecost2", "8", "13pm", "25am", "99am", "123am",
+                "8:3", "8:30:75", "8amx", "8am:", "8am-", "8am+1d", "8:30-", "8:30+", "25:00", "8:60",
+            ] {
+                let (ok, start, _) = parse_at(input);
+                assert!(!ok, "{label}: Datetime::parse negative '{input}' --> fail (cursor {start})");
+            }
+        });
+    }
+
+    #[test]
+    fn named_minimum_match_length_and_later_quirk() {
+        with_tz("UTC", || {
+            let _settings = SettingsGuard::save();
+
+            Datetime::set_minimum_match_length(4);
+            for input in ["yes", "tod", "tom", "sun", "jan", "lat"] {
+                assert!(!parse_at(input).0, "minimumMatchLength=4 '{input}' --> fail");
+            }
+            for input in ["yest", "toda", "tomo", "sund", "janu", "late", "some"] {
+                assert!(parse_at(input).0, "minimumMatchLength=4 '{input}' --> success");
+            }
+            // 'som' is the start of the month, never 'someday' (which needs 4).
+            let rows = same_second(|| {
+                let t = today();
+                rows_of(vec![("som", Datetime::from_ymd(t.y, t.m, 1)._date)])
+            });
+            check_rows("minimumMatchLength=4", &rows);
+
+            Datetime::set_minimum_match_length(2);
+            let rows = same_second(|| {
+                let t = today();
+                rows_of(vec![("to", midnight(t.y, t.m, t.d, 0)), ("ye", midnight(t.y, t.m, t.d, -1))])
+            });
+            check_rows("minimumMatchLength=2", &rows);
+
+            Datetime::set_minimum_match_length(3);
+            let later = Datetime::from_ymd(9999, 12, 30)._date;
+            // 'som' at length 3 is still the start of month.
+            let rows = same_second(|| {
+                let t = today();
+                rows_of(vec![
+                    ("som", Datetime::from_ymd(t.y, t.m, 1)._date),
+                    // C++ parity: a too-short 'later' prefix is not undone
+                    // before 'someday' is tried.
+                    ("lasomeday", later),
+                ])
+            });
+            check_rows("minimumMatchLength=3", &rows);
+        });
+    }
+
+    #[test]
+    fn named_parse_named_restores_cursor_on_failure() {
+        with_tz("UTC", || {
+            for input in ["foo bar", "nowhere", "1stx"] {
+                let mut dt = Datetime::new();
+                let mut pig = Pig::new(input);
+                assert!(!dt.parse_named(&mut pig), "parse_named ('{input}') --> false");
+                assert_eq!(pig.cursor(), 0, "parse_named ('{input}') restores the cursor");
+            }
+
+            let mut dt = Datetime::new();
+            let mut pig = Pig::new("xx today");
+            pig.skip_n(3);
+            assert!(dt.parse_named(&mut pig));
+            assert_eq!(pig.cursor(), 8, "parse_named parses from the current cursor");
+
+            // Phrases are tokenized but the phrase rule is disabled upstream.
+            let mut pig = Pig::new("4th thursday in november");
+            assert!(dt.parse_named(&mut pig), "'4th' is still an ordinal");
+            assert_eq!(pig.cursor(), 3);
+        });
+    }
+
+    /// datetime.t.cpp lines 468-500: the informal-time rows of testParse.
+    ///
+    /// Deviation: `adjust` compares the exact seconds of "now" with the time,
+    /// where the C++ compares hours and minutes only (wrong during the minute
+    /// after the time, e.g. 08:30:01-08:30:59 for "8:30"). As in C++, the
+    /// expectations assume no DST transition between midnight and the time.
+    fn informal_rows() {
+        let t8a = 8 * 3600;
+        let t830a = (8 * 3600) + (30 * 60);
+        let t8p = 20 * 3600;
+        let t830p = (20 * 3600) + (30 * 60);
+        let t12p = 12 * 3600;
+        let t1p = 13 * 3600;
+
+        same_second(|| {
+            let r = reference_epochs();
+            let local = r.local;
+            let wks = Datetime::weekstart() as i64;
+            let time_now = Datetime::new();
+            let now_s = (time_now.hour() * 3600 + time_now.minute() * 60 + time_now.second()) as i64;
+            let adjust = |calc: i64| if now_s > calc { 86400 } else { 0 };
+
+            #[rustfmt::skip]
+            let rows: [(&str, i64, i64); 12] = [
+                ("10:30am", 7, local + t830a + adjust(t830a + 2 * 3600) + (2 * 3600)),
+                ("8:30am",  6, local + t830a + adjust(t830a)),
+                ("8:30a",   5, local + t830a + adjust(t830a)),
+                ("8:30",    4, local + t830a + adjust(t830a)),
+                ("8am",     3, local + t8a + adjust(t8a)),
+                ("8a",      2, local + t8a + adjust(t8a)),
+                ("8:30pm",  6, local + t830p + adjust(t830p)),
+                ("8:30p",   5, local + t830p + adjust(t830p)),
+                ("8pm",     3, local + t8p + adjust(t8p)),
+                ("8p",      2, local + t8p + adjust(t8p)),
+                ("12pm",    4, local + t12p + adjust(t12p)),
+                ("1pm",     3, local + t1p + adjust(t1p)),
+            ];
+            for (input, start, date) in rows {
+                test_parse_full(input, start, 0, 0, 0, wks, 0, 0, 0, 0, 0, date);
+            }
+        });
+    }
+
+    #[test]
+    fn parse_informal_rows_by_zone() {
+        for tz in ["UTC", "America/New_York"] {
+            with_tz(tz, || {
+                let _settings = SettingsGuard::save();
+                Datetime::set_time_relative(true);
+                for wks in [0, 1] {
+                    Datetime::set_weekstart(wks);
+                    informal_rows();
+                }
+            });
+        }
+    }
+
+    /// datetime.t.cpp lines 802-1026 and 1173-1186, 1354-1399: relative
+    /// dates, ordinals, `later`, quarters, embedded parsing, the ':'/'='
+    /// rule and month names under `timeRelative`.
+    #[test]
+    fn datetime_t_named_assertions() {
+        for tz in ["UTC", "America/New_York"] {
+            with_tz(tz, || {
+                let _settings = SettingsGuard::save();
+                Datetime::set_weekstart(1);
+                same_second(|| datetime_t_named(tz));
+            });
+        }
+    }
+
+    fn named_dt(input: &str) -> Datetime {
+        Datetime::from_string(input, "").unwrap_or_else(|e| panic!("Datetime (\"{input}\"): {e}"))
+    }
+
+    fn datetime_t_named(tz: &str) {
+        let now = Datetime::new();
+        let day_names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+        // Relative dates - look ahead
+        {
+            Datetime::set_time_relative(true);
+
+            let r1 = named_dt("today");
+            assert!(r1.same_day(&now), "{tz}: today = now");
+
+            for (day, name) in day_names.iter().enumerate() {
+                let day = day as i64;
+                let r = named_dt(name);
+                let dow = now.day_of_week() as i64;
+                let expected = if dow >= day { now + (day - dow + 7) * 86400 } else { now + (day - dow) * 86400 };
+                assert!(r.same_day(&expected), "{tz}: {name} -> next {name}");
+            }
+        }
+
+        // Relative dates - look behind
+        {
+            Datetime::set_time_relative(false);
+
+            let r1 = named_dt("today");
+            assert!(r1.same_day(&now), "{tz}: today = now");
+
+            for (day, name) in day_names.iter().enumerate() {
+                let day = day as i64;
+                let r = named_dt(name);
+                let dow = now.day_of_week() as i64;
+                let expected = if dow >= day { now + (day - dow) * 86400 } else { now + (day - dow - 7) * 86400 };
+                assert!(r.same_day(&expected), "{tz}: {name} -> previous {name}");
+            }
+        }
+        Datetime::set_time_relative(true);
+
+        let r11 = named_dt("eow");
+        assert!(r11 < now + (8 * 86400), "{tz}: eow < 7 days away");
+
+        let r12 = named_dt("eow");
+        assert!(r12 > now - (8 * 86400), "{tz}: eow < 7 days in the past");
+
+        let r16 = named_dt("sonw");
+        assert!(r16 < now + (8 * 86400), "{tz}: sonw < 7 days away");
+
+        let r23 = named_dt("sow");
+        assert!(r23 > now - (8 * 86400), "{tz}: sow < 7 days in the past");
+
+        let r17 = named_dt("sonm");
+        assert!(!r17.same_month(&now), "{tz}: sonm not in same month as now");
+
+        let r18 = named_dt("som");
+        assert!(r18.same_month(&now), "{tz}: som in same month as now");
+        assert!(r18.same_quarter(&now), "{tz}: som in same quarter as now");
+
+        let r19 = named_dt("sony");
+        assert!(!r19.same_year(&now), "{tz}: sony not in same year as now");
+
+        let r19a = named_dt("soy");
+        assert!(r19a.same_year(&now), "{tz}: soy in same year as now");
+        assert!(r19a < now, "{tz}: soy < now");
+
+        let r19b = named_dt("eoy");
+        assert!(r19b > now, "{tz}: eoy > now");
+
+        let r19c = named_dt("soq");
+        assert!(r19c.same_year(&now), "{tz}: soq in same year as now");
+        assert!(r19c < now, "{tz}: soq < now");
+
+        let r19d = named_dt("eoq");
+        assert!(r19d > now, "{tz}: eoq > now");
+
+        let ordinals = ["1st", "2nd", "3rd", "4th"];
+        {
+            Datetime::set_time_relative(true);
+            for (k, ordinal) in ordinals.iter().enumerate() {
+                let n = k as i32 + 1;
+                let dt = named_dt(ordinal);
+                if now.day() >= n {
+                    assert!(!dt.same_month(&now), "{tz}: {ordinal} not in same month as now");
+                } else {
+                    assert!(dt.same_month(&now), "{tz}: {ordinal} in same month as now");
+                }
+                if n == 1 {
+                    assert_eq!(dt.day(), 1, "{tz}: 1st day is 1");
+                }
+            }
+        }
+        {
+            Datetime::set_time_relative(false);
+            for (k, ordinal) in ordinals.iter().enumerate() {
+                let n = k as i32 + 1;
+                let dt = named_dt(ordinal);
+                if now.day() >= n {
+                    assert!(dt.month() == now.month(), "{tz}: {ordinal} in same month as now");
+                } else {
+                    assert!((dt.month() - now.month() - 12) % 12 == -1, "{tz}: {ordinal} in previous month");
+                }
+                if n == 1 {
+                    assert_eq!(dt.day(), 1, "{tz}: 1st day is 1");
+                }
+            }
+        }
+        Datetime::set_time_relative(true);
+
+        let later = named_dt("later");
+        assert_eq!(later.month(), 12, "{tz}: later -> m = 12");
+        assert_eq!(later.day(), 30, "{tz}: later -> d = 30");
+        assert_eq!(later.year(), 9999, "{tz}: later -> y = 9999");
+
+        // Quarters
+        let soq = named_dt("soq");
+        let eoq = named_dt("eoq");
+        assert_eq!(soq.day(), 1, "{tz}: soq day is the first day of a quarter");
+        assert_eq!(eoq.day() / 10, 3, "{tz}: eoq day is the last day of a quarter");
+        assert_eq!(soq.month() % 3, 1, "{tz}: soq month is 1, 4, 7 or 10");
+        assert_eq!(eoq.month() % 3, 0, "{tz}: eoq month is 3, 6, 9 or 12");
+
+        // Note: these fail during the night of daylight savings end.
+        assert!(
+            soq.same_year(&now) || (now.month() >= 10 && soq.year() == now.year() + 1),
+            "{tz}: soq is in same year as now"
+        );
+
+        // Embedded parsing.
+        test_parse_error("nowadays");
+        test_parse("now+1d");
+        test_parse("now-1d");
+        test_parse("now)");
+        test_parse_error("now7");
+        test_parse_error("tomorrov");
+
+        test_parse_error("yesteryear");
+        test_parse("yest+1d");
+        test_parse("yest-1d");
+        test_parse("yest)");
+        test_parse_error("yest7");
+        test_parse("yesterday");
+
+        // Weekdays and month names can no longer be followed by ':' or '='.
+        test_parse("jan");
+        test_parse_error("jan:");
+        test_parse("mon");
+        test_parse_error("mon:");
+
+        {
+            // Verify Datetime::timeRelative=true puts months before and including current month into next year
+            Datetime::set_time_relative(true);
+
+            let today = Datetime::new();
+
+            for month in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"] {
+                let test = named_dt(month);
+                let is_after = test.month() > today.month();
+                let message = format!(
+                    "{tz}: Datetime::timeRelative=true --> {month} in {} year",
+                    if is_after { "same" } else { "next" }
+                );
+                assert!(test.year() == today.year() + if is_after { 0 } else { 1 }, "{message}");
+            }
+        }
+
+        {
+            // Verify Datetime::timeRelative=false puts months into current year
+            Datetime::set_time_relative(false);
+
+            let today = Datetime::new();
+
+            for month in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"] {
+                let test = named_dt(month);
+                assert!(
+                    test.year() == today.year(),
+                    "{tz}: Datetime::timeRelative=false --> {month} in same year"
+                );
+            }
+        }
+        Datetime::set_time_relative(true);
+
+        // datetime.t.cpp lines 1400-1458: diagnostic dump of all named dates
+        // (each must construct).
+        for name in [
+            "now", "yesterday", "today", "tomorrow", "1st", "monday", "january", "later", "someday", "sopd", "sod",
+            "sond", "eopd", "eod", "eond", "sopw", "sow", "sonw", "eopw", "eow", "eonw", "sopww", "sonww", "soww",
+            "eopww", "eonww", "eoww", "sopm", "som", "sonm", "eopm", "eom", "eonm", "sopq", "soq", "sonq", "eopq",
+            "eoq", "eonq", "sopy", "soy", "sony", "eopy", "eoy", "eony", "easter", "eastermonday", "ascension",
+            "pentecost", "goodfriday", "midsommar", "midsommarafton", "juhannus", "3am", "12am", "12pm",
+            "1234567890",
+        ] {
+            let _ = named_dt(name).to_iso_local_extended();
+        }
     }
 }
