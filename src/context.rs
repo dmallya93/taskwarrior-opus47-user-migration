@@ -86,6 +86,7 @@ use crate::shared::timer::Timer;
 use crate::task::Task;
 use crate::tdb2::Tdb2;
 use crate::version::{Version, COMMIT, PACKAGE_STRING};
+use crate::variant::Variant;
 
 /// C++ `std::map<std::string, Column*>` as held by `Context::columns`.
 pub type ColumnRegistry = BTreeMap<String, Rc<dyn Column>>;
@@ -1373,12 +1374,14 @@ impl Context {
         // Milestone 4 hook: Task::defaultProject / defaultDue / defaultScheduled
         // from default.project / default.due / default.scheduled.
 
-        // Milestone 3/4 hooks: Task::searchCaseSensitive =
-        // Variant::searchCaseSensitive = search.case.sensitive; Task::regex =
-        // Variant::searchUsingRegex = regex.
-
+        // C++ `Task::searchCaseSensitive = Variant::searchCaseSensitive =
+        // search.case.sensitive`. Milestone 4 hook: the Task half.
+        Variant::set_search_case_sensitive(self.config.get_boolean("search.case.sensitive"));
+        // C++ `Task::regex = Variant::searchUsingRegex = regex`.
+        // Milestone 4 hook: the Task half.
+        Variant::set_search_using_regex(self.config.get_boolean("regex"));
         // C++ `Lexer::dateFormat = Variant::dateFormat = dateformat`.
-        // Milestone 3 hook: the Variant::dateFormat half.
+        Variant::set_date_format(&self.config.get("dateformat"));
         Lexer::set_date_format(&self.config.get("dateformat"));
 
         let week_start = Datetime::day_of_week_str(&self.config.get("weekstart"));
@@ -2285,6 +2288,9 @@ mod tests {
             cli2::set_minimum_match_length(3);
             Lexer::set_minimum_match_length(3);
             Lexer::set_date_format("");
+            Variant::set_search_case_sensitive(true);
+            Variant::set_search_using_regex(true);
+            Variant::set_date_format("");
             Datetime::set_weekstart(1);
             Datetime::set_iso_enabled(true);
             Datetime::set_standalone_date_enabled(true);
@@ -2299,13 +2305,16 @@ mod tests {
         let _statics = StaticsGuard;
         write(
             &format!("{}/.taskrc", f.home),
-            "abbreviation.minimum=5\ndateformat=D.M.Y\nweekstart=Monday\ndate.iso=0\n",
+            "abbreviation.minimum=5\ndateformat=D.M.Y\nweekstart=Monday\ndate.iso=0\nsearch.case.sensitive=0\nregex=0\n",
         );
         let mut configured = context();
         let (status, _, _) = init(&mut configured, &["task", "alpha"]);
         assert_eq!(status, 0);
         assert_eq!(Lexer::minimum_match_length(), 5);
         assert_eq!(Lexer::date_format(), "D.M.Y");
+        assert_eq!(Variant::date_format(), "D.M.Y");
+        assert!(!Variant::search_case_sensitive());
+        assert!(!Variant::search_using_regex());
         assert_eq!(Datetime::weekstart(), 1);
         assert!(!Datetime::iso_enabled());
         assert!(!Datetime::standalone_date_enabled());
@@ -2320,6 +2329,9 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(Lexer::minimum_match_length(), 2);
         assert_eq!(Lexer::date_format(), "Y-M-D");
+        assert_eq!(Variant::date_format(), "Y-M-D");
+        assert!(Variant::search_case_sensitive());
+        assert!(Variant::search_using_regex());
         assert_eq!(Datetime::weekstart(), 0);
         assert!(Datetime::iso_enabled());
         assert!(!Datetime::standalone_date_enabled());
