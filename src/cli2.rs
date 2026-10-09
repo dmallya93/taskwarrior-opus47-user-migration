@@ -33,11 +33,12 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::context::Context;
 use crate::error::{Result, TwError};
+use crate::lexer::{Lexer, Type as LexerType};
 use crate::shared::color::Color;
 use crate::shared::configuration::Configuration;
 use crate::shared::format::format;
 use crate::shared::fs::{File, Path};
-use crate::shared::shared::{auto_complete, trim_with};
+use crate::shared::shared::auto_complete;
 
 /// C++ `int CLI2::minimumMatchLength = 3;` (set from `abbreviation.minimum`
 /// by `Context::staticInitialization`).
@@ -235,10 +236,10 @@ impl Cli2 {
         }
     }
 
-    /// C++ `CLI2::add`: captures one argument (trimmed of spaces, like
-    /// `Lexer::trim`) and invalidates prior analysis.
+    /// C++ `CLI2::add`: captures one argument (trimmed of spaces by
+    /// [`Lexer::trim`]) and invalidates prior analysis.
     pub fn add(&mut self, argument: &str) {
-        let mut arg = A2::new(&trim_with(argument, " "));
+        let mut arg = A2::new(&Lexer::trim(argument));
         arg.tag("ORIGINAL");
         self.original_args.push(arg);
 
@@ -554,32 +555,31 @@ impl Cli2 {
     }
 }
 
-/// C++ `Lexer::isSingleCharOperator`.
-fn is_single_char_operator(c: char) -> bool {
-    matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '<' | '>' | '^' | '!' | '%' | '=' | '~')
-}
-
 /// Bootstrap stand-in for "becomes a `Lexer::Type::pair` argument whose
 /// `Lexer::decomposePair` name is `rc`" (the C++ `A2` constructor tags those
 /// `RC`, or `CONFIG` when there is a modifier).
 ///
 /// C++ `lexArguments` keeps an argument as a pair when its first token is a
 /// pair that reaches the end of the argument, or when the argument
-/// `Lexer::wasQuoted` (contains one of ` \t()<>&~`). The first token is a
-/// pair when the argument starts with an identifier (C++
-/// `Lexer::isIdentifier`, which stops at `:`, `=`, whitespace and
-/// single-character operators) immediately followed by `:`, `=`, `::` or
-/// `:=`; an unquoted value then always reaches the end or stops at
-/// whitespace or a parenthesis (making the argument "quoted"), so only a
-/// value that is a quoted string ending before the argument does falls
-/// through to a plain word. The name is the identifier's text before its
-/// first `.` (or the whole identifier).
+/// [`Lexer::was_quoted`] (contains one of ` \t()<>&~`). The first token is a
+/// pair when the argument starts with an identifier ([`Lexer::is_identifier`],
+/// which stops at `:`, `=`, whitespace and single-character operators)
+/// immediately followed by `:`, `=`, `::` or `:=`; an unquoted value then
+/// always reaches the end or stops at whitespace or a parenthesis (making the
+/// argument "quoted"), so only a value that is a quoted string ending before
+/// the argument does falls through to a plain word. The name is the
+/// identifier's text before its first `.` (or the whole identifier).
 ///
-/// Milestone 5 hook: replaced by the real Lexer.
+/// The identifier scan and the quoting test use the real Lexer (milestone
+/// 2). Milestone 5 hook: the pair recognition itself (`Lexer::isPair`,
+/// `Lexer::decomposePair`) moves into the full `lexArguments`.
 fn is_rc_pair(raw: &str) -> bool {
-    let end = raw
-        .find(|c: char| c == ':' || c == '=' || c.is_whitespace() || is_single_char_operator(c))
-        .unwrap_or(raw.len());
+    let mut identifier = String::new();
+    let mut type_ = LexerType::identifier;
+    if !Lexer::new(raw).is_identifier(&mut identifier, &mut type_) {
+        return false;
+    }
+    let end = identifier.len();
     let name = raw[..end].split('.').next().unwrap_or("");
     let rest = &raw[end..];
     if name != "rc" || !(rest.starts_with(':') || rest.starts_with('=')) {
@@ -594,9 +594,8 @@ fn is_rc_pair(raw: &str) -> bool {
         .filter(|&q| q == '\'' || q == '"')
         .and_then(|q| value[1..].find(q))
         .is_some_and(|close| close + 2 < value.len());
-    let was_quoted = raw.contains([' ', '\t', '(', ')', '<', '>', '&', '~']);
 
-    !short_quoted || was_quoted
+    !short_quoted || Lexer::was_quoted(raw)
 }
 
 /// Bootstrap stand-in for "lexes as `Lexer::Type::number` or `uuid`".

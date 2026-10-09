@@ -6,9 +6,10 @@
 //! exact metadata of its C++ constructor.
 
 use crate::commands::command::{Category, Command, CommandMeta};
-use crate::context::{now_tm, Context};
+use crate::context::Context;
 use crate::error::Result;
 use crate::shared::color::Color;
+use crate::shared::datetime::Datetime;
 use crate::shared::format::format;
 use crate::shared::shared::os_name;
 use crate::shared::table::Table;
@@ -82,8 +83,8 @@ impl Command for CmdVersion {
              task-color', 'man task-sync' or at https://taskwarrior.org",
         );
 
-        // Milestone 2 hook: C++ `Datetime now; now.year ()` (local time).
-        let year = now_tm(true).tm_year + 1900;
+        let now = Datetime::new();
+        let year = now.year();
 
         let mut bold = Color::new();
         if context.color() {
@@ -198,7 +199,7 @@ mod tests {
     }
 
     fn year() -> i32 {
-        now_tm(true).tm_year + 1900
+        Datetime::new().year()
     }
 
     #[test]
