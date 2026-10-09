@@ -36,9 +36,12 @@
 //!   `PartialOrd` impls, since those cannot be fallible.
 //! * Arithmetic: `operator^=` / `^` -> `op_exp_assign` / `op_exp`,
 //!   `operator-=` / `-` -> `op_sub_assign` / `op_sub`, `operator+=` / `+` ->
-//!   `op_add_assign` / `op_add`. The compound forms return `Result<()>`
-//!   (C++ returns `*this`), the binary forms `Result<Variant>`; they are not
-//!   `std::ops` impls because the C++ throws.
+//!   `op_add_assign` / `op_add`, `operator*=` / `*` -> `op_mul_assign` /
+//!   `op_mul`, `operator/=` / `/` -> `op_div_assign` / `op_div`,
+//!   `operator%=` / `%` -> `op_mod_assign` / `op_mod`. The compound forms
+//!   return `Result<()>` (C++ returns `*this`), the binary forms
+//!   `Result<Variant>`; they are not `std::ops` impls because the C++
+//!   throws.
 //! * `Task::customOrder` (read by the ordering operators) is defined here
 //!   until the Task port, see [`Task::custom_order`].
 //! * The `Task&` parameters of `operator_match` / `operator_hastag` are
@@ -1473,7 +1476,393 @@ impl Variant {
         Ok(left)
     }
 
-    // `operator*=` .. `operator%` (Variant.cpp lines 1526-1860) come here.
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant& Variant::operator*= (const Variant& other)`.
+    ///
+    /// As in C++, only the right operand is dequoted. Boolean * string is the
+    /// right string when the Boolean is true, else `""`; integer * string is
+    /// the right string repeated `(int) _integer` times; string * integer is
+    /// the left string repeated `(int) (right._integer - 1)` more times;
+    /// string * Boolean empties the string when the Boolean is false. Real *
+    /// duration and duration * real are `(time_t)(unsigned)(int) (product)`.
+    ///
+    /// Deviation: signed `long long` / `time_t` overflow is undefined in C++;
+    /// the integer and duration multiplications wrap (two's complement, what
+    /// the reference binary does). The C++ `(int)` conversion of an
+    /// out-of-range or NaN product uses [`c_double_to_int`] (x86-64
+    /// `INT_MIN`). The `(int)` repetition counts truncate like the C++
+    /// conversion; a negative count makes the C++ `while (limit--)` loop run
+    /// through signed overflow (undefined) and in practice exhaust memory,
+    /// so a count below zero appends nothing here (integer * string gives
+    /// `""`, string * 0 leaves the string unchanged).
+    ///
+    /// # Errors
+    /// `Cannot multiply Boolean values`, `Cannot multiply date values`,
+    /// `Cannot multiply real numbers by strings`, `Cannot multiply strings by
+    /// real numbers`, `Cannot multiply strings by strings`, `Cannot multiply
+    /// strings by dates`, `Cannot multiply strings by durations`, `Cannot
+    /// multiply durations by strings`, `Cannot multiply durations by dates`
+    /// or `Cannot multiply durations by durations`, per the operand types.
+    pub fn op_mul_assign(&mut self, other: &Variant) -> Result<()> {
+        let mut right = other.clone();
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match self._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MUL_BOOL.to_string())),
+                Type::Integer => {
+                    self.cast(Type::Integer)?;
+                    self._integer = self._integer.wrapping_mul(right._integer);
+                }
+                Type::Real => {
+                    self.cast(Type::Real)?;
+                    self._real *= right._real;
+                }
+                Type::String => {
+                    self._string = if self._bool { right._string.clone() } else { String::new() };
+                    self._type = Type::String;
+                }
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
+                Type::Duration => {
+                    self.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_mul(right._duration);
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    self._integer = self._integer.wrapping_mul(right._integer);
+                }
+                Type::Integer => self._integer = self._integer.wrapping_mul(right._integer),
+                Type::Real => {
+                    self.cast(Type::Real)?;
+                    self._real *= right._real;
+                }
+                Type::String => {
+                    // int limit = _integer;
+                    let limit = self._integer as i32;
+                    // assert (limit < 128);
+                    self._type = Type::String;
+                    self._string = right._string.repeat(repeat_count(limit));
+                }
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
+                Type::Duration => {
+                    self.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_mul(right._duration);
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::Real)?;
+                    self._real *= right._real;
+                }
+
+                Type::String => return Err(TwError::Message(STRING_VARIANT_MUL_REAL_STR.to_string())),
+
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
+
+                Type::Duration => {
+                    self._type = Type::Duration;
+                    // (time_t)(unsigned)(int)(_real * static_cast<double>(right._duration))
+                    self._duration = i64::from(c_double_to_int(self._real * right._duration as f64) as u32);
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean => {
+                    if !right._bool {
+                        self._string = String::new();
+                    }
+                }
+                Type::Integer => {
+                    // int limit = right._integer - 1;
+                    let limit = right._integer.wrapping_sub(1) as i32;
+                    // assert (limit < 128);
+                    let fragment = self._string.clone();
+                    self._string.push_str(&fragment.repeat(repeat_count(limit)));
+                }
+                Type::Real => return Err(TwError::Message(STRING_VARIANT_MUL_STR_REAL.to_string())),
+                Type::String => return Err(TwError::Message(STRING_VARIANT_MUL_STR_STR.to_string())),
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_STR_DATE.to_string())),
+                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MUL_STR_DUR.to_string())),
+            },
+
+            Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
+
+            Type::Duration => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Duration)?;
+                    self._duration = self._duration.wrapping_mul(right._duration);
+                }
+                Type::Integer => self._duration = self._duration.wrapping_mul(right._integer),
+                Type::Real => {
+                    // (time_t)(unsigned)(int)(static_cast<double>(_duration) * right._real)
+                    self._duration = i64::from(c_double_to_int(self._duration as f64 * right._real) as u32);
+                }
+                Type::String => return Err(TwError::Message(STRING_VARIANT_MUL_DUR_STR.to_string())),
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DUR_DATE.to_string())),
+                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MUL_DUR_DUR.to_string())),
+            },
+        }
+
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant Variant::operator* (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_mul_assign`].
+    pub fn op_mul(&self, other: &Variant) -> Result<Variant> {
+        let mut left = self.clone();
+        left.op_mul_assign(other)?;
+        Ok(left)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant& Variant::operator/= (const Variant& other)`.
+    ///
+    /// As in C++, neither operand is dequoted and Boolean divisors are
+    /// rejected. Integer / duration is `(time_t)(unsigned)(int) (_integer /
+    /// right._duration)` (integer division), real / duration and duration /
+    /// real `(time_t)(unsigned)(int)` of the double quotient; duration /
+    /// duration is the real quotient, with no zero check (IEEE `inf` / NaN,
+    /// as in C++). A string left operand throws the real / string text, a
+    /// date left operand the real / date text, as in C++.
+    ///
+    /// Deviation: `LLONG_MIN / -1` overflows (undefined in C++, a SIGFPE on
+    /// x86-64); the integer and duration divisions wrap instead. The C++
+    /// `(int)` of a `long long` quotient truncates to 32 bits like the
+    /// conversion does on the supported targets; `(int)` of a double uses
+    /// [`c_double_to_int`] (x86-64 `INT_MIN` for out-of-range / NaN).
+    ///
+    /// # Errors
+    /// `Cannot divide by zero` for a zero integer, real or duration divisor
+    /// (where checked), otherwise `Cannot divide Boolean values`, `Cannot
+    /// divide integers by Boolean values`, `Cannot divide integer by string`,
+    /// `Cannot divide integer by date values`, `Cannot divide real by
+    /// Boolean`, `Cannot divide real numbers by strings`, `Cannot divide real
+    /// numbers by dates`, `Cannot divide duration by Boolean`, `Cannot divide
+    /// durations by strings` or `Cannot divide durations by dates`, per the
+    /// operand types.
+    pub fn op_div_assign(&mut self, other: &Variant) -> Result<()> {
+        let right = other.clone();
+
+        match self._type {
+            Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_BOOL.to_string())),
+
+            Type::Integer => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_INT_BOOL.to_string())),
+
+                Type::Integer => {
+                    if right._integer == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self._integer = self._integer.wrapping_div(right._integer);
+                }
+
+                Type::Real => {
+                    if right._real == 0.0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self.cast(Type::Real)?;
+                    self._real /= right._real;
+                }
+
+                Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_INT_STR.to_string())),
+
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_INT_DATE.to_string())),
+
+                Type::Duration => {
+                    if right._duration == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self._type = Type::Duration;
+                    // (time_t)(unsigned)(int)(_integer / right._duration)
+                    self._duration = i64::from(self._integer.wrapping_div(right._duration) as i32 as u32);
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_BOOL.to_string())),
+
+                Type::Integer => {
+                    if right._integer == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self._real /= right._integer as f64;
+                }
+
+                Type::Real => {
+                    if right._real == 0.0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self._real /= right._real;
+                }
+
+                Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_STR.to_string())),
+
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_DATE.to_string())),
+
+                Type::Duration => {
+                    if right._duration == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self._type = Type::Duration;
+                    // (time_t)(unsigned)(int)(_real / right._duration)
+                    self._duration = i64::from(c_double_to_int(self._real / right._duration as f64) as u32);
+                }
+            },
+
+            Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_STR.to_string())),
+
+            Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_DATE.to_string())),
+
+            Type::Duration => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_DUR_BOOL.to_string())),
+
+                Type::Integer => {
+                    if right._integer == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    self._duration = self._duration.wrapping_div(right._integer);
+                }
+
+                Type::Real => {
+                    if right._real == 0.0 {
+                        return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
+                    }
+                    // (time_t)(unsigned)(int)(static_cast<double>(_duration) / right._real)
+                    self._duration = i64::from(c_double_to_int(self._duration as f64 / right._real) as u32);
+                }
+
+                Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_DUR_STR.to_string())),
+
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_DUR_DATE.to_string())),
+
+                Type::Duration => {
+                    self._type = Type::Real;
+                    self._real = self._duration as f64 / right._duration as f64;
+                }
+            },
+        }
+
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant Variant::operator/ (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_div_assign`].
+    pub fn op_div(&self, other: &Variant) -> Result<Variant> {
+        let mut left = self.clone();
+        left.op_div_assign(other)?;
+        Ok(left)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant& Variant::operator%= (const Variant& other)`.
+    ///
+    /// Only integer % integer (integer remainder) and the integer / real
+    /// combinations (C `fmod`, which Rust's `f64 %` is) are defined; every
+    /// other combination throws. Neither operand is dequoted.
+    ///
+    /// Deviation: `LLONG_MIN % -1` is undefined in C++ (a SIGFPE on x86-64);
+    /// the integer remainder wraps (giving 0) instead.
+    ///
+    /// # Errors
+    /// `Cannot modulo zero` for a zero integer or real divisor, otherwise
+    /// `Cannot modulo Booleans`, `Cannot modulo integer by Boolean`, `Cannot
+    /// modulo integer by string`, `Cannot modulo integer by date values`,
+    /// `Cannot modulo integer by duration values`, `Cannot modulo real by
+    /// Boolean`, `Cannot modulo real numbers by strings`, `Cannot modulo real
+    /// numbers by dates`, `Cannot modulo real by duration values`, `Cannot
+    /// modulo string values`, `Cannot modulo date values` or `Cannot modulo
+    /// duration values`, per the operand types.
+    pub fn op_mod_assign(&mut self, other: &Variant) -> Result<()> {
+        let right = other.clone();
+
+        match self._type {
+            Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MOD_BOOL.to_string())),
+
+            Type::Integer => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MOD_INT_BOOL.to_string())),
+
+                Type::Integer => {
+                    if right._integer == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_MOD_ZERO.to_string()));
+                    }
+                    self._integer = self._integer.wrapping_rem(right._integer);
+                }
+
+                Type::Real => {
+                    if right._real == 0.0 {
+                        return Err(TwError::Message(STRING_VARIANT_MOD_ZERO.to_string()));
+                    }
+                    self.cast(Type::Real)?;
+                    // fmod (_real, right._real)
+                    self._real %= right._real;
+                }
+
+                Type::String => return Err(TwError::Message(STRING_VARIANT_MOD_INT_STR.to_string())),
+
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MOD_INT_DATE.to_string())),
+
+                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MOD_INT_DUR.to_string())),
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_BOOL.to_string())),
+
+                Type::Integer => {
+                    if right._integer == 0 {
+                        return Err(TwError::Message(STRING_VARIANT_MOD_ZERO.to_string()));
+                    }
+                    // fmod (_real, static_cast<double>(right._integer))
+                    self._real %= right._integer as f64;
+                }
+
+                Type::Real => {
+                    if right._real == 0.0 {
+                        return Err(TwError::Message(STRING_VARIANT_MOD_ZERO.to_string()));
+                    }
+                    // fmod (_real, right._real)
+                    self._real %= right._real;
+                }
+
+                Type::String => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_STR.to_string())),
+
+                Type::Date => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_DATE.to_string())),
+
+                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_DUR.to_string())),
+            },
+
+            Type::String => return Err(TwError::Message(STRING_VARIANT_MOD_STR.to_string())),
+
+            Type::Date => return Err(TwError::Message(STRING_VARIANT_MOD_DATE.to_string())),
+
+            Type::Duration => return Err(TwError::Message(STRING_VARIANT_MOD_DUR.to_string())),
+        }
+
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `Variant Variant::operator% (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_mod_assign`].
+    pub fn op_mod(&self, other: &Variant) -> Result<Variant> {
+        let mut left = self.clone();
+        left.op_mod_assign(other)?;
+        Ok(left)
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     /// `cast (new_type)` where `new_type` is not [`Type::Date`]: only the
@@ -1750,6 +2139,16 @@ fn c_strtod(text: &str) -> f64 {
     let text = c_string(text);
     // SAFETY: as in `c_strtol`.
     unsafe { libc::strtod(text.as_ptr(), std::ptr::null_mut()) }
+}
+
+/// The number of appends a C++ `while (limit--)` loop performs: `limit`
+/// for `limit >= 0`.
+///
+/// Deviation: for a negative `limit` the C++ loop decrements through signed
+/// overflow (undefined) and in practice exhausts memory; no appends are made
+/// here.
+fn repeat_count(limit: i32) -> usize {
+    usize::try_from(limit).unwrap_or(0)
 }
 
 /// C++ `(long long) value`.

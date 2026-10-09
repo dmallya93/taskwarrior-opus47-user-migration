@@ -10,6 +10,7 @@ use std::sync::MutexGuard;
 mod add;
 mod and;
 mod cast;
+mod divide;
 mod equal;
 mod exp;
 mod gt;
@@ -17,6 +18,9 @@ mod gte;
 mod inequal;
 mod lt;
 mod lte;
+mod math;
+mod modulo;
+mod multiply;
 mod not;
 mod or;
 mod subtract;
@@ -522,4 +526,134 @@ fn arithmetic_details() {
     assert_eq!(v.get_integer(), 4);
     v.op_add_assign(&Variant::from_real(0.5)).unwrap();
     assert_eq!((v.type_(), v.get_real()), (Type::Real, 4.5));
+}
+
+#[test]
+fn multiplicative_details() {
+    let _u = Upstream::setup(Some("UTC"));
+    let err = |r: Result<Variant>| r.unwrap_err().to_string();
+    let b = Variant::from_bool(true);
+    let f = Variant::from_bool(false);
+    let i = Variant::from_int(2);
+    let zero = Variant::from_int(0);
+    let r = Variant::from_real(1.5);
+    let rzero = Variant::from_real(0.0);
+    let s = Variant::from_string("x");
+    let date = Variant::from_time(100, Type::Date).unwrap();
+    let dur = Variant::from_time(10, Type::Duration).unwrap();
+    let dzero = Variant::from_time(0, Type::Duration).unwrap();
+
+    // Exact error texts of operator*=.
+    assert_eq!(err(b.op_mul(&b)), "Cannot multiply Boolean values");
+    assert_eq!(err(b.op_mul(&date)), "Cannot multiply date values");
+    assert_eq!(err(date.op_mul(&i)), "Cannot multiply date values");
+    assert_eq!(err(r.op_mul(&s)), "Cannot multiply real numbers by strings");
+    assert_eq!(err(s.op_mul(&r)), "Cannot multiply strings by real numbers");
+    assert_eq!(err(s.op_mul(&s)), "Cannot multiply strings by strings");
+    assert_eq!(err(s.op_mul(&date)), "Cannot multiply strings by dates");
+    assert_eq!(err(s.op_mul(&dur)), "Cannot multiply strings by durations");
+    assert_eq!(err(dur.op_mul(&s)), "Cannot multiply durations by strings");
+    assert_eq!(err(dur.op_mul(&date)), "Cannot multiply durations by dates");
+    assert_eq!(err(dur.op_mul(&dur)), "Cannot multiply durations by durations");
+
+    // Exact error texts of operator/=.
+    assert_eq!(err(b.op_div(&i)), "Cannot divide Boolean values");
+    assert_eq!(err(i.op_div(&b)), "Cannot divide integers by Boolean values");
+    assert_eq!(err(i.op_div(&zero)), "Cannot divide by zero");
+    assert_eq!(err(i.op_div(&rzero)), "Cannot divide by zero");
+    assert_eq!(err(i.op_div(&dzero)), "Cannot divide by zero");
+    assert_eq!(err(r.op_div(&zero)), "Cannot divide by zero");
+    assert_eq!(err(r.op_div(&rzero)), "Cannot divide by zero");
+    assert_eq!(err(r.op_div(&dzero)), "Cannot divide by zero");
+    assert_eq!(err(dur.op_div(&zero)), "Cannot divide by zero");
+    assert_eq!(err(dur.op_div(&Variant::from_real(-0.0))), "Cannot divide by zero");
+    assert_eq!(err(i.op_div(&s)), "Cannot divide integer by string");
+    assert_eq!(err(i.op_div(&date)), "Cannot divide integer by date values");
+    assert_eq!(err(r.op_div(&b)), "Cannot divide real by Boolean");
+    assert_eq!(err(r.op_div(&s)), "Cannot divide real numbers by strings");
+    assert_eq!(err(r.op_div(&date)), "Cannot divide real numbers by dates");
+    assert_eq!(err(s.op_div(&i)), "Cannot divide real numbers by strings");
+    assert_eq!(err(date.op_div(&i)), "Cannot divide real numbers by dates");
+    assert_eq!(err(dur.op_div(&b)), "Cannot divide duration by Boolean");
+    assert_eq!(err(dur.op_div(&s)), "Cannot divide durations by strings");
+    assert_eq!(err(dur.op_div(&date)), "Cannot divide durations by dates");
+
+    // Exact error texts of operator%=.
+    assert_eq!(err(b.op_mod(&i)), "Cannot modulo Booleans");
+    assert_eq!(err(i.op_mod(&b)), "Cannot modulo integer by Boolean");
+    assert_eq!(err(i.op_mod(&zero)), "Cannot modulo zero");
+    assert_eq!(err(i.op_mod(&rzero)), "Cannot modulo zero");
+    assert_eq!(err(r.op_mod(&zero)), "Cannot modulo zero");
+    assert_eq!(err(r.op_mod(&rzero)), "Cannot modulo zero");
+    assert_eq!(err(i.op_mod(&s)), "Cannot modulo integer by string");
+    assert_eq!(err(i.op_mod(&date)), "Cannot modulo integer by date values");
+    assert_eq!(err(i.op_mod(&dur)), "Cannot modulo integer by duration values");
+    assert_eq!(err(r.op_mod(&b)), "Cannot modulo real by Boolean");
+    assert_eq!(err(r.op_mod(&s)), "Cannot modulo real numbers by strings");
+    assert_eq!(err(r.op_mod(&date)), "Cannot modulo real numbers by dates");
+    assert_eq!(err(r.op_mod(&dur)), "Cannot modulo real by duration values");
+    assert_eq!(err(s.op_mod(&i)), "Cannot modulo string values");
+    assert_eq!(err(date.op_mod(&i)), "Cannot modulo date values");
+    assert_eq!(err(dur.op_mod(&i)), "Cannot modulo duration values");
+
+    // String repetition; *= dequotes the right operand only.
+    assert_eq!(Variant::from_int(3).op_mul(&Variant::from_string("'ab'")).unwrap().get_string(), "ababab");
+    assert_eq!(Variant::from_string("'ab'").op_mul(&Variant::from_int(2)).unwrap().get_string(), "'ab''ab'");
+    let v = Variant::from_int(0).op_mul(&s).unwrap();
+    assert_eq!((v.type_(), v.get_string()), (Type::String, ""));
+    assert_eq!(Variant::from_int(-2).op_mul(&s).unwrap().get_string(), "");
+    assert_eq!(s.op_mul(&Variant::from_int(1)).unwrap().get_string(), "x");
+    assert_eq!(s.op_mul(&zero).unwrap().get_string(), "x");
+    assert_eq!(f.op_mul(&s).unwrap().get_string(), "");
+    assert_eq!(b.op_mul(&Variant::from_string("\"y\"")).unwrap().get_string(), "y");
+    assert_eq!(s.op_mul(&f).unwrap().get_string(), "");
+    assert_eq!(s.op_mul(&b).unwrap().get_string(), "x");
+    // (int) _integer truncates: 2^32 + 2 repeats twice.
+    let mut big = Variant::from_string("4294967298");
+    big.cast(Type::Integer).unwrap();
+    assert_eq!(big.op_mul(&s).unwrap().get_string(), "xx");
+
+    // (time_t)(unsigned)(int) of real products / quotients.
+    let v = Variant::from_real(-1.5).op_mul(&dur).unwrap();
+    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 4_294_967_295 - 14));
+    assert_eq!(dur.op_mul(&Variant::from_real(-0.5)).unwrap().get_duration(), 4_294_967_295 - 4);
+    assert_eq!(dur.op_mul(&Variant::from_real(1e10)).unwrap().get_duration(), 2_147_483_648);
+    assert_eq!(dur.op_div(&Variant::from_real(-2.0)).unwrap().get_duration(), 4_294_967_291);
+    let v = Variant::from_real(-20.0).op_div(&dur).unwrap();
+    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 4_294_967_294));
+    let v = Variant::from_int(-25).op_div(&dur).unwrap();
+    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 4_294_967_294));
+
+    // Integer division truncates toward zero; duration / duration is real
+    // with no zero check.
+    assert_eq!(Variant::from_int(-7).op_div(&i).unwrap().get_integer(), -3);
+    assert_eq!(dur.op_div(&Variant::from_int(3)).unwrap().get_duration(), 3);
+    let v = dur.op_div(&dzero).unwrap();
+    assert_eq!(v.type_(), Type::Real);
+    assert!(v.get_real().is_infinite());
+    assert!(dzero.op_div(&dzero).unwrap().get_real().is_nan());
+
+    // Remainders: integer % keeps the dividend's sign, reals use fmod.
+    assert_eq!(Variant::from_int(-7).op_mod(&i).unwrap().get_integer(), -1);
+    assert_eq!(Variant::from_real(-7.5).op_mod(&i).unwrap().get_real(), -1.5);
+    let v = Variant::from_int(7).op_mod(&r).unwrap();
+    assert_eq!((v.type_(), v.get_real()), (Type::Real, 1.0));
+
+    // Signed overflow wraps.
+    let mut min = Variant::from_string("-9223372036854775808");
+    min.cast(Type::Integer).unwrap();
+    let minus_one = Variant::from_int(-1);
+    assert_eq!(min.op_mul(&minus_one).unwrap().get_integer(), i64::MIN);
+    assert_eq!(min.op_div(&minus_one).unwrap().get_integer(), i64::MIN);
+    assert_eq!(min.op_mod(&minus_one).unwrap().get_integer(), 0);
+
+    // Compound forms modify in place; the source is kept.
+    let mut v = Variant::from_int(6);
+    v.set_source("urgency");
+    v.op_mul_assign(&Variant::from_int(7)).unwrap();
+    assert_eq!((v.get_integer(), v.source()), (42, "urgency"));
+    v.op_div_assign(&Variant::from_int(4)).unwrap();
+    assert_eq!(v.get_integer(), 10);
+    v.op_mod_assign(&Variant::from_int(4)).unwrap();
+    assert_eq!(v.get_integer(), 2);
 }
