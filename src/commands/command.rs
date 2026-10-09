@@ -40,12 +40,19 @@
 //!
 //! and [`factory`] registers it with `register(all, Rc::new(CmdVersion::new()))`.
 //!
+//! # Registration (task #8)
+//!
+//! [`factory`] registers one struct per C++ command class (75 built-ins, in
+//! the C++ order) plus one [`CmdCustom`] per `report.<name>.columns`. Every
+//! struct carries the exact C++ constructor metadata; commands whose port has
+//! not landed return [`TwError::NotImplemented`] from `execute` (foundation
+//! DD4), and each stub's doc comment names the milestone that ports it.
+//!
 //! # Still to come
 //!
-//! - The `factory` registration list: task #8 adds every built-in command
-//!   (the C++ list is reproduced in [`factory`]'s documentation) and the
-//!   `CmdCustom` construction for `report.<name>.columns`; the custom-report
-//!   name scan and its conflict error are already here.
+//! - `CmdCustom` and `CmdTimesheet` override the C++ virtual `uses_context`
+//!   with a `report.<name>.context` lookup; [`Command::uses_context`] takes
+//!   no configuration yet, so those overrides arrive with their ports.
 //! - Nothing else in `Command.cpp` depends on Task/TDB2: `permission` is
 //!   ported as [`Command::permission`].
 
@@ -54,6 +61,57 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::rc::Rc;
 
+use super::cmd_add::CmdAdd;
+use super::cmd_aliases::CmdCompletionAliases;
+use super::cmd_annotate::CmdAnnotate;
+use super::cmd_append::CmdAppend;
+use super::cmd_attributes::CmdZshAttributes;
+use super::cmd_burndown::{CmdBurndownAnnual, CmdBurndownDaily, CmdBurndownMonthly, CmdBurndownWeekly};
+use super::cmd_calc::CmdCalc;
+use super::cmd_calendar::CmdCalendar;
+use super::cmd_color::CmdColor;
+use super::cmd_columns::{CmdColumns, CmdCompletionColumns};
+use super::cmd_commands::{CmdCommands, CmdCompletionCommands, CmdZshCommands};
+use super::cmd_config::{CmdCompletionConfig, CmdConfig};
+use super::cmd_context::{CmdCompletionContext, CmdContext};
+use super::cmd_count::CmdCount;
+use super::cmd_custom::CmdCustom;
+use super::cmd_delete::CmdDelete;
+use super::cmd_denotate::CmdDenotate;
+use super::cmd_diagnostics::CmdDiagnostics;
+use super::cmd_done::CmdDone;
+use super::cmd_duplicate::CmdDuplicate;
+use super::cmd_edit::CmdEdit;
+use super::cmd_exec::CmdExec;
+use super::cmd_export::CmdExport;
+use super::cmd_get::CmdGet;
+use super::cmd_help::CmdHelp;
+use super::cmd_history::{CmdGHistoryAnnual, CmdGHistoryDaily, CmdGHistoryMonthly, CmdGHistoryWeekly, CmdHistoryAnnual, CmdHistoryDaily, CmdHistoryMonthly, CmdHistoryWeekly};
+use super::cmd_ids::{CmdCompletionIds, CmdCompletionUuids, CmdIDs, CmdUUIDs, CmdZshCompletionIds, CmdZshCompletionUuids};
+use super::cmd_import::CmdImport;
+use super::cmd_import_v2::CmdImportV2;
+use super::cmd_info::CmdInfo;
+use super::cmd_log::CmdLog;
+use super::cmd_logo::CmdLogo;
+use super::cmd_modify::CmdModify;
+use super::cmd_news::CmdNews;
+use super::cmd_prepend::CmdPrepend;
+use super::cmd_projects::{CmdCompletionProjects, CmdProjects};
+use super::cmd_purge::CmdPurge;
+use super::cmd_reports::CmdReports;
+use super::cmd_show::{CmdShow, CmdShowRaw};
+use super::cmd_start::CmdStart;
+use super::cmd_stats::CmdStats;
+use super::cmd_stop::CmdStop;
+use super::cmd_summary::CmdSummary;
+use super::cmd_sync::CmdSync;
+use super::cmd_tags::{CmdCompletionTags, CmdTags};
+use super::cmd_timesheet::CmdTimesheet;
+use super::cmd_udas::{CmdCompletionUDAs, CmdUDAs};
+use super::cmd_undo::CmdUndo;
+use super::cmd_unique::CmdUnique;
+use super::cmd_urgency::CmdUrgency;
+use super::cmd_version::{CmdCompletionVersion, CmdVersion};
 use crate::context::Context;
 use crate::error::{Result, TwError};
 use crate::shared::configuration::Configuration;
@@ -354,28 +412,87 @@ pub fn register(all: &mut Registry, command: Rc<dyn Command>) {
 /// Fails with `Custom report '<name>' conflicts with built-in task command.`
 /// when a custom report has a built-in command's name.
 ///
-/// The C++ registers, in this order: CmdAdd, CmdAnnotate, CmdAppend,
-/// CmdBurndownAnnual, CmdBurndownDaily, CmdBurndownMonthly, CmdBurndownWeekly,
-/// CmdCalc, CmdCalendar, CmdColor, CmdColumns, CmdCommands,
-/// CmdCompletionAliases, CmdCompletionColumns, CmdCompletionCommands,
-/// CmdCompletionConfig, CmdCompletionContext, CmdCompletionIds,
-/// CmdCompletionUDAs, CmdCompletionUuids, CmdCompletionProjects,
-/// CmdCompletionTags, CmdCompletionVersion, CmdConfig, CmdContext, CmdCount,
-/// CmdDelete, CmdDenotate, CmdDiagnostics, CmdDone, CmdDuplicate, CmdEdit,
-/// CmdExec (`HAVE_EXECUTE`), CmdExport, CmdGet, CmdGHistoryDaily,
-/// CmdGHistoryWeekly, CmdGHistoryMonthly, CmdGHistoryAnnual, CmdHelp,
-/// CmdHistoryDaily, CmdHistoryWeekly, CmdHistoryMonthly, CmdHistoryAnnual,
-/// CmdIDs, CmdImport, CmdImportV2, CmdInfo, CmdLog, CmdLogo, CmdModify,
-/// CmdNews, CmdPrepend, CmdProjects, CmdPurge, CmdReports, CmdShow,
-/// CmdShowRaw, CmdStart, CmdStats, CmdStop, CmdSummary, CmdSync, CmdTags,
-/// CmdTimesheet, CmdUDAs, CmdUndo, CmdUnique, CmdUrgency, CmdUUIDs,
-/// CmdVersion, CmdZshAttributes, CmdZshCommands, CmdZshCompletionIds,
-/// CmdZshCompletionUuids.
-///
-/// Task #8 hook: none of those structs exists yet, so nothing is registered
-/// here; task #8 adds one `register(all, Rc::new(CmdX::new()));` line per
-/// class above and the `CmdCustom` construction below.
+/// The built-in commands are registered in the C++ order (one per C++ class,
+/// see the `cmd_*` modules); `CmdExec` sits behind `#ifdef HAVE_EXECUTE`,
+/// which `cmake.h.in` defines unconditionally, so it is always registered.
 pub fn factory(all: &mut Registry, config: &Configuration) -> Result<()> {
+    register(all, Rc::new(CmdAdd::new()));
+    register(all, Rc::new(CmdAnnotate::new()));
+    register(all, Rc::new(CmdAppend::new()));
+    register(all, Rc::new(CmdBurndownAnnual::new()));
+    register(all, Rc::new(CmdBurndownDaily::new()));
+    register(all, Rc::new(CmdBurndownMonthly::new()));
+    register(all, Rc::new(CmdBurndownWeekly::new()));
+    register(all, Rc::new(CmdCalc::new()));
+    register(all, Rc::new(CmdCalendar::new()));
+    register(all, Rc::new(CmdColor::new()));
+    register(all, Rc::new(CmdColumns::new()));
+    register(all, Rc::new(CmdCommands::new()));
+    register(all, Rc::new(CmdCompletionAliases::new()));
+    register(all, Rc::new(CmdCompletionColumns::new()));
+    register(all, Rc::new(CmdCompletionCommands::new()));
+    register(all, Rc::new(CmdCompletionConfig::new()));
+    register(all, Rc::new(CmdCompletionContext::new()));
+    register(all, Rc::new(CmdCompletionIds::new()));
+    register(all, Rc::new(CmdCompletionUDAs::new()));
+    register(all, Rc::new(CmdCompletionUuids::new()));
+    register(all, Rc::new(CmdCompletionProjects::new()));
+    register(all, Rc::new(CmdCompletionTags::new()));
+    register(all, Rc::new(CmdCompletionVersion::new()));
+    register(all, Rc::new(CmdConfig::new()));
+    register(all, Rc::new(CmdContext::new()));
+    register(all, Rc::new(CmdCount::new()));
+    register(all, Rc::new(CmdDelete::new()));
+    register(all, Rc::new(CmdDenotate::new()));
+    register(all, Rc::new(CmdDiagnostics::new()));
+    register(all, Rc::new(CmdDone::new()));
+    register(all, Rc::new(CmdDuplicate::new()));
+    register(all, Rc::new(CmdEdit::new()));
+    // C++ `#ifdef HAVE_EXECUTE`: `cmake.h.in` always defines it.
+    register(all, Rc::new(CmdExec::new()));
+    register(all, Rc::new(CmdExport::new()));
+    register(all, Rc::new(CmdGet::new()));
+    register(all, Rc::new(CmdGHistoryDaily::new()));
+    register(all, Rc::new(CmdGHistoryWeekly::new()));
+    register(all, Rc::new(CmdGHistoryMonthly::new()));
+    register(all, Rc::new(CmdGHistoryAnnual::new()));
+    register(all, Rc::new(CmdHelp::new()));
+    register(all, Rc::new(CmdHistoryDaily::new()));
+    register(all, Rc::new(CmdHistoryWeekly::new()));
+    register(all, Rc::new(CmdHistoryMonthly::new()));
+    register(all, Rc::new(CmdHistoryAnnual::new()));
+    register(all, Rc::new(CmdIDs::new()));
+    register(all, Rc::new(CmdImport::new()));
+    register(all, Rc::new(CmdImportV2::new()));
+    register(all, Rc::new(CmdInfo::new()));
+    register(all, Rc::new(CmdLog::new()));
+    register(all, Rc::new(CmdLogo::new()));
+    register(all, Rc::new(CmdModify::new()));
+    register(all, Rc::new(CmdNews::new()));
+    register(all, Rc::new(CmdPrepend::new()));
+    register(all, Rc::new(CmdProjects::new()));
+    register(all, Rc::new(CmdPurge::new()));
+    register(all, Rc::new(CmdReports::new()));
+    register(all, Rc::new(CmdShow::new()));
+    register(all, Rc::new(CmdShowRaw::new()));
+    register(all, Rc::new(CmdStart::new()));
+    register(all, Rc::new(CmdStats::new()));
+    register(all, Rc::new(CmdStop::new()));
+    register(all, Rc::new(CmdSummary::new()));
+    register(all, Rc::new(CmdSync::new()));
+    register(all, Rc::new(CmdTags::new()));
+    register(all, Rc::new(CmdTimesheet::new()));
+    register(all, Rc::new(CmdUDAs::new()));
+    register(all, Rc::new(CmdUndo::new()));
+    register(all, Rc::new(CmdUnique::new()));
+    register(all, Rc::new(CmdUrgency::new()));
+    register(all, Rc::new(CmdUUIDs::new()));
+    register(all, Rc::new(CmdVersion::new()));
+    register(all, Rc::new(CmdZshAttributes::new()));
+    register(all, Rc::new(CmdZshCommands::new()));
+    register(all, Rc::new(CmdZshCompletionIds::new()));
+    register(all, Rc::new(CmdZshCompletionUuids::new()));
+
     // Instantiate a command object for each custom report.
     let mut reports = Vec::new();
     for key in config.keys() {
@@ -395,10 +512,14 @@ pub fn factory(all: &mut Registry, config: &Configuration) -> Result<()> {
             )));
         }
 
-        // Task #8 hook: C++
-        //   c = new CmdCustom (report, "task <filter> " + report,
-        //                      config.get ("report." + report + ".description"));
-        //   all[c->keyword ()] = c;
+        register(
+            all,
+            Rc::new(CmdCustom::new(
+                report,
+                &format!("task <filter> {report}"),
+                &config.get(&format!("report.{report}.description")),
+            )),
+        );
     }
 
     Ok(())
@@ -530,12 +651,24 @@ mod tests {
 
     #[test]
     fn factory_custom_report_conflict() {
+        // A custom report may not reuse a built-in keyword.
+        let mut config = Configuration::new();
+        config.set("report.add.columns", "id");
+        let err = factory(&mut Registry::new(), &config).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Custom report 'add' conflicts with built-in task command."
+        );
+
+        // Nor the keyword of a command registered before the factory runs.
         let mut config = Configuration::new();
         config.set("report.probe.columns", "id");
         config.set("report.mine.columns", "id");
         let mut all = Registry::new();
         factory(&mut all, &config).unwrap();
+        assert!(all.contains_key("probe") && all.contains_key("mine"));
 
+        let mut all = Registry::new();
         register(
             &mut all,
             Rc::new(Probe {
@@ -550,5 +683,298 @@ mod tests {
             err.to_string(),
             "Custom report 'probe' conflicts with built-in task command."
         );
+    }
+
+    /// The keywords of the 75 classes C++ `Command::factory` instantiates
+    /// (with `HAVE_EXECUTE`), sorted.
+    const CPP_BUILTIN_KEYWORDS: [&str; 75] = [
+        "_aliases",
+        "_columns",
+        "_commands",
+        "_config",
+        "_context",
+        "_get",
+        "_ids",
+        "_projects",
+        "_show",
+        "_tags",
+        "_udas",
+        "_unique",
+        "_urgency",
+        "_uuids",
+        "_version",
+        "_zshattributes",
+        "_zshcommands",
+        "_zshids",
+        "_zshuuids",
+        "add",
+        "annotate",
+        "append",
+        "burndown.annual",
+        "burndown.daily",
+        "burndown.monthly",
+        "burndown.weekly",
+        "calc",
+        "calendar",
+        "colors",
+        "columns",
+        "commands",
+        "config",
+        "context",
+        "count",
+        "delete",
+        "denotate",
+        "diagnostics",
+        "done",
+        "duplicate",
+        "edit",
+        "execute",
+        "export",
+        "ghistory.annual",
+        "ghistory.daily",
+        "ghistory.monthly",
+        "ghistory.weekly",
+        "help",
+        "history.annual",
+        "history.daily",
+        "history.monthly",
+        "history.weekly",
+        "ids",
+        "import",
+        "import-v2",
+        "information",
+        "log",
+        "logo",
+        "modify",
+        "news",
+        "prepend",
+        "projects",
+        "purge",
+        "reports",
+        "show",
+        "start",
+        "stats",
+        "stop",
+        "summary",
+        "synchronize",
+        "tags",
+        "timesheet",
+        "udas",
+        "undo",
+        "uuids",
+        "version",
+    ];
+
+    /// The custom reports of the C++ `configurationDefaults`, with their
+    /// `report.<name>.description`.
+    const CPP_DEFAULT_REPORTS: [(&str, &str); 17] = [
+        ("active", "Active tasks"),
+        ("all", "All tasks"),
+        ("blocked", "Blocked tasks"),
+        ("blocking", "Blocking tasks"),
+        ("completed", "Completed tasks"),
+        ("list", "Most details of tasks"),
+        ("long", "All details of tasks"),
+        ("ls", "Few details of tasks"),
+        ("minimal", "Minimal details of tasks"),
+        ("newest", "Newest tasks"),
+        ("next", "Most urgent tasks"),
+        ("oldest", "Oldest tasks"),
+        ("overdue", "Overdue tasks"),
+        ("ready", "Most urgent actionable tasks"),
+        ("recurring", "Recurring Tasks"),
+        ("unblocked", "Unblocked tasks"),
+        ("waiting", "Waiting (hidden) tasks"),
+    ];
+
+    /// Commands whose `execute` has been ported (task #10 adds `version`,
+    /// `_version` and `_show`); every other one must still be a stub.
+    const PORTED: [&str; 0] = [];
+
+    fn default_config() -> Configuration {
+        let mut config = Configuration::new();
+        config
+            .parse(
+                crate::context::CONFIGURATION_DEFAULTS,
+                1,
+                &[crate::context::task_rcdir()],
+                "",
+            )
+            .unwrap();
+        config
+    }
+
+    #[test]
+    fn factory_registers_exactly_the_cpp_builtins() {
+        let mut all = Registry::new();
+        factory(&mut all, &Configuration::new()).unwrap();
+        let keywords: Vec<&str> = all.keys().map(String::as_str).collect();
+        assert_eq!(keywords, CPP_BUILTIN_KEYWORDS);
+        for (keyword, command) in &all {
+            assert_eq!(command.keyword(), keyword);
+        }
+    }
+
+    #[test]
+    fn factory_registers_default_custom_reports() {
+        let config = default_config();
+        let mut all = Registry::new();
+        factory(&mut all, &config).unwrap();
+        assert_eq!(all.len(), CPP_BUILTIN_KEYWORDS.len() + CPP_DEFAULT_REPORTS.len());
+
+        let mut expected: Vec<&str> = CPP_BUILTIN_KEYWORDS.to_vec();
+        expected.extend(CPP_DEFAULT_REPORTS.iter().map(|(name, _)| *name));
+        expected.sort_unstable();
+        let keywords: Vec<&str> = all.keys().map(String::as_str).collect();
+        assert_eq!(keywords, expected);
+
+        for (name, description) in CPP_DEFAULT_REPORTS {
+            let c = &all[name];
+            assert_eq!(c.keyword(), name);
+            assert_eq!(c.usage(), format!("task <filter> {name}"));
+            assert_eq!(c.description(), description);
+            assert!(c.read_only() && c.displays_id() && c.needs_gc() && c.needs_recur_update());
+            assert!(c.uses_context() && c.accepts_filter());
+            assert!(!c.needs_confirm() && !c.accepts_modifications() && !c.accepts_miscellaneous());
+            assert_eq!(c.category(), Category::Report);
+        }
+    }
+
+    #[test]
+    fn custom_report_without_description() {
+        let mut config = Configuration::new();
+        config.set("report.mine.columns", "id");
+        let mut all = Registry::new();
+        factory(&mut all, &config).unwrap();
+        assert_eq!(all["mine"].usage(), "task <filter> mine");
+        assert_eq!(all["mine"].description(), "");
+    }
+
+    /// (keyword, usage, description, read_only, displays_id, needs_confirm,
+    /// needs_gc, needs_recur_update, uses_context, accepts_filter,
+    /// accepts_modifications, accepts_miscellaneous, category), as set by
+    /// the C++ constructors (or left at the `Command::Command` defaults).
+    #[allow(clippy::type_complexity)]
+    const SPOT_CHECKS: [(
+        &str,
+        &str,
+        &str,
+        [bool; 9],
+        Category,
+    ); 10] = [
+        (
+            "add",
+            "task          add <mods>",
+            "Adds a new task",
+            [false, false, false, false, false, true, false, true, false],
+            Category::Operation,
+        ),
+        (
+            "delete",
+            "task <filter> delete <mods>",
+            "Deletes the specified task",
+            [false, false, true, false, false, true, true, true, false],
+            Category::Operation,
+        ),
+        (
+            "purge",
+            "task <filter> purge",
+            "Removes the specified tasks from the data files. Causes permanent loss of data.",
+            [false, false, true, true, false, true, true, false, false],
+            Category::Operation,
+        ),
+        (
+            "show",
+            "task          show [all | substring]",
+            "Shows all configuration variables or subset",
+            [true, false, false, false, false, false, false, false, true],
+            Category::Config,
+        ),
+        (
+            "_show",
+            "task          _show",
+            "Shows all configuration settings in a machine-readable format",
+            [true, false, false, true, false, false, false, false, false],
+            Category::Internal,
+        ),
+        (
+            "version",
+            "task          version",
+            "Shows the Taskwarrior version number",
+            [true, false, false, false, false, false, false, false, false],
+            Category::Misc,
+        ),
+        (
+            "_version",
+            "task          _version",
+            "Shows only the Taskwarrior version number",
+            [true, false, false, false, false, false, false, false, false],
+            Category::Internal,
+        ),
+        (
+            "burndown.weekly",
+            "task <filter> burndown.weekly",
+            "Shows a graphical burndown chart, by weekly",
+            [true, false, false, true, true, true, true, false, false],
+            Category::Graphs,
+        ),
+        (
+            "ghistory.monthly",
+            "task <filter> ghistory.monthly",
+            "Shows a graphical report of task history, by month",
+            [true, false, false, false, true, true, true, false, false],
+            Category::Graphs,
+        ),
+        (
+            "information",
+            "task <filter> information",
+            "Shows all data and metadata",
+            [true, false, false, false, false, false, true, false, false],
+            Category::Metadata,
+        ),
+    ];
+
+    #[test]
+    fn builtin_metadata_matches_cpp_constructors() {
+        let mut all = Registry::new();
+        factory(&mut all, &Configuration::new()).unwrap();
+        for (keyword, usage, description, flags, category) in SPOT_CHECKS {
+            let c = &all[keyword];
+            let actual = [
+                c.read_only(),
+                c.displays_id(),
+                c.needs_confirm(),
+                c.needs_gc(),
+                c.needs_recur_update(),
+                c.uses_context(),
+                c.accepts_filter(),
+                c.accepts_modifications(),
+                c.accepts_miscellaneous(),
+            ];
+            assert_eq!(c.usage(), usage, "{keyword}");
+            assert_eq!(c.description(), description, "{keyword}");
+            assert_eq!(actual, flags, "{keyword}");
+            assert_eq!(c.category(), category, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn unported_commands_are_not_implemented() {
+        let mut all = Registry::new();
+        factory(&mut all, &default_config()).unwrap();
+        let mut context = Context::new();
+        let mut stubs = 0;
+        for (keyword, command) in &all {
+            if PORTED.contains(&keyword.as_str()) {
+                continue;
+            }
+            let mut output = String::new();
+            let err = command.execute(&mut context, &mut output).unwrap_err();
+            assert!(matches!(&err, TwError::NotImplemented(k) if k == keyword), "{keyword}");
+            assert_eq!(err.to_string(), format!("Command '{keyword}' is not yet implemented."));
+            assert_eq!(output, "");
+            stubs += 1;
+        }
+        assert_eq!(stubs, all.len() - PORTED.len());
     }
 }

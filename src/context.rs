@@ -2188,6 +2188,29 @@ mod tests {
     }
 
     #[test]
+    fn stub_command_dispatch_reports_not_implemented() {
+        // The real registry (Command::factory), no test commands: `add` is a
+        // stub, so run takes the `throw std::string` path: message on
+        // stderr, exit status 2.
+        let f = fixture();
+        write(&format!("{}/.taskrc", f.home), "");
+        let mut context = Context::new();
+        let (status, _, stderr) = init(&mut context, &["task", "add", "foo"]);
+        assert_eq!(status, 0, "{stderr}");
+        assert_eq!(context.cli2.get_command(), "add");
+        let (rc, stdout, stderr) = run(&mut context);
+        assert_eq!(rc, 2);
+        assert_eq!(stdout, "");
+        assert_eq!(stderr, "Command 'add' is not yet implemented.\n");
+
+        // A default custom report dispatches the same way.
+        let mut context = Context::new();
+        assert_eq!(init(&mut context, &["task", "next"]).0, 0);
+        let (rc, _, stderr) = run(&mut context);
+        assert_eq!((rc, stderr.as_str()), (2, "Command 'next' is not yet implemented.\n"));
+    }
+
+    #[test]
     fn no_command_is_an_error() {
         let f = fixture();
         write(&format!("{}/.taskrc", f.home), "default.command=\n");
