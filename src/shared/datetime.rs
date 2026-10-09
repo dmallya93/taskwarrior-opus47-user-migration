@@ -61,6 +61,7 @@ use crate::shared::format::format;
 use crate::shared::localtime::{self, Tm};
 use crate::shared::pig::Pig;
 use crate::shared::shared::{close_enough, upper_case_first};
+use crate::shared::unicode::{unicode_latin_alpha, unicode_latin_digit, unicode_whitespace};
 use crate::shared::utf8::mk_wcwidth;
 
 /// C++ `EPOCH_MIN_VALUE`: 1980-01-01T00:00:00Z.
@@ -396,17 +397,361 @@ impl Datetime {
     }
 }
 
+/// C++ `pig.str ().substr (0, 3)`: the first three bytes of `text` (fewer at
+/// the end). A split UTF-8 sequence becomes U+FFFD, which no day or month
+/// name matches, just as the raw bytes would not in C++.
+fn substr3(text: &str) -> String {
+    let bytes = text.as_bytes();
+    String::from_utf8_lossy(&bytes[..bytes.len().min(3)]).into_owned()
+}
+
+/// C++ `format[i]` as the `int` terminator of `pig.getUntil`: `'\0'` at
+/// `format.length ()` (std::string guarantees the NUL), and `'\0'` for a
+/// non-ASCII byte too (a negative `char` in C++ that no code point equals).
+/// `Pig::get_until` never matches `'\0'`, so both read to the end.
+fn until_char(format: &[u8], i: usize) -> char {
+    match format.get(i) {
+        Some(&b) if b.is_ascii() => b as char,
+        _ => '\0',
+    }
+}
+
+/// C++ `pig.skip (format[f])` for the literal format byte `b`. ASCII goes
+/// through `Pig::skip`; a non-ASCII byte (part of a UTF-8 literal such as
+/// `é`) is compared with the input byte as signed `char`s and skipped one
+/// byte at a time, as in C++ (`Pig::skip (char)` cannot express it).
+fn skip_format_byte(pig: &mut Pig, b: u8) -> bool {
+    if b.is_ascii() {
+        return pig.skip(b as char);
+    }
+
+    if pig.peek() == b as i8 as i32 {
+        let next = pig.cursor() + 1;
+        pig.restore_to(next);
+        return true;
+    }
+
+    false
+}
+
 // -----------------------------------------------------------------------------
 // The grammar productions and named-date initializers (Datetime.cpp lines
-// 235-2927), in C++ order. Their bodies are ported by the follow-up tasks;
-// until then each returns `false`, so only `parse_*`-independent behaviour
-// works. Remove the `allow` once every body is filled in.
-#[allow(unused_variables, dead_code)]
+// 235-2927), in C++ order. `parse_named` and the `initialize*` bodies are
+// ported by the follow-up task; until then each returns `false`. Remove the
+// `unused_variables, dead_code` allow once every body is filled in.
+// The range checks and nested ifs are written as in C++ for line-by-line
+// review.
+#[allow(
+    unused_variables,
+    dead_code,
+    clippy::manual_range_contains,
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::nonminimal_bool
+)]
 impl Datetime {
-    /// C++ `Datetime::parse_formatted` (Datetime.cpp line 235).
+    /// C++ `Datetime::parse_formatted` (Datetime.cpp line 235): parses
+    /// `pig` according to an `rc.dateformat`-style `format`.
+    ///
+    /// Byte handling as in C++ (`format[f]` is a `char`):
+    /// * A literal format byte is matched against the next input byte; a
+    ///   non-ASCII byte (part of a UTF-8 literal) is matched byte by byte,
+    ///   via [`skip_format_byte`].
+    /// * `A`/`B` read up to `format[f + 1]`, which is `'\0'` past the end of
+    ///   the format; [`until_char`] maps that, and a non-ASCII byte (a
+    ///   negative `int` in C++, never equal to a code point), to `'\0'`,
+    ///   which `Pig::get_until` likewise never matches.
     fn parse_formatted(&mut self, pig: &mut Pig, format: &str) -> bool {
-        // Ported in the follow-up task
-        false
+        // Short-circuit on missing format.
+        if format.is_empty() {
+            return false;
+        }
+
+        let checkpoint = pig.cursor();
+
+        let mut month: i32 = -1; // So we can check later.
+        let mut day: i32 = -1;
+        let mut year: i32 = -1;
+        let mut hour: i32 = -1;
+        let mut minute: i32 = -1;
+        let mut second: i32 = -1;
+
+        // For parsing, unused.
+        let mut wday: i32 = -1;
+        let mut week: i32 = -1;
+
+        let fmt = format.as_bytes();
+        for f in 0..fmt.len() {
+            match fmt[f] {
+                b'm' => {
+                    if pig.get_digit(&mut month) {
+                        if month == 0 {
+                            pig.get_digit(&mut month);
+                        }
+
+                        if month == 1 {
+                            if pig.get_digit(&mut month) {
+                                month += 10;
+                            }
+                        }
+                    } else {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'M' => {
+                    if !pig.get_digit2(&mut month) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'd' => {
+                    if pig.get_digit(&mut day) {
+                        if day == 0 {
+                            pig.get_digit(&mut day);
+                        }
+
+                        if day == 1 || day == 2 || day == 3 {
+                            let tens = day;
+                            if pig.get_digit(&mut day) {
+                                day += 10 * tens;
+                            }
+                        }
+                    } else {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'D' => {
+                    if !pig.get_digit2(&mut day) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'y' => {
+                    if !pig.get_digit2(&mut year) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                    year += 2000;
+                }
+
+                b'Y' => {
+                    if !pig.get_digit4(&mut year) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'h' => {
+                    if pig.get_digit(&mut hour) {
+                        if hour == 0 {
+                            pig.get_digit(&mut hour);
+                        }
+
+                        if hour == 1 || hour == 2 {
+                            let tens = hour;
+                            if pig.get_digit(&mut hour) {
+                                hour += 10 * tens;
+                            }
+                        }
+                    } else {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'H' => {
+                    if !pig.get_digit2(&mut hour) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'n' => {
+                    if pig.get_digit(&mut minute) {
+                        if minute == 0 {
+                            pig.get_digit(&mut minute);
+                        }
+
+                        if minute < 6 {
+                            let tens = minute;
+                            if pig.get_digit(&mut minute) {
+                                minute += 10 * tens;
+                            }
+                        }
+                    } else {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'N' => {
+                    if !pig.get_digit2(&mut minute) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b's' => {
+                    if pig.get_digit(&mut second) {
+                        if second == 0 {
+                            pig.get_digit(&mut second);
+                        }
+
+                        if second < 6 {
+                            let tens = second;
+                            if pig.get_digit(&mut second) {
+                                second += 10 * tens;
+                            }
+                        }
+                    } else {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'S' => {
+                    if !pig.get_digit2(&mut second) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'v' => {
+                    if pig.get_digit(&mut week) {
+                        if week == 0 {
+                            pig.get_digit(&mut week);
+                        }
+
+                        if week < 6 {
+                            let tens = week;
+                            if pig.get_digit(&mut week) {
+                                week += 10 * tens;
+                            }
+                        }
+                    } else {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'V' => {
+                    if !pig.get_digit2(&mut week) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                b'a' => {
+                    wday = Datetime::day_of_week_str(&substr3(&pig.str()));
+                    if wday == -1 {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+
+                    pig.skip_n(3);
+                }
+
+                b'A' => {
+                    let mut day_name = String::new();
+                    if pig.get_until(until_char(fmt, f + 1), &mut day_name) {
+                        wday = Datetime::day_of_week_str(&day_name);
+                        if wday == -1 {
+                            pig.restore_to(checkpoint);
+                            return false;
+                        }
+                    }
+                }
+
+                b'b' => {
+                    month = Datetime::month_of_year(&substr3(&pig.str()));
+                    if month == -1 {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+
+                    pig.skip_n(3);
+                }
+
+                b'B' => {
+                    let mut month_name = String::new();
+                    if pig.get_until(until_char(fmt, f + 1), &mut month_name) {
+                        month = Datetime::month_of_year(&month_name);
+                        if month == -1 {
+                            pig.restore_to(checkpoint);
+                            return false;
+                        }
+                    }
+                }
+
+                literal => {
+                    if !skip_format_byte(pig, literal) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // `wday` and `week` are parsed but unused, as in C++.
+        let _ = (wday, week);
+
+        // It is possible that the format='Y-M-D', and the input is Y-M-DTH:N:SZ, and
+        // this should not be considered a match.
+        if !pig.eos() && !unicode_whitespace(pig.peek() as u32) {
+            pig.restore_to(checkpoint);
+            return false;
+        }
+
+        // Missing values are filled in from the current date.
+        if year == -1 {
+            let now = Datetime::new();
+            year = now.year();
+            if month == -1 {
+                month = now.month();
+                if day == -1 {
+                    day = now.day();
+                    if hour == -1 {
+                        hour = now.hour();
+                        if minute == -1 {
+                            minute = now.minute();
+                            if second == -1 {
+                                second = now.second();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Any remaining undefined values are assigned defaults.
+        if month == -1 {
+            month = 1;
+        }
+        if day == -1 {
+            day = 1;
+        }
+        if hour == -1 {
+            hour = 0;
+        }
+        if minute == -1 {
+            minute = 0;
+        }
+        if second == -1 {
+            second = 0;
+        }
+
+        self._year = year;
+        self._month = month;
+        self._day = day;
+        self._seconds = (hour * 3600) + (minute * 60) + second;
+
+        true
     }
 
     /// C++ `Datetime::parse_named` (Datetime.cpp line 611).
@@ -416,146 +761,561 @@ impl Datetime {
     }
 
     /// C++ `Datetime::parse_epoch` (Datetime.cpp line 697).
+    ///
+    /// Valid epoch values are unsigned integers after 1980-01-01T00:00:00Z.
+    /// This restriction means that '12' will not be identified as an epoch
+    /// date.
     fn parse_epoch(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut epoch: i64 = 0;
+        if pig.get_digits_i64(&mut epoch)
+            && !unicode_latin_alpha(pig.peek() as u32)
+            && epoch >= EPOCH_MIN_VALUE
+            && epoch < EPOCH_MAX_VALUE
+        {
+            self._date = epoch;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::parse_date_time_ext` (Datetime.cpp line 719).
+    ///
+    /// ```text
+    /// date_ext 'T' time_utc_ext 'Z'
+    /// date_ext 'T' time_off_ext
+    /// date_ext 'T' time_ext
+    /// ```
     fn parse_date_time_ext(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if self.parse_date_ext(pig)
+            && pig.skip('T')
+            && (self.parse_time_utc_ext(pig) || self.parse_time_off_ext(pig) || self.parse_time_ext(pig, true))
+        {
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::parse_date_ext` (Datetime.cpp line 742).
+    ///
+    /// ```text
+    /// YYYY-MM-DD
+    /// YYYY-MM
+    /// YYYY-DDD
+    /// YYYY-Www-D
+    /// YYYY-Www
+    /// ```
     fn parse_date_ext(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut year: i32 = 0;
+        if self.parse_year(pig, &mut year) && pig.skip('-') {
+            let checkpoint_year = pig.cursor();
+
+            let mut month: i32 = 0;
+            let mut day: i32 = 0;
+            let mut julian: i32 = 0;
+            let mut week: i32 = 0;
+            let mut weekday: i32 = 0;
+
+            if pig.skip('W') && self.parse_week(pig, &mut week) {
+                if !(pig.skip('-') && self.parse_weekday(pig, &mut weekday)) {
+                    weekday = Datetime::weekstart();
+                }
+
+                if !unicode_latin_digit(pig.peek() as u32) {
+                    self._weekday = weekday;
+                    self._week = week;
+                    self._year = year;
+                    return true;
+                }
+            }
+
+            pig.restore_to(checkpoint_year);
+
+            if self.parse_month(pig, &mut month)
+                && pig.skip('-')
+                && self.parse_day(pig, &mut day)
+                && !unicode_latin_digit(pig.peek() as u32)
+            {
+                self._year = year;
+                self._month = month;
+                self._day = day;
+                return true;
+            }
+
+            pig.restore_to(checkpoint_year);
+
+            if self.parse_julian(pig, &mut julian) && !unicode_latin_digit(pig.peek() as u32) {
+                self._year = year;
+                self._julian = julian;
+                return true;
+            }
+
+            pig.restore_to(checkpoint_year);
+
+            if self.parse_month(pig, &mut month)
+                && pig.peek() != '-' as i32
+                && !unicode_latin_digit(pig.peek() as u32)
+            {
+                self._year = year;
+                self._month = month;
+                self._day = 1;
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_off_ext` (Datetime.cpp line 818).
+    /// C++ `Datetime::parse_off_ext` (Datetime.cpp line 818): `±hh[:mm]`.
+    ///
+    /// As in C++, `_offset` is assigned before the trailing-digit check, so a
+    /// rejected `+01:002` leaves `_offset` modified.
     fn parse_off_ext(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let sign = pig.peek();
+        if sign == '+' as i32 || sign == '-' as i32 {
+            pig.skip_n(1);
+
+            let mut hour: i32 = 0;
+            let mut minute: i32 = 0;
+
+            if self.parse_off_hour(pig, &mut hour) {
+                if pig.skip(':') {
+                    if !self.parse_off_minute(pig, &mut minute) {
+                        pig.restore_to(checkpoint);
+                        return false;
+                    }
+                }
+
+                self._offset = (hour * 3600) + (minute * 60);
+                if sign == '-' as i32 {
+                    self._offset = -self._offset;
+                }
+
+                if !unicode_latin_digit(pig.peek() as u32) {
+                    return true;
+                }
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_time_ext` (Datetime.cpp line 856).
+    /// C++ `Datetime::parse_time_ext` (Datetime.cpp line 856): `hh:mm[:ss]`.
     fn parse_time_ext(&mut self, pig: &mut Pig, terminated: bool) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut hour: i32 = 0;
+        let mut minute: i32 = 0;
+        if self.parse_hour(pig, &mut hour) && pig.skip(':') && self.parse_minute(pig, &mut minute) {
+            if pig.skip(':') {
+                let mut second: i32 = 0;
+                if self.parse_second(pig, &mut second)
+                    && !unicode_latin_digit(pig.peek() as u32)
+                    && (!terminated || (pig.peek() != '-' as i32 && pig.peek() != '+' as i32))
+                {
+                    self._seconds = (hour * 3600) + (minute * 60) + second;
+                    return true;
+                }
+
+                pig.restore_to(checkpoint);
+                return false;
+            }
+
+            let following = pig.peek();
+            if !unicode_latin_digit(following as u32)
+                && (!terminated || (following != '+' as i32 && following != '-' as i32))
+                && following != 'A' as i32
+                && following != 'a' as i32
+                && following != 'P' as i32
+                && following != 'p' as i32
+            {
+                self._seconds = (hour * 3600) + (minute * 60);
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_time_utc_ext` (Datetime.cpp line 900).
+    /// C++ `Datetime::parse_time_utc_ext` (Datetime.cpp line 900):
+    /// `time-ext 'Z'`.
     fn parse_time_utc_ext(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if self.parse_time_ext(pig, false) && pig.skip('Z') {
+            if !unicode_latin_digit(pig.peek() as u32) {
+                self._utc = true;
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_time_off_ext` (Datetime.cpp line 920).
+    /// C++ `Datetime::parse_time_off_ext` (Datetime.cpp line 920):
+    /// `time-ext off-ext`.
     fn parse_time_off_ext(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if self.parse_time_ext(pig, false) && self.parse_off_ext(pig) {
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::parse_date_time` (Datetime.cpp line 937).
+    ///
+    /// ```text
+    /// YYYYMMDDTHHMMSSZ
+    /// YYYYMMDDTHHMMSS
+    /// ```
     fn parse_date_time(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if self.parse_date(pig)
+            && pig.skip('T')
+            && (self.parse_time_utc(pig) || self.parse_time_off(pig) || self.parse_time(pig, true))
+        {
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::parse_date` (Datetime.cpp line 959).
+    ///
+    /// ```text
+    /// YYYYWww
+    /// YYYYDDD
+    /// YYYYMMDD
+    /// YYYYMM
+    /// ```
     fn parse_date(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut year: i32 = 0;
+        let mut month: i32 = 0;
+        let mut julian: i32 = 0;
+        let mut week: i32 = 0;
+        let mut weekday: i32 = 0;
+        let mut day: i32 = 0;
+        if self.parse_year(pig, &mut year) {
+            let checkpoint_year = pig.cursor();
+
+            if pig.skip('W') && self.parse_week(pig, &mut week) {
+                if !(self.parse_weekday(pig, &mut weekday)) {
+                    weekday = Datetime::weekstart();
+                }
+
+                if !unicode_latin_digit(pig.peek() as u32) {
+                    self._year = year;
+                    self._week = week;
+                    self._weekday = weekday;
+                    return true;
+                }
+            }
+
+            pig.restore_to(checkpoint_year);
+
+            if self.parse_julian(pig, &mut julian) && !unicode_latin_digit(pig.peek() as u32) {
+                self._year = year;
+                self._julian = julian;
+                return true;
+            }
+
+            pig.restore_to(checkpoint_year);
+
+            if self.parse_month(pig, &mut month) {
+                if self.parse_day(pig, &mut day) {
+                    if !unicode_latin_digit(pig.peek() as u32) {
+                        self._year = year;
+                        self._month = month;
+                        self._day = day;
+                        return true;
+                    }
+                } else {
+                    if !unicode_latin_digit(pig.peek() as u32) {
+                        self._year = year;
+                        self._month = month;
+                        self._day = 1;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_time_utc` (Datetime.cpp line 1031).
+    /// C++ `Datetime::parse_time_utc` (Datetime.cpp line 1031): `<time> Z`.
+    ///
+    /// As in C++, `_utc` is set before the trailing-digit check.
     fn parse_time_utc(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if self.parse_time(pig, false) && pig.skip('Z') {
+            self._utc = true;
+            if !unicode_latin_digit(pig.peek() as u32) {
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_time_off` (Datetime.cpp line 1049).
+    /// C++ `Datetime::parse_time_off` (Datetime.cpp line 1049):
+    /// `<time><off>`.
     fn parse_time_off(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        if self.parse_time(pig, false) && self.parse_off(pig) {
+            let terminator = pig.peek();
+            if terminator != '-' as i32 && !unicode_latin_digit(terminator as u32) {
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::parse_time` (Datetime.cpp line 1070).
+    ///
+    /// ```text
+    /// hhmmss
+    /// hhmm
+    /// ```
     fn parse_time(&mut self, pig: &mut Pig, terminated: bool) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut hour: i32 = 0;
+        let mut minute: i32 = 0;
+        if self.parse_hour(pig, &mut hour) && self.parse_minute(pig, &mut minute) {
+            let mut second: i32 = 0;
+            self.parse_second(pig, &mut second);
+
+            let terminator = pig.peek();
+            if !terminated
+                || (!unicode_latin_digit(terminator as u32) && terminator != '-' as i32 && terminator != '+' as i32)
+            {
+                self._seconds = (hour * 3600) + (minute * 60) + second;
+                return true;
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
     /// C++ `Datetime::parse_off` (Datetime.cpp line 1098).
+    ///
+    /// ```text
+    /// ±hhmm
+    /// ±hh
+    /// ```
     fn parse_off(&mut self, pig: &mut Pig) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let sign = pig.peek();
+        if sign == '+' as i32 || sign == '-' as i32 {
+            pig.skip_n(1);
+
+            let mut hour: i32 = 0;
+            if self.parse_off_hour(pig, &mut hour) {
+                let mut minute: i32 = 0;
+                self.parse_off_minute(pig, &mut minute);
+
+                if !unicode_latin_digit(pig.peek() as u32) {
+                    self._offset = (hour * 3600) + (minute * 60);
+                    if sign == '-' as i32 {
+                        self._offset = -self._offset;
+                    }
+
+                    return true;
+                }
+            }
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_year` (Datetime.cpp line 1129).
+    /// C++ `Datetime::parse_year` (Datetime.cpp line 1129): four digits,
+    /// after 1969.
     fn parse_year(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut year: i32 = 0;
+        if pig.get_digit4(&mut year) && year > 1969 {
+            *value = year;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_month` (Datetime.cpp line 1146).
+    /// C++ `Datetime::parse_month` (Datetime.cpp line 1146): `01`-`12`.
     fn parse_month(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut month: i32 = 0;
+        if pig.get_digit2(&mut month) && month > 0 && month <= 12 {
+            *value = month;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_week` (Datetime.cpp line 1164).
+    /// C++ `Datetime::parse_week` (Datetime.cpp line 1164): `01`-`53`.
     fn parse_week(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut week: i32 = 0;
+        if pig.get_digit2(&mut week) && week > 0 && week <= 53 {
+            *value = week;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_julian` (Datetime.cpp line 1182).
+    /// C++ `Datetime::parse_julian` (Datetime.cpp line 1182): `001`-`366`.
     fn parse_julian(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut julian: i32 = 0;
+        if pig.get_digit3(&mut julian) && julian > 0 && julian <= 366 {
+            *value = julian;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_day` (Datetime.cpp line 1200).
+    /// C++ `Datetime::parse_day` (Datetime.cpp line 1200): `01`-`31`.
     fn parse_day(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut day: i32 = 0;
+        if pig.get_digit2(&mut day) && day > 0 && day <= 31 {
+            *value = day;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_weekday` (Datetime.cpp line 1218).
+    /// C++ `Datetime::parse_weekday` (Datetime.cpp line 1218): one digit,
+    /// 1-7 when [`Datetime::weekstart`] is 1, else 0-6 (from `weekstart`).
     fn parse_weekday(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut weekday: i32 = 0;
+        if pig.get_digit(&mut weekday)
+            && weekday >= Datetime::weekstart()
+            && weekday <= (if Datetime::weekstart() == 1 { 7 } else { 6 })
+        {
+            *value = weekday;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_hour` (Datetime.cpp line 1236).
+    /// C++ `Datetime::parse_hour` (Datetime.cpp line 1236): `00`-`23`.
     fn parse_hour(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut hour: i32 = 0;
+        if pig.get_digit2(&mut hour) && hour >= 0 && hour < 24 {
+            *value = hour;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_minute` (Datetime.cpp line 1254).
+    /// C++ `Datetime::parse_minute` (Datetime.cpp line 1254): `00`-`59`.
     fn parse_minute(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut minute: i32 = 0;
+        if pig.get_digit2(&mut minute) && minute >= 0 && minute < 60 {
+            *value = minute;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_second` (Datetime.cpp line 1272).
+    /// C++ `Datetime::parse_second` (Datetime.cpp line 1272): `00`-`59`.
     fn parse_second(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut second: i32 = 0;
+        if pig.get_digit2(&mut second) && second >= 0 && second < 60 {
+            *value = second;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_off_hour` (Datetime.cpp line 1290).
+    /// C++ `Datetime::parse_off_hour` (Datetime.cpp line 1290): `00`-`12`.
     fn parse_off_hour(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut hour: i32 = 0;
+        if pig.get_digit2(&mut hour) && hour >= 0 && hour <= 12 {
+            *value = hour;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
-    /// C++ `Datetime::parse_off_minute` (Datetime.cpp line 1308).
+    /// C++ `Datetime::parse_off_minute` (Datetime.cpp line 1308): `00`-`59`.
     fn parse_off_minute(&mut self, pig: &mut Pig, value: &mut i32) -> bool {
-        // Ported in the follow-up task
+        let checkpoint = pig.cursor();
+
+        let mut minute: i32 = 0;
+        if pig.get_digit2(&mut minute) && minute >= 0 && minute < 60 {
+            *value = minute;
+            return true;
+        }
+
+        pig.restore_to(checkpoint);
         false
     }
 
@@ -1683,8 +2443,8 @@ impl Sub<&Datetime> for &Datetime {
 #[cfg(test)]
 mod tests {
     //! Assertions from libshared `test/datetime.t.cpp` that do not need the
-    //! (follow-up) grammar productions, plus direct tests of the ported
-    //! private helpers. Tests that set `TZ` hold
+    //! named dates (`parse_named` / `initialize*`, follow-up task), plus
+    //! direct tests of the ported private helpers and grammar productions. Tests that set `TZ` hold
     //! [`crate::test_util::env_lock`] and restore `TZ` (via
     //! [`crate::test_util::EnvGuard`]) before the lock is released.
     use super::*;
@@ -1780,8 +2540,7 @@ mod tests {
 
     #[test]
     fn from_string_error_message() {
-        // Fails until the grammar productions land, and must fail for 'foo'
-        // afterwards too.
+        // 'foo' matches no grammar production (nor a named date).
         match Datetime::from_string("foo", "m/d/Y") {
             Err(TwError::Message(m)) => assert_eq!(m, "'foo' is not a valid date in the 'm/d/Y' format."),
             other => panic!("unexpected {other:?}"),
@@ -2413,6 +3172,940 @@ mod tests {
                 let t = Datetime::from_epoch(resolved(fields(0, 0, 0, 1, 0, 0, 1, 0, false)));
                 assert!(today.same_day(&t), "Datetime::timeRelative=false 0:00:01 --> today");
             }
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Grammar productions: ISO 8601 forms, epoch and rc.dateformat parsing
+    // (datetime.t.cpp testParse table, lines 196-424, the non-named negative
+    // and positive cases, lines 1186-1350, and the fromString cases).
+
+    /// The C++ reference epochs computed at the top of datetime.t.cpp `main`.
+    struct Reference {
+        local: i64,
+        local6: i64,
+        f_local6: i64,
+        local1: i64,
+        f_local1: i64,
+        utc: i64,
+        utc6: i64,
+        f_utc6: i64,
+        utc1: i64,
+        f_utc1: i64,
+        ld: i64,
+        ud: i64,
+    }
+
+    /// datetime.t.cpp lines 99-180, including the reuse of one `struct tm`
+    /// (`local_now`, then `utc_now`) whose fields carry over between the
+    /// `mktime`/`timegm` calls.
+    fn reference_epochs() -> Reference {
+        let hms: i64 = (12 * 3600) + (34 * 60) + 56;
+        let year = 2013;
+        let mo = 12;
+        let f_yr = 9850; // future year with same starting weekday as 2013
+
+        let now = localtime::time_now();
+        let mut local_now = localtime::localtime(now);
+        let local_s = (local_now.tm_hour * 3600) + (local_now.tm_min * 60) + local_now.tm_sec;
+        local_now.tm_hour = 0;
+        local_now.tm_min = 0;
+        local_now.tm_sec = 0;
+        local_now.tm_isdst = -1;
+        let local = localtime::mktime(&mut local_now);
+
+        local_now.tm_year = year - 1900;
+        local_now.tm_mon = mo - 1;
+        local_now.tm_mday = 6;
+        local_now.tm_isdst = 0;
+        let local6 = localtime::mktime(&mut local_now);
+
+        local_now.tm_year = f_yr - 1900;
+        let f_local6 = localtime::mktime(&mut local_now);
+
+        local_now.tm_year = year - 1900;
+        local_now.tm_mon = mo - 1;
+        local_now.tm_mday = 1;
+        local_now.tm_isdst = 0;
+        let local1 = localtime::mktime(&mut local_now);
+
+        local_now.tm_year = f_yr - 1900;
+        let f_local1 = localtime::mktime(&mut local_now);
+
+        let mut utc_now = localtime::gmtime(now);
+        let utc_s = (utc_now.tm_hour * 3600) + (utc_now.tm_min * 60) + utc_now.tm_sec;
+        utc_now.tm_hour = 0;
+        utc_now.tm_min = 0;
+        utc_now.tm_sec = 0;
+        utc_now.tm_isdst = -1;
+        let utc = localtime::timegm(&mut utc_now);
+
+        utc_now.tm_year = year - 1900;
+        utc_now.tm_mon = mo - 1;
+        utc_now.tm_mday = 6;
+        utc_now.tm_isdst = 0;
+        let utc6 = localtime::timegm(&mut utc_now);
+
+        utc_now.tm_year = f_yr - 1900;
+        let f_utc6 = localtime::timegm(&mut utc_now);
+
+        utc_now.tm_year = year - 1900;
+        utc_now.tm_mon = mo - 1;
+        utc_now.tm_mday = 1;
+        utc_now.tm_isdst = 0;
+        let utc1 = localtime::timegm(&mut utc_now);
+
+        utc_now.tm_year = f_yr - 1900;
+        let f_utc1 = localtime::timegm(&mut utc_now);
+
+        Reference {
+            local,
+            local6,
+            f_local6,
+            local1,
+            f_local1,
+            utc,
+            utc6,
+            f_utc6,
+            utc1,
+            f_utc1,
+            ld: if local_s as i64 > hms { 86400 } else { 0 }, // Local extra day if now > hms.
+            ud: if utc_s as i64 > hms { 86400 } else { 0 },   // UTC extra day if now > hms.
+        }
+    }
+
+    /// C++ `testParse (t, input, in_start, ...)` (datetime.t.cpp line 33).
+    #[allow(clippy::too_many_arguments)]
+    fn test_parse_full(
+        input: &str,
+        in_start: i64,
+        in_year: i64,
+        in_month: i64,
+        in_week: i64,
+        in_weekday: i64,
+        in_julian: i64,
+        in_day: i64,
+        in_seconds: i64,
+        in_offset: i64,
+        in_utc: i64,
+        in_date: i64,
+    ) {
+        let label = format!("Datetime::parse (\"{input}\") --> ");
+
+        let mut iso = Datetime::new();
+        let mut start = 0usize;
+
+        assert!(iso.parse(input, &mut start, ""), "{label}true");
+        assert_eq!(start as i64, in_start, "{label}[]");
+        assert_eq!(iso._year as i64, in_year, "{label}_year");
+        assert_eq!(iso._month as i64, in_month, "{label}_month");
+        assert_eq!(iso._week as i64, in_week, "{label}_week");
+        assert_eq!(iso._weekday as i64, in_weekday, "{label}_weekday");
+        assert_eq!(iso._julian as i64, in_julian, "{label}_julian");
+        assert_eq!(iso._day as i64, in_day, "{label}_day");
+        assert_eq!(iso._seconds as i64, in_seconds, "{label}_seconds");
+        assert_eq!(iso._offset as i64, in_offset, "{label}_offset");
+        assert_eq!(iso._utc, in_utc != 0, "{label}_utc");
+        assert_eq!(iso._date, in_date, "{label}_date");
+    }
+
+    /// C++ `testParse (t, input)` (datetime.t.cpp line 68).
+    fn test_parse(input: &str) {
+        let mut positive = Datetime::new();
+        let mut pos = 0usize;
+        assert!(
+            positive.parse(input, &mut pos, "") && pos != 0,
+            "Datetime::parse positive '{input}' --> success"
+        );
+    }
+
+    /// C++ `testParseError` (datetime.t.cpp line 80).
+    fn test_parse_error(input: &str) {
+        let mut neg = Datetime::new();
+        let mut pos = 0usize;
+        assert!(!neg.parse(input, &mut pos, ""), "Datetime::parse negative '{input}' --> fail");
+    }
+
+    /// datetime.t.cpp lines 182-424: the ISO 8601 table, for both weekstarts.
+    fn iso_table() {
+        let r = reference_epochs();
+        let (local, local6, f_local6, utc, utc6, f_utc6, ld, ud) =
+            (r.local, r.local6, r.f_local6, r.utc, r.utc6, r.f_utc6, r.ld, r.ud);
+        let (mut local1, mut f_local1, mut utc1, mut f_utc1) = (r.local1, r.f_local1, r.utc1, r.f_utc1);
+
+        let year: i64 = 2013;
+        let mo: i64 = 12;
+        let f_yr: i64 = 9850;
+        let hms: i64 = (12 * 3600) + (34 * 60) + 56; // The time 12:34:56 in seconds.
+        let hm: i64 = (12 * 3600) + (34 * 60); // The time 12:34:00 in seconds.
+        let z: i64 = 3600; // TZ offset.
+
+        for wks in 0..=1i64 {
+            // Run the test parses against both weekstarts
+            Datetime::set_weekstart(wks as i32);
+
+            // 2013-W49 tests without weekday differ by one day depending on weekstart.
+            f_local1 += wks * 86400;
+            f_utc1 += wks * 86400;
+            local1 += wks * 86400;
+            utc1 += wks * 86400;
+
+            macro_rules! row {
+                ($input:expr, $($v:expr),+) => {
+                    test_parse_full($input, $($v),+)
+                };
+            }
+
+            // Columns: input, i, Year, Mo, Wk, WD, Jul, Da, Secs, TZ, UTC, time_t
+                row!("12:34:56  ", 8, 0, 0, 0, wks, 0, 0, hms, 0, 0, local+hms+ld);
+                row!("12:34:56Z", 9, 0, 0, 0, wks, 0, 0, hms, 0, 1, utc+hms+ud);
+                row!("12:34Z", 6, 0, 0, 0, wks, 0, 0, hm, 0, 1, utc+hm+ud);
+                row!("12:34:56+01:00", 14, 0, 0, 0, wks, 0, 0, hms, 3600, 0, utc+hms-z+ud);
+                row!("12:34:56+01", 11, 0, 0, 0, wks, 0, 0, hms, 3600, 0, utc+hms-z+ud);
+                row!("12:34+01:00", 11, 0, 0, 0, wks, 0, 0, hm, 3600, 0, utc+hm-z+ud);
+                row!("12:34+01", 8, 0, 0, 0, wks, 0, 0, hm, 3600, 0, utc+hm-z+ud);
+                row!("12:34:56", 8, 0, 0, 0, wks, 0, 0, hms, 0, 0, local+hms+ld);
+                row!("12:34", 5, 0, 0, 0, wks, 0, 0, hm, 0, 0, local+hm+ld);
+                row!("2013-12-06", 10, year, mo, 0, wks, 0, 6, 0, 0, 0, local6);
+                row!("2013-340", 8, year, 0, 0, wks, 340, 0, 0, 0, 0, local6);
+                row!("2013-W49-5", 10, year, 0, 49, 5, 0, 0, 0, 0, 0, local6);
+                row!("2013-W49", 8, year, 0, 49, wks, 0, 0, 0, 0, 0, local1);
+                row!("2013-12", 7, year, mo, 0, wks, 0, 1, 0, 0, 0, local1 - 86400 * wks);
+                row!("2013-12-06T12:34:56", 19, year, mo, 0, wks, 0, 6, hms, 0, 0, local6+hms);
+                row!("2013-12-06T12:34", 16, year, mo, 0, wks, 0, 6, hm, 0, 0, local6+hm);
+                row!("2013-340T12:34:56", 17, year, 0, 0, wks, 340, 0, hms, 0, 0, local6+hms);
+                row!("2013-340T12:34", 14, year, 0, 0, wks, 340, 0, hm, 0, 0, local6+hm);
+                row!("2013-W49-5T12:34:56", 19, year, 0, 49, 5, 0, 0, hms, 0, 0, local6+hms);
+                row!("2013-W49-5T12:34", 16, year, 0, 49, 5, 0, 0, hm, 0, 0, local6+hm);
+                row!("2013-W49T12:34:56", 17, year, 0, 49, wks, 0, 0, hms, 0, 0, local1+hms);
+                row!("2013-W49T12:34", 14, year, 0, 49, wks, 0, 0, hm, 0, 0, local1+hm);
+                row!("2013-12-06T12:34:56Z", 20, year, mo, 0, wks, 0, 6, hms, 0, 1, utc6+hms);
+                row!("2013-12-06T12:34Z", 17, year, mo, 0, wks, 0, 6, hm, 0, 1, utc6+hm);
+                row!("2013-340T12:34:56Z", 18, year, 0, 0, wks, 340, 0, hms, 0, 1, utc6+hms);
+                row!("2013-340T12:34Z", 15, year, 0, 0, wks, 340, 0, hm, 0, 1, utc6+hm);
+                row!("2013-W49-5T12:34:56Z", 20, year, 0, 49, 5, 0, 0, hms, 0, 1, utc6+hms);
+                row!("2013-W49-5T12:34Z", 17, year, 0, 49, 5, 0, 0, hm, 0, 1, utc6+hm);
+                row!("2013-W49T12:34:56Z", 18, year, 0, 49, wks, 0, 0, hms, 0, 1, utc1+hms);
+                row!("2013-W49T12:34Z", 15, year, 0, 49, wks, 0, 0, hm, 0, 1, utc1+hm);
+                row!("2013-12-06T12:34:56+01:00", 25, year, mo, 0, wks, 0, 6, hms, 3600, 0, utc6+hms-z);
+                row!("2013-12-06T12:34:56+01", 22, year, mo, 0, wks, 0, 6, hms, 3600, 0, utc6+hms-z);
+                row!("2013-12-06T12:34:56-01:00", 25, year, mo, 0, wks, 0, 6, hms, -3600, 0, utc6+hms+z);
+                row!("2013-12-06T12:34:56-01", 22, year, mo, 0, wks, 0, 6, hms, -3600, 0, utc6+hms+z);
+                row!("2013-12-06T12:34+01:00", 22, year, mo, 0, wks, 0, 6, hm, 3600, 0, utc6+hm-z);
+                row!("2013-12-06T12:34+01", 19, year, mo, 0, wks, 0, 6, hm, 3600, 0, utc6+hm-z);
+                row!("2013-12-06T12:34-01:00", 22, year, mo, 0, wks, 0, 6, hm, -3600, 0, utc6+hm+z);
+                row!("2013-12-06T12:34-01", 19, year, mo, 0, wks, 0, 6, hm, -3600, 0, utc6+hm+z);
+                row!("2013-340T12:34:56+01:00", 23, year, 0, 0, wks, 340, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013-340T12:34:56+01", 20, year, 0, 0, wks, 340, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013-340T12:34:56-01:00", 23, year, 0, 0, wks, 340, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013-340T12:34:56-01", 20, year, 0, 0, wks, 340, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013-340T12:34+01:00", 20, year, 0, 0, wks, 340, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013-340T12:34+01", 17, year, 0, 0, wks, 340, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013-340T12:34-01:00", 20, year, 0, 0, wks, 340, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013-340T12:34-01", 17, year, 0, 0, wks, 340, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013-W49-5T12:34:56+01:00", 25, year, 0, 49, 5, 0, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013-W49-5T12:34:56+01", 22, year, 0, 49, 5, 0, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013-W49-5T12:34:56-01:00", 25, year, 0, 49, 5, 0, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013-W49-5T12:34:56-01", 22, year, 0, 49, 5, 0, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013-W49-5T12:34+01:00", 22, year, 0, 49, 5, 0, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013-W49-5T12:34+01", 19, year, 0, 49, 5, 0, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013-W49-5T12:34-01:00", 22, year, 0, 49, 5, 0, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013-W49-5T12:34-01", 19, year, 0, 49, 5, 0, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013-W49T12:34:56+01:00", 23, year, 0, 49, wks, 0, 0, hms, 3600, 0, utc1+hms-z);
+                row!("2013-W49T12:34:56+01", 20, year, 0, 49, wks, 0, 0, hms, 3600, 0, utc1+hms-z);
+                row!("2013-W49T12:34:56-01:00", 23, year, 0, 49, wks, 0, 0, hms, -3600, 0, utc1+hms+z);
+                row!("2013-W49T12:34:56-01", 20, year, 0, 49, wks, 0, 0, hms, -3600, 0, utc1+hms+z);
+                row!("2013-W49T12:34+01:00", 20, year, 0, 49, wks, 0, 0, hm, 3600, 0, utc1+hm-z);
+                row!("2013-W49T12:34+01", 17, year, 0, 49, wks, 0, 0, hm, 3600, 0, utc1+hm-z);
+                row!("2013-W49T12:34-01:00", 20, year, 0, 49, wks, 0, 0, hm, -3600, 0, utc1+hm+z);
+                row!("2013-W49T12:34-01", 17, year, 0, 49, wks, 0, 0, hm, -3600, 0, utc1+hm+z);
+                row!("9850-12-06", 10, f_yr, mo, 0, wks, 0, 6, 0, 0, 0, f_local6);
+                row!("9850-340", 8, f_yr, 0, 0, wks, 340, 0, 0, 0, 0, f_local6);
+                row!("9850-W49-5", 10, f_yr, 0, 49, 5, 0, 0, 0, 0, 0, f_local6);
+                row!("9850-W49", 8, f_yr, 0, 49, wks, 0, 0, 0, 0, 0, f_local1);
+                row!("9850-12", 7, f_yr, mo, 0, wks, 0, 1, 0, 0, 0, f_local1 - 86400 * wks);
+                row!("9850-12-06T12:34:56", 19, f_yr, mo, 0, wks, 0, 6, hms, 0, 0, f_local6+hms);
+                row!("9850-12-06T12:34", 16, f_yr, mo, 0, wks, 0, 6, hm, 0, 0, f_local6+hm);
+                row!("9850-340T12:34:56", 17, f_yr, 0, 0, wks, 340, 0, hms, 0, 0, f_local6+hms);
+                row!("9850-340T12:34", 14, f_yr, 0, 0, wks, 340, 0, hm, 0, 0, f_local6+hm);
+                row!("9850-W49-5T12:34:56", 19, f_yr, 0, 49, 5, 0, 0, hms, 0, 0, f_local6+hms);
+                row!("9850-W49-5T12:34", 16, f_yr, 0, 49, 5, 0, 0, hm, 0, 0, f_local6+hm);
+                row!("9850-W49T12:34:56", 17, f_yr, 0, 49, wks, 0, 0, hms, 0, 0, f_local1+hms);
+                row!("9850-W49T12:34", 14, f_yr, 0, 49, wks, 0, 0, hm, 0, 0, f_local1+hm);
+                row!("9850-12-06T12:34:56Z", 20, f_yr, mo, 0, wks, 0, 6, hms, 0, 1, f_utc6+hms);
+                row!("9850-12-06T12:34Z", 17, f_yr, mo, 0, wks, 0, 6, hm, 0, 1, f_utc6+hm);
+                row!("9850-340T12:34:56Z", 18, f_yr, 0, 0, wks, 340, 0, hms, 0, 1, f_utc6+hms);
+                row!("9850-340T12:34Z", 15, f_yr, 0, 0, wks, 340, 0, hm, 0, 1, f_utc6+hm);
+                row!("9850-W49-5T12:34:56Z", 20, f_yr, 0, 49, 5, 0, 0, hms, 0, 1, f_utc6+hms);
+                row!("9850-W49-5T12:34Z", 17, f_yr, 0, 49, 5, 0, 0, hm, 0, 1, f_utc6+hm);
+                row!("9850-W49T12:34:56Z", 18, f_yr, 0, 49, wks, 0, 0, hms, 0, 1, f_utc1+hms);
+                row!("9850-W49T12:34Z", 15, f_yr, 0, 49, wks, 0, 0, hm, 0, 1, f_utc1+hm);
+                row!("9850-12-06T12:34:56+01:00", 25, f_yr, mo, 0, wks, 0, 6, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850-12-06T12:34:56+01", 22, f_yr, mo, 0, wks, 0, 6, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850-12-06T12:34:56-01:00", 25, f_yr, mo, 0, wks, 0, 6, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850-12-06T12:34:56-01", 22, f_yr, mo, 0, wks, 0, 6, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850-12-06T12:34+01:00", 22, f_yr, mo, 0, wks, 0, 6, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850-12-06T12:34+01", 19, f_yr, mo, 0, wks, 0, 6, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850-12-06T12:34-01:00", 22, f_yr, mo, 0, wks, 0, 6, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850-12-06T12:34-01", 19, f_yr, mo, 0, wks, 0, 6, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850-340T12:34:56+01:00", 23, f_yr, 0, 0, wks, 340, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850-340T12:34:56+01", 20, f_yr, 0, 0, wks, 340, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850-340T12:34:56-01:00", 23, f_yr, 0, 0, wks, 340, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850-340T12:34:56-01", 20, f_yr, 0, 0, wks, 340, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850-340T12:34+01:00", 20, f_yr, 0, 0, wks, 340, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850-340T12:34+01", 17, f_yr, 0, 0, wks, 340, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850-340T12:34-01:00", 20, f_yr, 0, 0, wks, 340, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850-340T12:34-01", 17, f_yr, 0, 0, wks, 340, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850-W49-5T12:34:56+01:00", 25, f_yr, 0, 49, 5, 0, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850-W49-5T12:34:56+01", 22, f_yr, 0, 49, 5, 0, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850-W49-5T12:34:56-01:00", 25, f_yr, 0, 49, 5, 0, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850-W49-5T12:34:56-01", 22, f_yr, 0, 49, 5, 0, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850-W49-5T12:34+01:00", 22, f_yr, 0, 49, 5, 0, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850-W49-5T12:34+01", 19, f_yr, 0, 49, 5, 0, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850-W49-5T12:34-01:00", 22, f_yr, 0, 49, 5, 0, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850-W49-5T12:34-01", 19, f_yr, 0, 49, 5, 0, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850-W49T12:34:56+01:00", 23, f_yr, 0, 49, wks, 0, 0, hms, 3600, 0, f_utc1+hms-z);
+                row!("9850-W49T12:34:56+01", 20, f_yr, 0, 49, wks, 0, 0, hms, 3600, 0, f_utc1+hms-z);
+                row!("9850-W49T12:34:56-01:00", 23, f_yr, 0, 49, wks, 0, 0, hms, -3600, 0, f_utc1+hms+z);
+                row!("9850-W49T12:34:56-01", 20, f_yr, 0, 49, wks, 0, 0, hms, -3600, 0, f_utc1+hms+z);
+                row!("9850-W49T12:34+01:00", 20, f_yr, 0, 49, wks, 0, 0, hm, 3600, 0, f_utc1+hm-z);
+                row!("9850-W49T12:34+01", 17, f_yr, 0, 49, wks, 0, 0, hm, 3600, 0, f_utc1+hm-z);
+                row!("9850-W49T12:34-01:00", 20, f_yr, 0, 49, wks, 0, 0, hm, -3600, 0, f_utc1+hm+z);
+                row!("9850-W49T12:34-01", 17, f_yr, 0, 49, wks, 0, 0, hm, -3600, 0, f_utc1+hm+z);
+                row!("20131206T123456Z", 16, year, mo, 0, wks, 0, 6, hms, 0, 1, utc6+hms);
+                row!("20131206T123456", 15, year, mo, 0, wks, 0, 6, hms, 0, 0, local6+hms);
+                row!("98501206T123456Z", 16, f_yr, mo, 0, wks, 0, 6, hms, 0, 1, f_utc6+hms);
+                row!("98501206T123456", 15, f_yr, mo, 0, wks, 0, 6, hms, 0, 0, f_local6+hms);
+                row!("123456Z", 7, 0, 0, 0, wks, 0, 0, hms, 0, 1, utc+hms+ud);
+                row!("1234Z", 5, 0, 0, 0, wks, 0, 0, hm, 0, 1, utc+hm+ud);
+                row!("123456+0100", 11, 0, 0, 0, wks, 0, 0, hms, 3600, 0, utc+hms-z+ud);
+                row!("123456+01", 9, 0, 0, 0, wks, 0, 0, hms, 3600, 0, utc+hms-z+ud);
+                row!("1234+0100", 9, 0, 0, 0, wks, 0, 0, hm, 3600, 0, utc+hm-z+ud);
+                row!("1234+01", 7, 0, 0, 0, wks, 0, 0, hm, 3600, 0, utc+hm-z+ud);
+                row!("123456", 6, 0, 0, 0, wks, 0, 0, hms, 0, 0, local+hms+ld);
+                row!("1234", 4, 0, 0, 0, wks, 0, 0, hm, 0, 0, local+hm+ld);
+                row!("20131206", 8, year, mo, 0, wks, 0, 6, 0, 0, 0, local6);
+                row!("2013340", 7, year, 0, 0, wks, 340, 0, 0, 0, 0, local6);
+                row!("2013W495", 8, year, 0, 49, 5, 0, 0, 0, 0, 0, local6);
+                row!("2013W49", 7, year, 0, 49, wks, 0, 0, 0, 0, 0, local1);
+                row!("201312", 6, year, mo, 0, wks, 0, 1, 0, 0, 0, local1 - 86400 * wks);
+                row!("20131206T123456", 15, year, mo, 0, wks, 0, 6, hms, 0, 0, local6+hms);
+                row!("20131206T1234", 13, year, mo, 0, wks, 0, 6, hm, 0, 0, local6+hm);
+                row!("2013340T123456", 14, year, 0, 0, wks, 340, 0, hms, 0, 0, local6+hms);
+                row!("2013340T1234", 12, year, 0, 0, wks, 340, 0, hm, 0, 0, local6+hm);
+                row!("2013W495T123456", 15, year, 0, 49, 5, 0, 0, hms, 0, 0, local6+hms);
+                row!("2013W495T1234", 13, year, 0, 49, 5, 0, 0, hm, 0, 0, local6+hm);
+                row!("2013W49T123456", 14, year, 0, 49, wks, 0, 0, hms, 0, 0, local1+hms);
+                row!("2013W49T1234", 12, year, 0, 49, wks, 0, 0, hm, 0, 0, local1+hm);
+                row!("20131206T123456Z", 16, year, mo, 0, wks, 0, 6, hms, 0, 1, utc6+hms);
+                row!("20131206T1234Z", 14, year, mo, 0, wks, 0, 6, hm, 0, 1, utc6+hm);
+                row!("2013340T123456Z", 15, year, 0, 0, wks, 340, 0, hms, 0, 1, utc6+hms);
+                row!("2013340T1234Z", 13, year, 0, 0, wks, 340, 0, hm, 0, 1, utc6+hm);
+                row!("2013W495T123456Z", 16, year, 0, 49, 5, 0, 0, hms, 0, 1, utc6+hms);
+                row!("2013W495T1234Z", 14, year, 0, 49, 5, 0, 0, hm, 0, 1, utc6+hm);
+                row!("2013W49T123456Z", 15, year, 0, 49, wks, 0, 0, hms, 0, 1, utc1+hms);
+                row!("2013W49T1234Z", 13, year, 0, 49, wks, 0, 0, hm, 0, 1, utc1+hm);
+                row!("20131206T123456+0100", 20, year, mo, 0, wks, 0, 6, hms, 3600, 0, utc6+hms-z);
+                row!("20131206T123456+01", 18, year, mo, 0, wks, 0, 6, hms, 3600, 0, utc6+hms-z);
+                row!("20131206T123456-0100", 20, year, mo, 0, wks, 0, 6, hms, -3600, 0, utc6+hms+z);
+                row!("20131206T123456-01", 18, year, mo, 0, wks, 0, 6, hms, -3600, 0, utc6+hms+z);
+                row!("20131206T1234+0100", 18, year, mo, 0, wks, 0, 6, hm, 3600, 0, utc6+hm-z);
+                row!("20131206T1234+01", 16, year, mo, 0, wks, 0, 6, hm, 3600, 0, utc6+hm-z);
+                row!("20131206T1234-0100", 18, year, mo, 0, wks, 0, 6, hm, -3600, 0, utc6+hm+z);
+                row!("20131206T1234-01", 16, year, mo, 0, wks, 0, 6, hm, -3600, 0, utc6+hm+z);
+                row!("2013340T123456+0100", 19, year, 0, 0, wks, 340, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013340T123456+01", 17, year, 0, 0, wks, 340, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013340T123456-0100", 19, year, 0, 0, wks, 340, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013340T123456-01", 17, year, 0, 0, wks, 340, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013340T1234+0100", 17, year, 0, 0, wks, 340, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013340T1234+01", 15, year, 0, 0, wks, 340, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013340T1234-0100", 17, year, 0, 0, wks, 340, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013340T1234-01", 15, year, 0, 0, wks, 340, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013W495T123456+0100", 20, year, 0, 49, 5, 0, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013W495T123456+01", 18, year, 0, 49, 5, 0, 0, hms, 3600, 0, utc6+hms-z);
+                row!("2013W495T123456-0100", 20, year, 0, 49, 5, 0, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013W495T123456-01", 18, year, 0, 49, 5, 0, 0, hms, -3600, 0, utc6+hms+z);
+                row!("2013W495T1234+0100", 18, year, 0, 49, 5, 0, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013W495T1234+01", 16, year, 0, 49, 5, 0, 0, hm, 3600, 0, utc6+hm-z);
+                row!("2013W495T1234-0100", 18, year, 0, 49, 5, 0, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013W495T1234-01", 16, year, 0, 49, 5, 0, 0, hm, -3600, 0, utc6+hm+z);
+                row!("2013W49T123456+0100", 19, year, 0, 49, wks, 0, 0, hms, 3600, 0, utc1+hms-z);
+                row!("2013W49T123456+01", 17, year, 0, 49, wks, 0, 0, hms, 3600, 0, utc1+hms-z);
+                row!("2013W49T123456-0100", 19, year, 0, 49, wks, 0, 0, hms, -3600, 0, utc1+hms+z);
+                row!("2013W49T123456-01", 17, year, 0, 49, wks, 0, 0, hms, -3600, 0, utc1+hms+z);
+                row!("2013W49T1234+0100", 17, year, 0, 49, wks, 0, 0, hm, 3600, 0, utc1+hm-z);
+                row!("2013W49T1234+01", 15, year, 0, 49, wks, 0, 0, hm, 3600, 0, utc1+hm-z);
+                row!("2013W49T1234-0100", 17, year, 0, 49, wks, 0, 0, hm, -3600, 0, utc1+hm+z);
+                row!("2013W49T1234-01", 15, year, 0, 49, wks, 0, 0, hm, -3600, 0, utc1+hm+z);
+                row!("98501206", 8, f_yr, mo, 0, wks, 0, 6, 0, 0, 0, f_local6);
+                row!("9850340", 7, f_yr, 0, 0, wks, 340, 0, 0, 0, 0, f_local6);
+                row!("9850W495", 8, f_yr, 0, 49, 5, 0, 0, 0, 0, 0, f_local6);
+                row!("9850W49", 7, f_yr, 0, 49, wks, 0, 0, 0, 0, 0, f_local1);
+                row!("985012", 6, f_yr, mo, 0, wks, 0, 1, 0, 0, 0, f_local1 - 86400 * wks);
+                row!("98501206T123456", 15, f_yr, mo, 0, wks, 0, 6, hms, 0, 0, f_local6+hms);
+                row!("98501206T1234", 13, f_yr, mo, 0, wks, 0, 6, hm, 0, 0, f_local6+hm);
+                row!("9850340T123456", 14, f_yr, 0, 0, wks, 340, 0, hms, 0, 0, f_local6+hms);
+                row!("9850340T1234", 12, f_yr, 0, 0, wks, 340, 0, hm, 0, 0, f_local6+hm);
+                row!("9850W495T123456", 15, f_yr, 0, 49, 5, 0, 0, hms, 0, 0, f_local6+hms);
+                row!("9850W495T1234", 13, f_yr, 0, 49, 5, 0, 0, hm, 0, 0, f_local6+hm);
+                row!("9850W49T123456", 14, f_yr, 0, 49, wks, 0, 0, hms, 0, 0, f_local1+hms);
+                row!("9850W49T1234", 12, f_yr, 0, 49, wks, 0, 0, hm, 0, 0, f_local1+hm);
+                row!("98501206T123456Z", 16, f_yr, mo, 0, wks, 0, 6, hms, 0, 1, f_utc6+hms);
+                row!("98501206T1234Z", 14, f_yr, mo, 0, wks, 0, 6, hm, 0, 1, f_utc6+hm);
+                row!("9850340T123456Z", 15, f_yr, 0, 0, wks, 340, 0, hms, 0, 1, f_utc6+hms);
+                row!("9850340T1234Z", 13, f_yr, 0, 0, wks, 340, 0, hm, 0, 1, f_utc6+hm);
+                row!("9850W495T123456Z", 16, f_yr, 0, 49, 5, 0, 0, hms, 0, 1, f_utc6+hms);
+                row!("9850W495T1234Z", 14, f_yr, 0, 49, 5, 0, 0, hm, 0, 1, f_utc6+hm);
+                row!("9850W49T123456Z", 15, f_yr, 0, 49, wks, 0, 0, hms, 0, 1, f_utc1+hms);
+                row!("9850W49T1234Z", 13, f_yr, 0, 49, wks, 0, 0, hm, 0, 1, f_utc1+hm);
+                row!("98501206T123456+0100", 20, f_yr, mo, 0, wks, 0, 6, hms, 3600, 0, f_utc6+hms-z);
+                row!("98501206T123456+01", 18, f_yr, mo, 0, wks, 0, 6, hms, 3600, 0, f_utc6+hms-z);
+                row!("98501206T123456-0100", 20, f_yr, mo, 0, wks, 0, 6, hms, -3600, 0, f_utc6+hms+z);
+                row!("98501206T123456-01", 18, f_yr, mo, 0, wks, 0, 6, hms, -3600, 0, f_utc6+hms+z);
+                row!("98501206T1234+0100", 18, f_yr, mo, 0, wks, 0, 6, hm, 3600, 0, f_utc6+hm-z);
+                row!("98501206T1234+01", 16, f_yr, mo, 0, wks, 0, 6, hm, 3600, 0, f_utc6+hm-z);
+                row!("98501206T1234-0100", 18, f_yr, mo, 0, wks, 0, 6, hm, -3600, 0, f_utc6+hm+z);
+                row!("98501206T1234-01", 16, f_yr, mo, 0, wks, 0, 6, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850340T123456+0100", 19, f_yr, 0, 0, wks, 340, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850340T123456+01", 17, f_yr, 0, 0, wks, 340, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850340T123456-0100", 19, f_yr, 0, 0, wks, 340, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850340T123456-01", 17, f_yr, 0, 0, wks, 340, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850340T1234+0100", 17, f_yr, 0, 0, wks, 340, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850340T1234+01", 15, f_yr, 0, 0, wks, 340, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850340T1234-0100", 17, f_yr, 0, 0, wks, 340, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850340T1234-01", 15, f_yr, 0, 0, wks, 340, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850W495T123456+0100", 20, f_yr, 0, 49, 5, 0, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850W495T123456+01", 18, f_yr, 0, 49, 5, 0, 0, hms, 3600, 0, f_utc6+hms-z);
+                row!("9850W495T123456-0100", 20, f_yr, 0, 49, 5, 0, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850W495T123456-01", 18, f_yr, 0, 49, 5, 0, 0, hms, -3600, 0, f_utc6+hms+z);
+                row!("9850W495T1234+0100", 18, f_yr, 0, 49, 5, 0, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850W495T1234+01", 16, f_yr, 0, 49, 5, 0, 0, hm, 3600, 0, f_utc6+hm-z);
+                row!("9850W495T1234-0100", 18, f_yr, 0, 49, 5, 0, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850W495T1234-01", 16, f_yr, 0, 49, 5, 0, 0, hm, -3600, 0, f_utc6+hm+z);
+                row!("9850W49T123456+0100", 19, f_yr, 0, 49, wks, 0, 0, hms, 3600, 0, f_utc1+hms-z);
+                row!("9850W49T123456+01", 17, f_yr, 0, 49, wks, 0, 0, hms, 3600, 0, f_utc1+hms-z);
+                row!("9850W49T123456-0100", 19, f_yr, 0, 49, wks, 0, 0, hms, -3600, 0, f_utc1+hms+z);
+                row!("9850W49T123456-01", 17, f_yr, 0, 49, wks, 0, 0, hms, -3600, 0, f_utc1+hms+z);
+                row!("9850W49T1234+0100", 17, f_yr, 0, 49, wks, 0, 0, hm, 3600, 0, f_utc1+hm-z);
+                row!("9850W49T1234+01", 15, f_yr, 0, 49, wks, 0, 0, hm, 3600, 0, f_utc1+hm-z);
+                row!("9850W49T1234-0100", 17, f_yr, 0, 49, wks, 0, 0, hm, -3600, 0, f_utc1+hm+z);
+        }
+    }
+
+    #[test]
+    fn parse_iso_table_by_zone() {
+        for tz in ["UTC", "Europe/Berlin"] {
+            with_tz(tz, || {
+                let _settings = SettingsGuard::save();
+                iso_table();
+            });
+        }
+    }
+
+    #[test]
+    fn parse_embedded_and_negative() {
+        with_tz("Europe/Berlin", || {
+            let _settings = SettingsGuard::save();
+            Datetime::set_weekstart(1);
+
+            // Embedded parsing (the epoch forms; datetime.t.cpp 1188-1190).
+            test_parse("1234567890+0");
+            test_parse("1234567890-0");
+            test_parse("1234567890)");
+
+            // Negative tests, all expected to fail (datetime.t.cpp 1193-1333).
+                test_parse_error("");
+                test_parse_error("foo");
+                test_parse_error("-2014-07-07");
+                test_parse_error("2014-07-");
+                test_parse_error("2014-0-12");
+                test_parse_error("abcd-ab-ab");
+                test_parse_error("2014-000");
+                test_parse("2014-001");
+                test_parse("2014-365");
+                test_parse_error("2014-366");
+                test_parse_error("2014-367");
+                test_parse_error("2014-999");
+                test_parse_error("2014-999999999");
+                test_parse_error("2014-W00");
+                test_parse_error("2014-W54");
+                test_parse_error("2014-W240");
+                test_parse_error("2014-W248");
+                test_parse_error("2014-W24200");
+                test_parse_error("2014-13");
+                test_parse_error("2014-99");
+                test_parse_error("25:00");
+                test_parse_error("99:00");
+                test_parse_error("12:60");
+                test_parse_error("12:99");
+                test_parse_error("12:ab");
+                test_parse_error("ab:12");
+                test_parse_error("ab:cd");
+                test_parse_error("-12:12");
+                test_parse_error("12:-12");
+                test_parse_error("25:00Z");
+                test_parse_error("99:00Z");
+                test_parse_error("12:60Z");
+                test_parse_error("12:99Z");
+                test_parse_error("12:abZ");
+                test_parse_error("ab:12Z");
+                test_parse_error("ab:cdZ");
+                test_parse_error("-12:12Z");
+                test_parse_error("12:-12Z");
+                test_parse_error("25:00+01:00");
+                test_parse_error("99:00+01:00");
+                test_parse_error("12:60+01:00");
+                test_parse_error("12:99+01:00");
+                test_parse_error("12:ab+01:00");
+                test_parse_error("ab:12+01:00");
+                test_parse_error("ab:cd+01:00");
+                test_parse_error("-12:12+01:00");
+                test_parse_error("12:-12+01:00");
+                test_parse_error("25:00-01:00");
+                test_parse_error("99:00-01:00");
+                test_parse_error("12:60-01:00");
+                test_parse_error("12:99-01:00");
+                test_parse_error("12:ab-01:00");
+                test_parse_error("ab:12-01:00");
+                test_parse_error("ab:cd-01:00");
+                test_parse_error("-12:12-01:00");
+                test_parse_error("12:-12-01:00");
+                test_parse_error("25:00:00");
+                test_parse_error("99:00:00");
+                test_parse_error("12:60:00");
+                test_parse_error("12:99:00");
+                test_parse_error("12:12:60");
+                test_parse_error("12:12:99");
+                test_parse_error("12:ab:00");
+                test_parse_error("ab:12:00");
+                test_parse_error("12:12:ab");
+                test_parse_error("ab:cd:ef");
+                test_parse_error("-12:12:12");
+                test_parse_error("12:-12:12");
+                test_parse_error("12:12:-12");
+                test_parse_error("25:00:00Z");
+                test_parse_error("99:00:00Z");
+                test_parse_error("12:60:00Z");
+                test_parse_error("12:99:00Z");
+                test_parse_error("12:12:60Z");
+                test_parse_error("12:12:99Z");
+                test_parse_error("12:ab:00Z");
+                test_parse_error("ab:12:00Z");
+                test_parse_error("12:12:abZ");
+                test_parse_error("ab:cd:efZ");
+                test_parse_error("-12:12:12Z");
+                test_parse_error("12:-12:12Z");
+                test_parse_error("12:12:-12Z");
+                test_parse_error("25:00:00+01:00");
+                test_parse_error("95:00:00+01:00");
+                test_parse_error("12:60:00+01:00");
+                test_parse_error("12:99:00+01:00");
+                test_parse_error("12:12:60+01:00");
+                test_parse_error("12:12:99+01:00");
+                test_parse_error("12:ab:00+01:00");
+                test_parse_error("ab:12:00+01:00");
+                test_parse_error("12:12:ab+01:00");
+                test_parse_error("ab:cd:ef+01:00");
+                test_parse_error("-12:12:12+01:00");
+                test_parse_error("12:-12:12+01:00");
+                test_parse_error("12:12:-12+01:00");
+                test_parse_error("25:00:00-01:00");
+                test_parse_error("95:00:00-01:00");
+                test_parse_error("12:60:00-01:00");
+                test_parse_error("12:99:00-01:00");
+                test_parse_error("12:12:60-01:00");
+                test_parse_error("12:12:99-01:00");
+                test_parse_error("12:ab:00-01:00");
+                test_parse_error("ab:12:00-01:00");
+                test_parse_error("12:12:ab-01:00");
+                test_parse_error("ab:cd:ef-01:00");
+                test_parse_error("-12:12:12-01:00");
+                test_parse_error("12:-12:12-01:00");
+                test_parse_error("12:12:-12-01:00");
+                test_parse_error("12:12:12-13:00");
+                test_parse_error("12:12:12-24:00");
+                test_parse_error("12:12:12-99:00");
+                test_parse_error("12:12:12-03:60");
+                test_parse_error("12:12:12-03:99");
+                test_parse_error("12:12:12-3:20");
+                test_parse_error("12:12:12-03:2");
+                test_parse_error("12:12:12-3:2");
+                test_parse_error("12:12:12+13:00");
+                test_parse_error("12:12:12+24:00");
+                test_parse_error("12:12:12+99:00");
+                test_parse_error("12:12:12+03:60");
+                test_parse_error("12:12:12+03:99");
+                test_parse_error("12:12:12+3:20");
+                test_parse_error("12:12:12+03:2");
+                test_parse_error("12:12:12+3:2");
+                test_parse_error("12:12-13:00");
+                test_parse_error("12:12-24:00");
+                test_parse_error("12:12-99:00");
+                test_parse_error("12:12-03:60");
+                test_parse_error("12:12-03:99");
+                test_parse_error("12:12-3:20");
+                test_parse_error("12:12-03:2");
+                test_parse_error("12:12-3:2");
+                test_parse_error("12:12+13:00");
+                test_parse_error("12:12+24:00");
+                test_parse_error("12:12+99:00");
+                test_parse_error("12:12+03:60");
+                test_parse_error("12:12+03:99");
+                test_parse_error("12:12+3:20");
+                test_parse_error("12:12+03:2");
+                test_parse_error("12:12+3:2");
+
+            // Test weekday validity under different weekstarts.
+            Datetime::set_weekstart(0);
+            test_parse_error("2024-W01-7");
+            Datetime::set_weekstart(1);
+            test_parse_error("2024-W01-0");
+
+            // Test with standlalone date enable/disabled.
+            Datetime::set_standalone_date_enabled(true);
+            test_parse("20170319");
+            Datetime::set_standalone_date_enabled(false);
+            test_parse_error("20170319");
+            Datetime::set_standalone_date_enabled(true);
+
+            Datetime::set_standalone_time_enabled(true);
+            test_parse("235959");
+            Datetime::set_standalone_time_enabled(false);
+            test_parse_error("235959");
+            Datetime::set_standalone_time_enabled(true);
+
+            // isoEnabled=false still allows the date-time forms (import, JSON,
+            // hooks), but not the date-only or time-only forms.
+            Datetime::set_iso_enabled(false);
+            test_parse("2013-12-06T12:34:56Z");
+            test_parse("20131206T123456Z");
+            test_parse_error("2013-12-06");
+            test_parse_error("12:34:56");
+            Datetime::set_iso_enabled(true);
+        });
+    }
+
+    #[test]
+    fn parse_epoch_bounds() {
+        with_tz("Europe/Berlin", || {
+            let mut dt = Datetime::new();
+            let mut start = 0;
+            assert!(dt.parse("1234567890", &mut start, ""));
+            assert_eq!(start, 10);
+            assert_eq!(dt._date, 1234567890);
+
+            // EPOCH_MIN_VALUE is accepted, one second before is not an epoch
+            // (and not any ISO form either).
+            let mut dt = Datetime::new();
+            let mut start = 0;
+            assert!(dt.parse("315532800", &mut start, ""));
+            assert_eq!(dt._date, EPOCH_MIN_VALUE);
+            test_parse_error("315532799");
+
+            // '12' is not an epoch (but HHMM-free '12' fails everything).
+            test_parse_error("12");
+
+            // An epoch directly followed by a Latin letter is not an epoch.
+            let mut dt = Datetime::new();
+            let mut pig = Pig::new("1234567890d");
+            assert!(!dt.parse_epoch(&mut pig));
+            assert_eq!(pig.cursor(), 0, "cursor restored");
+
+            // EPOCH_MAX_VALUE itself is excluded.
+            let mut pig = Pig::new("253402293599");
+            assert!(!dt.parse_epoch(&mut pig));
+            let mut pig = Pig::new("253402293598");
+            assert!(dt.parse_epoch(&mut pig));
+            assert_eq!(dt._date, EPOCH_MAX_VALUE - 1);
+
+            // Parsing from an offset leaves the cursor past the match.
+            let mut dt = Datetime::new();
+            let mut start = 4;
+            assert!(dt.parse("due:1234567890 x", &mut start, ""));
+            assert_eq!(start, 14);
+        });
+    }
+
+    #[test]
+    fn parse_iso_from_offset_and_restore() {
+        with_tz("UTC", || {
+            let _settings = SettingsGuard::save();
+            Datetime::set_weekstart(1);
+
+            let mut dt = Datetime::new();
+            let mut start = 4;
+            assert!(dt.parse("due:2013-12-06T12:34:56Z,", &mut start, ""));
+            assert_eq!(start, 24);
+            assert_eq!(dt._date, 1386333296);
+
+            // A failed production restores the cursor.
+            let mut dt = Datetime::new();
+            let mut pig = Pig::new("2013-12-06Tfoo");
+            assert!(!dt.parse_date_time_ext(&mut pig));
+            assert_eq!(pig.cursor(), 0);
+            let mut pig = Pig::new("12:34:5");
+            assert!(!dt.parse_time_ext(&mut pig, true));
+            assert_eq!(pig.cursor(), 0);
+            let mut pig = Pig::new("+01:");
+            assert!(!dt.parse_off_ext(&mut pig));
+            assert_eq!(pig.cursor(), 0);
+
+            // Out-params are only written on success.
+            let mut value = 42;
+            let mut pig = Pig::new("13");
+            assert!(!dt.parse_month(&mut pig, &mut value));
+            assert_eq!(value, 42);
+            assert_eq!(pig.cursor(), 0);
+            assert!(dt.parse_hour(&mut pig, &mut value));
+            assert_eq!(value, 13);
+            assert_eq!(pig.cursor(), 2);
+
+            let mut pig = Pig::new("1969");
+            assert!(!dt.parse_year(&mut pig, &mut value));
+            let mut pig = Pig::new("1970");
+            assert!(dt.parse_year(&mut pig, &mut value));
+            assert_eq!(value, 1970);
+
+            let mut pig = Pig::new("13");
+            assert!(!dt.parse_off_hour(&mut pig, &mut value));
+            let mut pig = Pig::new("12");
+            assert!(dt.parse_off_hour(&mut pig, &mut value));
+
+            let mut pig = Pig::new("367");
+            assert!(!dt.parse_julian(&mut pig, &mut value));
+            let mut pig = Pig::new("366");
+            assert!(dt.parse_julian(&mut pig, &mut value));
+            assert_eq!(value, 366);
+
+            let mut pig = Pig::new("00");
+            assert!(!dt.parse_week(&mut pig, &mut value));
+            assert!(!dt.parse_day(&mut pig, &mut value));
+            assert!(dt.parse_minute(&mut pig, &mut value));
+            assert_eq!(value, 0);
+
+            let mut pig = Pig::new("0");
+            assert!(!dt.parse_weekday(&mut pig, &mut value), "0 invalid when weekstart=1");
+            Datetime::set_weekstart(0);
+            assert!(dt.parse_weekday(&mut pig, &mut value));
+            assert_eq!(value, 0);
+            let mut pig = Pig::new("7");
+            assert!(!dt.parse_weekday(&mut pig, &mut value), "7 invalid when weekstart=0");
+            Datetime::set_weekstart(1);
+
+            // Offset forms set _offset; '-' sign negates.
+            let mut dt = Datetime::new();
+            let mut pig = Pig::new("-0530");
+            assert!(dt.parse_off(&mut pig));
+            assert_eq!(dt._offset, -(5 * 3600 + 30 * 60));
+            let mut pig = Pig::new("+05:30");
+            assert!(dt.parse_off_ext(&mut pig));
+            assert_eq!(dt._offset, 5 * 3600 + 30 * 60);
+
+            // Time-ext followed by am/pm is left for the informal-time parser.
+            let mut pig = Pig::new("10:30am");
+            assert!(!dt.parse_time_ext(&mut pig, true));
+            assert_eq!(pig.cursor(), 0);
+        });
+    }
+
+    #[test]
+    fn parse_formatted_from_string_cases() {
+        for tz in ["UTC", "Europe/Berlin"] {
+            with_tz(tz, || {
+                let _settings = SettingsGuard::save();
+                Datetime::set_weekstart(1);
+                let ymd = |dt: &Datetime| (dt.year(), dt.month(), dt.day());
+                let hns = |dt: &Datetime| (dt.hour(), dt.minute(), dt.second());
+
+                // Format parsing (datetime.t.cpp 730-795).
+                assert_eq!(ymd(&Datetime::from_string("1/1/2008", "m/d/Y").unwrap()), (2008, 1, 1), "fromString1");
+                assert_eq!(ymd(&Datetime::from_string("20080101", "YMD").unwrap()), (2008, 1, 1), "fromString2");
+                assert_eq!(ymd(&Datetime::from_string("12/31/2007", "m/d/Y").unwrap()), (2007, 12, 31), "fromString3");
+                assert_eq!(ymd(&Datetime::from_string("01/01/2008", "m/d/Y").unwrap()), (2008, 1, 1), "fromString4");
+                assert_eq!(
+                    ymd(&Datetime::from_string("Tue 05 Feb 2008 (06)", "a D b Y (V)").unwrap()),
+                    (2008, 2, 5),
+                    "fromString5"
+                );
+                assert_eq!(
+                    ymd(&Datetime::from_string("Tuesday, February 5, 2008", "A, B d, Y").unwrap()),
+                    (2008, 2, 5),
+                    "fromString6"
+                );
+                assert_eq!(
+                    ymd(&Datetime::from_string("w01 Tue 2008-01-01", "wV a Y-M-D").unwrap()),
+                    (2008, 1, 1),
+                    "fromString7"
+                );
+
+                let f8 = Datetime::from_string("6/7/2010 1:23:45", "m/d/Y h:N:S").unwrap();
+                assert_eq!((ymd(&f8), hns(&f8)), ((2010, 6, 7), (1, 23, 45)), "fromString8");
+                let f9 = Datetime::from_string("6/7/2010 01:23:45", "m/d/Y H:N:S").unwrap();
+                assert_eq!((ymd(&f9), hns(&f9)), ((2010, 6, 7), (1, 23, 45)), "fromString9");
+                let f10 = Datetime::from_string("6/7/2010 12:34:56", "m/d/Y H:N:S").unwrap();
+                assert_eq!((ymd(&f10), hns(&f10)), ((2010, 6, 7), (12, 34, 56)), "fromString10");
+                let f11 = Datetime::from_string("6/7/3010 12:34:56", "m/d/Y H:N:S").unwrap();
+                assert_eq!((ymd(&f11), hns(&f11)), ((3010, 6, 7), (12, 34, 56)), "fromString11");
+
+                // Day of year.
+                assert_eq!(Datetime::from_string("1/1/2011", "m/d/Y").unwrap().day_of_year(), 1);
+                assert_eq!(Datetime::from_string("5/1/2011", "m/d/Y").unwrap().day_of_year(), 121);
+                assert_eq!(Datetime::from_string("12/31/2011", "m/d/Y").unwrap().day_of_year(), 365);
+
+                // Datetime::valid with a format (datetime.t.cpp 570-571).
+                assert!(Datetime::valid_str("2/29/2008", "m/d/Y"), "valid: 2/29/2008");
+                assert!(!Datetime::valid_str("2/29/2007", "m/d/Y"), "invalid: 2/29/2007");
+
+                // Comparisons on formatted dates (datetime.t.cpp 538-565).
+                let left = Datetime::from_string("7/4/2008", "m/d/Y").unwrap();
+                let comp1 = Datetime::from_string("7/4/2008", "m/d/Y").unwrap();
+                assert!(left == comp1, "7/4/2008 == 7/4/2008");
+                let comp2 = Datetime::from_string("7/5/2008", "m/d/Y").unwrap();
+                assert!(left < comp2, "7/4/2008 < 7/5/2008");
+                let comp3 = Datetime::from_string("8/4/2008", "m/d/Y").unwrap();
+                assert!(left < comp3, "7/4/2008 < 8/4/2008");
+                let comp4 = Datetime::from_string("7/4/2009", "m/d/Y").unwrap();
+                assert!(left < comp4, "7/4/2008 < 7/4/2009");
+
+                // Depletion requirement.
+                let r30 = Datetime::from_string("Mon Jun 30 2014", "a b D Y").unwrap();
+                assert_eq!(r30.to_string("YMDHNS"), "20140630000000", "Depletion required on complex format with spaces");
+                let r31 = Datetime::from_string("Mon Jun 30 2014 xxx", "a b D Y").unwrap();
+                assert_eq!(r31.to_string("YMDHNS"), "20140630000000", "Depletion not required on complex format with spaces");
+
+                // Test all format options (ISO input, no format).
+                let r32 = Datetime::from_string("2015-10-28T12:55:00", "").unwrap();
+                for (f, e) in [
+                    ("Y", "2015"),
+                    ("y", "15"),
+                    ("M", "10"),
+                    ("m", "10"),
+                    ("D", "28"),
+                    ("d", "28"),
+                    ("H", "12"),
+                    ("h", "12"),
+                    ("N", "55"),
+                    ("n", "55"),
+                    ("S", "00"),
+                    ("s", "0"),
+                    ("A", "Wednesday"),
+                    ("a", "Wed"),
+                    ("B", "October"),
+                    ("b", "Oct"),
+                    ("V", "44"),
+                    ("v", "44"),
+                    ("J", "301"),
+                    ("j", "301"),
+                    ("w", "3"),
+                ] {
+                    assert_eq!(r32.to_string(f), e, "2015-10-28T12:55:01 -> {f}");
+                }
+
+                // Test all parse options.
+                let r33 = Datetime::from_string("2015 10 28 19 28 01", "Y M D H N S").unwrap();
+                assert_eq!((ymd(&r33), hns(&r33)), ((2015, 10, 28), (19, 28, 1)), "Y M D H N S works");
+                let r34 = Datetime::from_string("15 5 4 3 2 1", "y m d h n s").unwrap();
+                assert_eq!((ymd(&r34), hns(&r34)), ((2015, 5, 4), (3, 2, 1)), "y m d h n s works");
+                let r35 = Datetime::from_string("Wednesday October 28 2015", "A B D Y").unwrap();
+                assert_eq!(ymd(&r35), (2015, 10, 28), "A B D Y works");
+                assert_eq!(r35.day_of_week(), 3, "A works");
+                let r36 = Datetime::from_string("Wed Oct 28 15", "a b d y").unwrap();
+                assert_eq!(ymd(&r36), (2015, 10, 28), "a b d y works");
+                assert_eq!(r36.day_of_week(), 3, "a works");
+
+                // Test all format options for a future date.
+                let r38 = Datetime::from_string("9015-10-28T12:55:00", "").unwrap();
+                for (f, e) in [
+                    ("Y", "9015"),
+                    ("y", "15"),
+                    ("M", "10"),
+                    ("D", "28"),
+                    ("H", "12"),
+                    ("N", "55"),
+                    ("S", "00"),
+                    ("A", "Saturday"),
+                    ("a", "Sat"),
+                    ("B", "October"),
+                    ("V", "43"),
+                    ("J", "301"),
+                    ("w", "6"),
+                ] {
+                    assert_eq!(r38.to_string(f), e, "9015-10-28T12:55:01 -> {f}");
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn parse_formatted_tokens_and_literals() {
+        with_tz("Europe/Berlin", || {
+            let _settings = SettingsGuard::save();
+            Datetime::set_weekstart(1);
+            let fields_of = |input: &str, format_: &str| {
+                let mut dt = Datetime::new();
+                let mut pig = Pig::new(input);
+                let ok = dt.parse_formatted(&mut pig, format_);
+                (ok, pig.cursor(), dt._year, dt._month, dt._day, dt._seconds)
+            };
+
+            // Single-digit tokens take one or two digits.
+            assert_eq!(fields_of("2015-1-2", "Y-m-d"), (true, 8, 2015, 1, 2, 0));
+            assert_eq!(fields_of("2015-12-31", "Y-m-d"), (true, 10, 2015, 12, 31, 0));
+            assert_eq!(fields_of("2015-01-09", "Y-m-d"), (true, 10, 2015, 1, 9, 0));
+            // 'm' only reads a second digit after a leading 1: "2" then "5" is a literal mismatch.
+            assert!(!fields_of("25/1/2015", "m/d/Y").0);
+            // 'd' reads a second digit after 1, 2 or 3 only.
+            assert!(!fields_of("2015-1-45", "Y-m-d").0);
+            // 'h' reads a second digit after 1 or 2; 'n'/'s' after 0-5.
+            assert_eq!(fields_of("2015 23:59:59", "Y h:n:s"), (true, 13, 2015, 1, 1, 86399));
+            assert_eq!(fields_of("2015 3:7:9", "Y h:n:s"), (true, 10, 2015, 1, 1, 3 * 3600 + 7 * 60 + 9));
+            // Week tokens are consumed (and unused).
+            assert_eq!(fields_of("2015 W5", "Y Wv"), (true, 7, 2015, 1, 1, 0));
+            assert_eq!(fields_of("2015 W05", "Y WV"), (true, 8, 2015, 1, 1, 0));
+
+            // Missing values: a year with no month defaults to Jan 1, 00:00:00.
+            assert_eq!(fields_of("2015", "Y"), (true, 4, 2015, 1, 1, 0));
+
+            // No year: the current year/month/day (and time, if missing) are used.
+            let now = Datetime::new();
+            let (ok, _, y, m, d, s) = fields_of("12:00", "H:N");
+            assert!(ok);
+            assert_eq!((y, m, d, s), (now.year(), now.month(), now.day(), 12 * 3600));
+
+            // Trailing text must be whitespace (or end of input).
+            assert!(!fields_of("2015-10-28T12:00", "Y-M-D").0);
+            assert_eq!(fields_of("2015-10-28 12:00", "Y-M-D"), (true, 10, 2015, 10, 28, 0));
+
+            // A failed token restores the cursor.
+            let mut dt = Datetime::new();
+            let mut pig = Pig::new("2015-xx-28");
+            assert!(!dt.parse_formatted(&mut pig, "Y-M-D"));
+            assert_eq!(pig.cursor(), 0);
+
+            // Empty format short-circuits.
+            assert!(!fields_of("2015", "").0);
+
+            // Name tokens: invalid names fail; 'A'/'B' at the end of the format read to the end.
+            assert!(!fields_of("Foo 2015", "a Y").0);
+            assert!(!fields_of("Xyz 2015", "b Y").0);
+            assert_eq!(fields_of("2015 February", "Y B"), (true, 13, 2015, 2, 1, 0));
+            assert_eq!(fields_of("2015 Thursday", "Y A"), (true, 13, 2015, 1, 1, 0));
+            assert!(fields_of("2015 Thurs", "Y A").0, "abbreviated day names are accepted");
+            assert!(!fields_of("2015 Frogday", "Y A").0);
+
+            // Literal bytes, including multi-byte UTF-8 literals, match byte by byte.
+            assert_eq!(fields_of("28.10.2015", "D.M.Y"), (true, 10, 2015, 10, 28, 0));
+            assert_eq!(fields_of("2015年10月28日", "Y年M月D日"), (true, 17, 2015, 10, 28, 0));
+            assert!(!fields_of("2015年10月28日", "Y月M月D日").0);
+
+            // Through Datetime::parse: a formatted date that fails validation
+            // falls through to the ISO forms.
+            let mut dt = Datetime::new();
+            let mut start = 0;
+            assert!(dt.parse("2015-10-28T12:00", &mut start, "Y-M-D"));
+            assert_eq!(start, 16);
+            assert_eq!(dt._seconds, 12 * 3600);
+            assert!(!Datetime::valid_str("2/30/2015", "m/d/Y"));
         });
     }
 }
