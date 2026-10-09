@@ -27,6 +27,15 @@
 //! * Statics (`dateFormat`, `searchCaseSensitive`, `searchUsingRegex`,
 //!   `isoEnabled`) are thread-local getter/setter pairs (wiki "Process-wide
 //!   statics").
+//! * Operators are methods named `op_<name>`: `operator&&` -> `op_and`,
+//!   `operator||` -> `op_or`, `operator_xor` -> `op_xor`, `operator<` /
+//!   `<=` / `>` / `>=` -> `op_lt` / `op_lte` / `op_gt` / `op_gte`,
+//!   `operator==` / `!=` -> `op_eq` / `op_ne`, `operator!` -> `op_not`.
+//!   The C++ returns `bool`; the comparisons return `Result<bool>` because
+//!   their string to date casts can throw. They are not `PartialEq` /
+//!   `PartialOrd` impls, since those cannot be fallible.
+//! * `Task::customOrder` (read by the ordering operators) is defined here
+//!   until the Task port, see [`Task::custom_order`].
 //! * The `Task&` parameters of `operator_match` / `operator_hastag` are
 //!   abstracted by [`VariantTask`].
 
@@ -40,6 +49,7 @@ use crate::shared::datetime::Datetime;
 use crate::shared::duration::Duration;
 use crate::shared::format::{printf_g, stream_double};
 use crate::shared::localtime;
+use crate::shared::shared::compare;
 use crate::task::Task;
 use crate::{Result, TwError};
 
@@ -103,6 +113,9 @@ thread_local! {
     /// C++ `static bool Variant::isoEnabled;` (declared only, see
     /// [`Variant::iso_enabled`]).
     static ISO_ENABLED: Cell<bool> = const { Cell::new(false) };
+    /// C++ `std::map<std::string, std::vector<std::string>> Task::customOrder;`
+    /// (Task.cpp), read by the ordering operators; see [`Task::custom_order`].
+    static TASK_CUSTOM_ORDER: RefCell<BTreeMap<String, Vec<String>>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// C++ `enum Variant::type { type_boolean, type_integer, type_real,
@@ -145,6 +158,38 @@ impl VariantTask for Task {
     fn has_tag(&self, _tag: &str) -> bool {
         false
     }
+}
+
+/// The `Task::customOrder` static (C++ `Task.h` / `Task.cpp`), which
+/// Variant.cpp's `operator<`, `operator<=`, `operator>` and `operator>=` read.
+///
+/// Deviation: the static belongs to `Task` (task.rs, milestone 4); until that
+/// port it is defined here, as a thread-local getter/setter pair on [`Task`]
+/// (wiki "Process-wide statics"), defaulting to the empty map as in C++.
+impl Task {
+    /// C++ `Task::customOrder` (read).
+    pub fn custom_order() -> BTreeMap<String, Vec<String>> {
+        TASK_CUSTOM_ORDER.with(|c| c.borrow().clone())
+    }
+
+    /// C++ `Task::customOrder = value`.
+    pub fn set_custom_order(value: BTreeMap<String, Vec<String>>) {
+        TASK_CUSTOM_ORDER.with(|c| *c.borrow_mut() = value);
+    }
+}
+
+/// C++ `auto order = Task::customOrder.find (source)` followed, when found, by
+/// `std::find (order->second.begin (), order->second.end (), left)` and the
+/// same for `right`: the iterator positions as indices, the vector length
+/// for `end ()` (not found). `None` when `source` has no custom order.
+fn custom_order_positions(source: &str, left: &str, right: &str) -> Option<(usize, usize)> {
+    TASK_CUSTOM_ORDER.with(|c| {
+        c.borrow().get(source).map(|order| {
+            let pos_left = order.iter().position(|v| v == left).unwrap_or(order.len());
+            let pos_right = order.iter().position(|v| v == right).unwrap_or(order.len());
+            (pos_left, pos_right)
+        })
+    })
 }
 
 /// C++ `class Variant`. `Default` is `Variant ()`: Boolean `false`.
@@ -264,8 +309,865 @@ impl Variant {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // Operators: `operator&&` through `operator%` (Variant.cpp lines 148-1860)
-    // are ported here, in C++ order.
+    /// C++ `bool Variant::operator&& (const Variant& other) const`.
+    pub fn op_and(&self, other: &Variant) -> bool {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        left.cast_infallible(Type::Boolean);
+        right.cast_infallible(Type::Boolean);
+
+        left._bool && right._bool
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator|| (const Variant& other) const`.
+    pub fn op_or(&self, other: &Variant) -> bool {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        left.cast_infallible(Type::Boolean);
+        right.cast_infallible(Type::Boolean);
+
+        left._bool || right._bool
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_xor (const Variant& other) const`.
+    pub fn op_xor(&self, other: &Variant) -> bool {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        left.cast_infallible(Type::Boolean);
+        right.cast_infallible(Type::Boolean);
+
+        (left._bool && !right._bool) || (!left._bool && right._bool)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator< (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// A `cast` error (string to date with a non-empty `dateFormat`).
+    pub fn op_lt(&self, other: &Variant) -> Result<bool> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match left._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => Ok(!left._bool && right._bool),
+                Type::Integer => {
+                    left.cast(Type::Integer)?;
+                    Ok(left._integer < right._integer)
+                }
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real < right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string < right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date < right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration < right._duration)
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    Ok(left._integer < right._integer)
+                }
+                Type::Integer => Ok(left._integer < right._integer),
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real < right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string < right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date < right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration < right._duration)
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real < right._real)
+                }
+                Type::Integer => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real < right._real)
+                }
+                Type::Real => Ok(left._real < right._real),
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string < right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date < right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration < right._duration)
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::String)?;
+                    Ok(left._string < right._string)
+                }
+
+                Type::String => {
+                    if left._string == right._string {
+                        return Ok(false);
+                    }
+
+                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                        // Guaranteed to be found, because of ColUDA::validate ().
+                        Ok(pos_left < pos_right)
+                    } else {
+                        if left.trivial() || right.trivial() {
+                            return Ok(false);
+                        }
+
+                        Ok(left._string < right._string)
+                    }
+                }
+
+                Type::Date => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Date)?;
+                    Ok(left._date < right._date)
+                }
+
+                Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration < right._duration)
+                }
+            },
+
+            Type::Date => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Date)?;
+                    Ok(left._date < right._date)
+                }
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Duration)?;
+                    Ok(left._duration < right._duration)
+                }
+            },
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator<= (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// A `cast` error (string to date with a non-empty `dateFormat`).
+    pub fn op_lte(&self, other: &Variant) -> Result<bool> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match left._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => Ok(!left._bool || right._bool),
+                Type::Integer => {
+                    left.cast(Type::Integer)?;
+                    Ok(left._integer <= right._integer)
+                }
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real <= right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string <= right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date <= right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration <= right._duration)
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    Ok(left._integer <= right._integer)
+                }
+                Type::Integer => Ok(left._integer <= right._integer),
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real <= right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string <= right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date <= right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration <= right._duration)
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real <= right._real)
+                }
+                Type::Integer => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real <= right._real)
+                }
+                Type::Real => Ok(left._real <= right._real),
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string <= right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date <= right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration <= right._duration)
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::String)?;
+                    Ok(left._string <= right._string)
+                }
+
+                Type::String => {
+                    if left._string == right._string {
+                        return Ok(true);
+                    }
+
+                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                        // Guaranteed to be found, because of ColUDA::validate ().
+                        Ok(pos_left <= pos_right)
+                    } else {
+                        if left.trivial() || right.trivial() {
+                            return Ok(false);
+                        }
+
+                        Ok(left._string <= right._string)
+                    }
+                }
+
+                Type::Date => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Date)?;
+                    Ok(left._date <= right._date)
+                }
+
+                Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration <= right._duration)
+                }
+            },
+
+            Type::Date => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Date)?;
+                    Ok(left._date <= right._date)
+                }
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Duration)?;
+                    Ok(left._duration <= right._duration)
+                }
+            },
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator> (const Variant& other) const`.
+    ///
+    /// As in C++, Boolean > Boolean is `!left && right` (the same
+    /// expression as `operator<`), so `true > false` is `false`.
+    ///
+    /// # Errors
+    /// A `cast` error (string to date with a non-empty `dateFormat`).
+    pub fn op_gt(&self, other: &Variant) -> Result<bool> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match left._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => Ok(!left._bool && right._bool),
+                Type::Integer => {
+                    left.cast(Type::Integer)?;
+                    Ok(left._integer > right._integer)
+                }
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real > right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string > right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date > right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration > right._duration)
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    Ok(left._integer > right._integer)
+                }
+                Type::Integer => Ok(left._integer > right._integer),
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real > right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string > right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date > right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration > right._duration)
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real > right._real)
+                }
+                Type::Integer => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real > right._real)
+                }
+                Type::Real => Ok(left._real > right._real),
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string > right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date > right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration > right._duration)
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::String)?;
+                    Ok(left._string > right._string)
+                }
+
+                Type::String => {
+                    if left._string == right._string {
+                        return Ok(false);
+                    }
+
+                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                        // Guaranteed to be found, because of ColUDA::validate ().
+                        Ok(pos_left > pos_right)
+                    } else {
+                        if left.trivial() || right.trivial() {
+                            return Ok(false);
+                        }
+
+                        Ok(left._string > right._string)
+                    }
+                }
+
+                Type::Date => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Date)?;
+                    Ok(left._date > right._date)
+                }
+
+                Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration > right._duration)
+                }
+            },
+
+            Type::Date => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Date)?;
+                    Ok(left._date > right._date)
+                }
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Duration)?;
+                    Ok(left._duration > right._duration)
+                }
+            },
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator>= (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// A `cast` error (string to date with a non-empty `dateFormat`).
+    pub fn op_gte(&self, other: &Variant) -> Result<bool> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match left._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => Ok(left._bool || !right._bool),
+                Type::Integer => {
+                    left.cast(Type::Integer)?;
+                    Ok(left._integer >= right._integer)
+                }
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real >= right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string >= right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date >= right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration >= right._duration)
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    Ok(left._integer >= right._integer)
+                }
+                Type::Integer => Ok(left._integer >= right._integer),
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real >= right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string >= right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date >= right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration >= right._duration)
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real >= right._real)
+                }
+                Type::Integer => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real >= right._real)
+                }
+                Type::Real => Ok(left._real >= right._real),
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string >= right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date >= right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration >= right._duration)
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::String)?;
+                    Ok(left._string >= right._string)
+                }
+
+                Type::String => {
+                    if left._string == right._string {
+                        return Ok(true);
+                    }
+
+                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                        // Guaranteed to be found, because of ColUDA::validate ().
+                        Ok(pos_left >= pos_right)
+                    } else {
+                        if left.trivial() || right.trivial() {
+                            return Ok(false);
+                        }
+
+                        Ok(left._string >= right._string)
+                    }
+                }
+
+                Type::Date => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Date)?;
+                    Ok(left._date >= right._date)
+                }
+
+                Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration >= right._duration)
+                }
+            },
+
+            Type::Date => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Date)?;
+                    Ok(left._date >= right._date)
+                }
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Duration)?;
+                    Ok(left._duration >= right._duration)
+                }
+            },
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator== (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// A `cast` error (string to date with a non-empty `dateFormat`).
+    pub fn op_eq(&self, other: &Variant) -> Result<bool> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match left._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => Ok(left._bool == right._bool),
+                Type::Integer => {
+                    left.cast(Type::Integer)?;
+                    Ok(left._integer == right._integer)
+                }
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string == right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date == right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    Ok(left._integer == right._integer)
+                }
+                Type::Integer => Ok(left._integer == right._integer),
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string == right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date == right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+                Type::Integer => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+                Type::Real => Ok(left._real == right._real),
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string == right._string)
+                }
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    Ok(left._date == right._date)
+                }
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String => {
+                    right.cast(Type::String)?;
+
+                    // Status is always compared caseless.
+                    if left.source() == "status" {
+                        return Ok(compare(&left._string, &right._string, false));
+                    }
+
+                    Ok(left._string == right._string)
+                }
+
+                Type::Date => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Date)?;
+                    Ok(left._date == right._date)
+                }
+
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::Date => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Date)?;
+                    Ok(left._date == right._date)
+                }
+            },
+
+            Type::Duration => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    right.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator!= (const Variant& other) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_eq`].
+    pub fn op_ne(&self, other: &Variant) -> Result<bool> {
+        Ok(!self.op_eq(other)?)
+    }
+
+    // `operator_match` .. `operator_notag` (Variant.cpp lines 921-1171) come
+    // here, between `operator!=` and `operator!`.
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator! () const`.
+    pub fn op_not(&self) -> bool {
+        let mut left = self.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        left.cast_infallible(Type::Boolean);
+        !left._bool
+    }
+
+    // `operator^=` .. `operator%` (Variant.cpp lines 1183-1860) come here.
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// `cast (new_type)` where `new_type` is not [`Type::Date`]: only the
+    /// string to date conversion can throw, so the C++ calls in
+    /// `operator&&`, `operator||`, `operator_xor` and `operator!` cannot fail.
+    fn cast_infallible(&mut self, new_type: Type) {
+        debug_assert!(new_type != Type::Date, "cast to date can fail");
+        let result = self.cast(new_type);
+        debug_assert!(result.is_ok(), "only string -> date casts fail");
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `void Variant::sqrt ()`.

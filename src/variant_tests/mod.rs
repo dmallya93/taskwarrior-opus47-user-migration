@@ -7,7 +7,17 @@ use crate::test_util::{env_lock, EnvGuard};
 use std::fmt::Debug;
 use std::sync::MutexGuard;
 
+mod and;
 mod cast;
+mod equal;
+mod gt;
+mod gte;
+mod inequal;
+mod lt;
+mod lte;
+mod not;
+mod or;
+mod xor;
 
 /// The C++ `UnitTest` (test/test.cpp), recording instead of printing.
 pub(super) struct UnitTest {
@@ -327,4 +337,112 @@ fn placeholder_task_has_no_annotations_or_tags() {
     let task = Task::default();
     assert!(task.get_annotations().is_empty());
     assert!(!task.has_tag("anything"));
+}
+
+#[test]
+fn operators_custom_order() {
+    let _u = Upstream::setup(Some("UTC"));
+    let saved = Task::custom_order();
+
+    let mut order = BTreeMap::new();
+    order.insert("priority".to_string(), vec!["H".to_string(), "M".to_string(), "L".to_string()]);
+    Task::set_custom_order(order);
+
+    let mut h = Variant::from_string("H");
+    h.set_source("priority");
+    let mut l = Variant::from_string("L");
+    l.set_source("priority");
+    let mut unknown = Variant::from_string("X");
+    unknown.set_source("priority");
+
+    // Positions in the custom order: H (0) < M (1) < L (2) < not found (3).
+    assert!(h.op_lt(&l).unwrap());
+    assert!(!l.op_lt(&h).unwrap());
+    assert!(h.op_lte(&l).unwrap());
+    assert!(l.op_gt(&h).unwrap());
+    assert!(l.op_gte(&h).unwrap());
+    assert!(l.op_lt(&unknown).unwrap());
+    assert!(!h.op_lt(&h).unwrap());
+    assert!(h.op_lte(&h).unwrap());
+    assert!(h.op_gte(&h).unwrap());
+    assert!(!h.op_gt(&h).unwrap());
+    // An empty string is found nowhere (position 3): no trivial shortcut.
+    assert!(h.op_lt(&Variant::from_string("")).unwrap());
+
+    // The lookup uses the left source only; without it, plain byte order.
+    assert!(Variant::from_string("H").op_lt(&l).unwrap());
+    assert!(!Variant::from_string("L").op_lt(&h).unwrap());
+
+    Task::set_custom_order(saved);
+}
+
+#[test]
+fn operators_string_rules() {
+    let _u = Upstream::setup(Some("UTC"));
+
+    // Trivial strings never order, but equal strings short-circuit first.
+    assert!(!Variant::from_string("").op_lt(&Variant::from_string("a")).unwrap());
+    assert!(!Variant::from_string("a").op_gt(&Variant::from_string("")).unwrap());
+    assert!(!Variant::from_string("").op_lte(&Variant::from_string("a")).unwrap());
+    assert!(Variant::from_string("").op_lte(&Variant::from_string("")).unwrap());
+    assert!(Variant::from_string("").op_gte(&Variant::from_string("")).unwrap());
+
+    // std::string comparison is byte-wise; quotes are removed first.
+    assert!(Variant::from_string("B").op_lt(&Variant::from_string("a")).unwrap());
+    assert!(Variant::from_string("z").op_lt(&Variant::from_string("\u{e9}")).unwrap());
+    assert!(Variant::from_string("'abc'").op_eq(&Variant::from_string("abc")).unwrap());
+
+    // Status is always compared caseless (left source only).
+    let mut status = Variant::from_string("Pending");
+    status.set_source("status");
+    assert!(status.op_eq(&Variant::from_string("pending")).unwrap());
+    assert!(!status.op_ne(&Variant::from_string("PENDING")).unwrap());
+    assert!(!Variant::from_string("Pending").op_eq(&Variant::from_string("pending")).unwrap());
+
+    // String == duration and duration == * have no trivial shortcut.
+    assert!(Variant::from_string("").op_eq(&Variant::from_time(0, Type::Duration).unwrap()).unwrap());
+    // Date == trivial is false, even for equal values.
+    let zero = Variant::from_time(0, Type::Date).unwrap();
+    assert!(!zero.op_eq(&zero).unwrap());
+    assert!(zero.op_ne(&zero).unwrap());
+
+    // Logical operators dequote and cast strings to Boolean.
+    assert!(!Variant::from_string("'0'").op_and(&Variant::from_bool(true)));
+    assert!(Variant::from_string("'0'").op_or(&Variant::from_string("x")));
+    assert!(Variant::from_string("\"0.0\"").op_not());
+    assert!(Variant::from_string("").op_xor(&Variant::from_int(1)));
+}
+
+#[test]
+fn operators_boolean_gt_matches_cpp() {
+    // C++ operator> on two Booleans returns `!left && right`.
+    let t = Variant::from_bool(true);
+    let f = Variant::from_bool(false);
+    assert!(!t.op_gt(&f).unwrap());
+    assert!(f.op_gt(&t).unwrap());
+    assert!(t.op_gte(&f).unwrap());
+    assert!(!f.op_gte(&t).unwrap());
+    assert!(f.op_lt(&t).unwrap());
+    assert!(f.op_lte(&t).unwrap());
+    assert!(!t.op_lte(&f).unwrap());
+}
+
+#[test]
+fn operators_propagate_cast_errors() {
+    let _u = Upstream::setup(Some("UTC"));
+    Variant::set_date_format("D.M.Y");
+    let date = Variant::from_time(1234567890, Type::Date).unwrap();
+    let text = Variant::from_string("bogus");
+    let message = "'bogus' is not a valid date in the 'D.M.Y' format.";
+
+    assert_eq!(text.op_lt(&date).unwrap_err().to_string(), message);
+    assert_eq!(text.op_lte(&date).unwrap_err().to_string(), message);
+    assert_eq!(date.op_gt(&text).unwrap_err().to_string(), message);
+    assert_eq!(date.op_gte(&text).unwrap_err().to_string(), message);
+    assert_eq!(text.op_eq(&date).unwrap_err().to_string(), message);
+    assert_eq!(date.op_ne(&text).unwrap_err().to_string(), message);
+
+    let same = Variant::from_string("13.02.2009");
+    assert!(same.op_lt(&date).unwrap());
+    assert!(date.op_gt(&same).unwrap());
 }
