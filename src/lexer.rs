@@ -2080,3 +2080,7 @@ mod tests {
         assert_eq!(single("123.annotations.1.entry"), ("123.annotations.1.entry".to_string(), Type::dom));
     }
 }
+
+#[cfg(test)]
+#[path = "lexer_tests.rs"]
+mod upstream_tests;
