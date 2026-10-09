@@ -1767,10 +1767,13 @@ mod tests {
 
     /// An isolated environment: HOME is a fresh temporary directory, TASKRC,
     /// TASKDATA and XDG_CONFIG_HOME are unset, stdout is "not a TTY".
+    ///
+    /// Fields drop in declaration order: the environment is restored and the
+    /// temporary directory removed before `_lock` releases the env lock.
     struct Fixture {
-        _lock: MutexGuard<'static, ()>,
         _env: EnvGuard,
         _dir: tempfile::TempDir,
+        _lock: MutexGuard<'static, ()>,
         base: String,
         home: String,
     }
@@ -1794,9 +1797,9 @@ mod tests {
         std::env::remove_var("XDG_CONFIG_HOME");
         set_stdout_tty_override(Some(false));
         Fixture {
-            _lock: lock,
             _env: env,
             _dir: dir,
+            _lock: lock,
             base,
             home,
         }
