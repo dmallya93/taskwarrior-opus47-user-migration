@@ -84,10 +84,10 @@
 //! has no such failure mode. A translated pattern too big for the `regex`
 //! crate's (raised) size limit is reported with the C++ NFA-limit message.
 //!
-//! Deviation: C++ throws `std::runtime_error (e.what ())`, which Taskwarrior
-//! itself never prints (`Context::run`/`main` print "Unknown error. Please
-//! report." from `catch (...)`). Here the text is returned as
-//! [`TwError::Message`]; callers that need the Taskwarrior behaviour map it.
+//! C++ throws `std::runtime_error (e.what ())`, which Taskwarrior itself
+//! never prints (`Context::run`/`main` print "Unknown error. Please report."
+//! from `catch (...)`). Here the text is returned as [`TwError::Runtime`],
+//! which `Context` and `main` map to that same `catch (...)` behaviour.
 //!
 //! C++ API to Rust:
 //! - `RX ()` -> `RX::default ()` (empty pattern, case insensitive, as C++
@@ -204,7 +204,7 @@ impl RX {
         self.compiled
             .get_or_init(|| build(&self.pattern, !self.case_sensitive))
             .as_ref()
-            .map_err(|e| TwError::Message(e.clone()))
+            .map_err(|e| TwError::Runtime(e.clone()))
     }
 
     /// C++ `bool RX::match (const std::string& in)`: `std::regex_search`.
@@ -1547,7 +1547,7 @@ mod tests {
     /// The `regex_error` text of a failed `RX` operation.
     fn message(e: TwError) -> String {
         match e {
-            TwError::Message(m) => m,
+            TwError::Runtime(m) => m,
             other => panic!("unexpected error variant {other:?}"),
         }
     }

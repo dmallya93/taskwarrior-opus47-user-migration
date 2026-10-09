@@ -10,7 +10,8 @@
 //! `////...` rules:
 //! 1. error message texts, statics, constructors, `source`;
 //! 2. the operators (`operator&&` .. `operator%`, Variant.cpp lines
-//!    148-1860), which are ported in that order directly after `source`;
+//!    148-1860, including `operator_match` .. `operator_notag`), which are
+//!    ported in that order directly after `source`;
 //! 3. `operator std::string` ([`fmt::Display`]), `sqrt`, `cast`, `type`,
 //!    `trivial` and the getters.
 //!
@@ -44,6 +45,11 @@
 //!   throws.
 //! * `Task::customOrder` (read by the ordering operators) is defined here
 //!   until the Task port, see [`Task::custom_order`].
+//! * `operator_match` / `operator_nomatch` -> `op_match` / `op_nomatch`
+//!   (`Result<bool>`: an invalid regex is [`TwError::Runtime`]),
+//!   `operator_partial` / `operator_nopartial` -> `op_partial` /
+//!   `op_nopartial` (`Result<bool>`, casts), `operator_hastag` /
+//!   `operator_notag` -> `op_hastag` / `op_notag` (`bool`).
 //! * The `Task&` parameters of `operator_match` / `operator_hastag` are
 //!   abstracted by [`VariantTask`].
 
@@ -57,7 +63,8 @@ use crate::shared::datetime::Datetime;
 use crate::shared::duration::Duration;
 use crate::shared::format::{printf_g, stream_double};
 use crate::shared::localtime;
-use crate::shared::shared::compare;
+use crate::shared::rx::RX;
+use crate::shared::shared::{compare, find};
 use crate::task::Task;
 use crate::{Result, TwError};
 
@@ -1149,8 +1156,313 @@ impl Variant {
         Ok(!self.op_eq(other)?)
     }
 
-    // `operator_match` .. `operator_notag` (Variant.cpp lines 921-1171) come
-    // here, between `operator!=` and `operator!`.
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_match (const Variant& other, const Task&
+    /// task) const`.
+    ///
+    /// Both operands are dequoted and cast to string; the (again dequoted)
+    /// right operand is the pattern. With `searchUsingRegex` it is an
+    /// [`RX`] (case sensitivity from `searchCaseSensitive`), otherwise a
+    /// substring search, anchored left by a leading `^` or right by a
+    /// trailing `$`. When the left source is `description`, the task's
+    /// annotations are searched too.
+    ///
+    /// As in C++, the `$` test is `find (left, pattern minus '$') ==
+    /// left.length () - pattern.length () + 1` in `size_t` arithmetic, so a
+    /// not-found (`npos`) search also matches when the pattern is exactly two
+    /// bytes longer than the left operand (both sides are `npos`).
+    ///
+    /// Deviation: for an empty pattern without regex search, C++ reads
+    /// `pattern[pattern.length () - 1]`, i.e. `pattern[npos]` (undefined);
+    /// here the `$` test is skipped and the plain substring search (which
+    /// finds the empty pattern at 0) decides.
+    ///
+    /// # Errors
+    /// [`TwError::Runtime`] when the regex pattern does not compile (C++
+    /// `RX` throws `std::runtime_error`, which only `catch (...)` catches).
+    #[allow(clippy::if_same_then_else)] // Line-by-line port of the C++ if / else if chain.
+    pub fn op_match(&self, other: &Variant, task: &dyn VariantTask) -> Result<bool> {
+        // Simple matching case first.
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        left.cast_infallible(Type::String);
+        right.cast_infallible(Type::String);
+
+        let mut pattern = right._string.clone();
+        Lexer::dequote(&mut pattern);
+
+        let search_case_sensitive = Variant::search_case_sensitive();
+
+        if Variant::search_using_regex() {
+            let r = RX::new(pattern.as_str(), search_case_sensitive);
+            if r.matches(&left._string)? {
+                return Ok(true);
+            }
+
+            // If the above did not match, and the left source is "description", then
+            // in the annotations.
+            if left.source() == "description" {
+                for a in task.get_annotations().values() {
+                    if r.matches(a)? {
+                        return Ok(true);
+                    }
+                }
+            }
+        } else {
+            // If pattern starts with '^', look for a leftmost compare only.
+            if pattern.starts_with('^') && find(&left._string, &pattern[1..], search_case_sensitive) == Some(0) {
+                return Ok(true);
+            }
+            // If pattern ends with '$', look for a rightmost compare only.
+            else if pattern.ends_with('$')
+                && find(&left._string, &pattern[..pattern.len() - 1], search_case_sensitive).unwrap_or(usize::MAX)
+                    == left._string.len().wrapping_sub(pattern.len()).wrapping_add(1)
+            {
+                return Ok(true);
+            } else if find(&left._string, &pattern, search_case_sensitive).is_some() {
+                return Ok(true);
+            }
+
+            // If the above did not match, and the left source is "description", then
+            // in the annotations.
+            if left.source() == "description" {
+                for a in task.get_annotations().values() {
+                    if find(a, &pattern, search_case_sensitive).is_some() {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_nomatch (const Variant& other, const Task&
+    /// task) const`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_match`].
+    pub fn op_nomatch(&self, other: &Variant, task: &dyn VariantTask) -> Result<bool> {
+        Ok(!self.op_match(other, task)?)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_partial (const Variant& other) const`.
+    ///
+    /// Partial match is mostly a clone of operator==, but with some overrides:
+    ///
+    ///   date <partial> date     --> same day check
+    ///   string <partial> string --> leftmost
+    ///
+    /// # Errors
+    /// A `cast` error (string to date with a non-empty `dateFormat`).
+    pub fn op_partial(&self, other: &Variant) -> Result<bool> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+
+        if left._type == Type::String {
+            Lexer::dequote(&mut left._string);
+        }
+
+        if right._type == Type::String {
+            Lexer::dequote(&mut right._string);
+        }
+
+        match left._type {
+            Type::Boolean => match right._type {
+                Type::Boolean => Ok(left._bool == right._bool),
+                Type::Integer => {
+                    left.cast(Type::Integer)?;
+                    Ok(left._integer == right._integer)
+                }
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string == right._string)
+                }
+
+                // Same-day comparison.
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    let left_date = Datetime::from_epoch(left._date);
+                    let right_date = Datetime::from_epoch(right._date);
+                    Ok(left_date.same_day(&right_date))
+                }
+
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::Integer => match right._type {
+                Type::Boolean => {
+                    right.cast(Type::Integer)?;
+                    Ok(left._integer == right._integer)
+                }
+                Type::Integer => Ok(left._integer == right._integer),
+                Type::Real => {
+                    left.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string == right._string)
+                }
+
+                // Same-day comparison.
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    let left_date = Datetime::from_epoch(left._date);
+                    let right_date = Datetime::from_epoch(right._date);
+                    Ok(left_date.same_day(&right_date))
+                }
+
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::Real => match right._type {
+                Type::Boolean | Type::Integer | Type::Real => {
+                    right.cast(Type::Real)?;
+                    Ok(left._real == right._real)
+                }
+
+                Type::String => {
+                    left.cast(Type::String)?;
+                    Ok(left._string == right._string)
+                }
+
+                // Same-day comparison.
+                Type::Date => {
+                    left.cast(Type::Date)?;
+                    let left_date = Datetime::from_epoch(left._date);
+                    let right_date = Datetime::from_epoch(right._date);
+                    Ok(left_date.same_day(&right_date))
+                }
+
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::String => match right._type {
+                Type::Boolean | Type::Integer | Type::Real | Type::String => {
+                    right.cast(Type::String)?;
+
+                    // Status is always compared caseless.
+                    if left.source() == "status" {
+                        return Ok(compare(&left._string, &right._string, false));
+                    }
+
+                    let left_len = left._string.len();
+                    let right_len = right._string.len();
+
+                    if (left_len == 0 && right_len != 0) || (left_len != 0 && right_len == 0) {
+                        return Ok(false);
+                    }
+
+                    // Dodgy.
+                    if left._string.len() < right._string.len() {
+                        return Ok(false);
+                    }
+
+                    // left._string.substr (0, right._string.length ()) == right._string,
+                    // compared as bytes.
+                    Ok(&left._string.as_bytes()[..right._string.len()] == right._string.as_bytes())
+                }
+
+                // Same-day comparison.
+                Type::Date => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    left.cast(Type::Date)?;
+                    let left_date = Datetime::from_epoch(left._date);
+                    let right_date = Datetime::from_epoch(right._date);
+                    Ok(left_date.same_day(&right_date))
+                }
+
+                Type::Duration => {
+                    left.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+
+            Type::Date => match right._type {
+                // Same-day comparison.
+                Type::String => {
+                    if left.trivial() || right.trivial() {
+                        return Ok(false);
+                    }
+
+                    right.cast(Type::Date)?;
+                    let left_date = Datetime::from_epoch(left._date);
+                    let right_date = Datetime::from_epoch(right._date);
+                    Ok(left_date.same_day(&right_date))
+                }
+
+                Type::Boolean | Type::Integer | Type::Real | Type::Date | Type::Duration => {
+                    right.cast(Type::Date)?;
+                    let left_date = Datetime::from_epoch(left._date);
+                    let right_date = Datetime::from_epoch(right._date);
+                    Ok(left_date.same_day(&right_date))
+                }
+            },
+
+            Type::Duration => match right._type {
+                // Same-day comparison.
+                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                    right.cast(Type::Duration)?;
+                    Ok(left._duration == right._duration)
+                }
+            },
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_nopartial (const Variant& other) const`:
+    /// inverse of `operator_partial`.
+    ///
+    /// # Errors
+    /// As [`Variant::op_partial`].
+    pub fn op_nopartial(&self, other: &Variant) -> Result<bool> {
+        Ok(!self.op_partial(other)?)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_hastag (const Variant& other, const Task&
+    /// task) const`.
+    pub fn op_hastag(&self, other: &Variant, task: &dyn VariantTask) -> bool {
+        let mut right = other.clone();
+        right.cast_infallible(Type::String);
+        Lexer::dequote(&mut right._string);
+        task.has_tag(&right._string)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `bool Variant::operator_notag (const Variant& other, const Task&
+    /// task) const`.
+    pub fn op_notag(&self, other: &Variant, task: &dyn VariantTask) -> bool {
+        !self.op_hastag(other, task)
+    }
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `bool Variant::operator! () const`.

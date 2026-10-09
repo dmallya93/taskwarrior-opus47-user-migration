@@ -7,11 +7,13 @@
 //! |---------------------------|----------------------------------------------|----------------------------------|--------|
 //! | `const std::string&`      | `Message`, `Io`, `NotImplemented`            | message + `\n`                   | -1     |
 //! | `rust::Error&`            | `TaskChampion`                               | message + `\n`                   | -1     |
-//! | `...` (e.g. `throw int`)  | `Status`, or a panic                         | `Unknown error. Please report.\n`| -2     |
+//! | `...` (e.g. `throw int`)  | `Status`, `Runtime`, or a panic              | `Unknown error. Please report.\n`| -2     |
 //!
 //! `std::bad_alloc` (-3) has no Rust equivalent (allocation failure aborts),
-//! and `std::regex_error` is not raised by the Rust regex usage, which
-//! reports invalid patterns as message errors.
+//! and `std::regex_error` is never thrown: libshared `RX` rethrows it as
+//! `std::runtime_error`, i.e. [`TwError::Runtime`], which only `catch (...)`
+//! catches (as in `Context::initialize` / `Context::run`, which normally
+//! catch it first).
 //!
 //! Deviation: on a panic the Rust panic message is printed to stderr (by
 //! the default panic hook) before the C++ catch-all text.
@@ -52,7 +54,9 @@ fn status_for(result: std::thread::Result<Result<i32>>) -> (i32, Option<String>)
         )) => (-1, Some(format!("{err}\n"))),
 
         // catch (...)
-        Ok(Err(TwError::Status(_))) | Err(_) => (-2, Some("Unknown error. Please report.\n".to_string())),
+        Ok(Err(TwError::Status(_) | TwError::Runtime(_))) | Err(_) => {
+            (-2, Some("Unknown error. Please report.\n".to_string()))
+        }
     }
 }
 
@@ -119,6 +123,10 @@ mod tests {
         );
         let unknown = Some("Unknown error. Please report.\n".to_string());
         assert_eq!(status_for(Ok(Err(TwError::Status(4)))), (-2, unknown.clone()));
+        assert_eq!(
+            status_for(Ok(Err(TwError::Runtime("Parenthesis is not closed.".into())))),
+            (-2, unknown.clone())
+        );
         assert_eq!(status_for(Err(Box::new("panic"))), (-2, unknown));
     }
 

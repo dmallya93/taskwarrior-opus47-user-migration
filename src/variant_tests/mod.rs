@@ -18,11 +18,14 @@ mod gte;
 mod inequal;
 mod lt;
 mod lte;
+mod r#match;
 mod math;
 mod modulo;
 mod multiply;
+mod nomatch;
 mod not;
 mod or;
+mod partial;
 mod subtract;
 mod xor;
 

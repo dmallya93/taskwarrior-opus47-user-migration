@@ -928,7 +928,8 @@ impl Context {
 
     /// The C++ `catch` clauses of `initialize` and `run`: queues the message
     /// and returns the status. `throw std::string` and `rust::Error` give 2,
-    /// `throw int` gives 4.
+    /// `throw int` gives 4, `catch (...)` (`std::runtime_error`, i.e.
+    /// [`TwError::Runtime`]) queues "Unknown error. Please report." and gives 3.
     ///
     /// Rust-only variants: `NotImplemented` (a stub command) is a message
     /// error like `throw std::string`; `Io` is reported like the libshared
@@ -942,6 +943,11 @@ impl Context {
             TwError::Message(_) | TwError::TaskChampion(_) | TwError::NotImplemented(_) | TwError::Io(_) => {
                 self.error(&err.to_string());
                 2
+            }
+            // catch (...): e.g. the std::runtime_error of an invalid regex.
+            TwError::Runtime(_) => {
+                self.error("Unknown error. Please report.");
+                3
             }
         }
     }
@@ -1823,6 +1829,11 @@ mod tests {
         add_cmd(&mut context, "status", Behaviour::Fail(|| TwError::Status(9)));
         add_cmd(
             &mut context,
+            "runtime",
+            Behaviour::Fail(|| TwError::Runtime("Parenthesis is not closed.".to_string())),
+        );
+        add_cmd(
+            &mut context,
             "stub",
             Behaviour::Fail(|| TwError::NotImplemented("stub".to_string())),
         );
@@ -2209,6 +2220,11 @@ mod tests {
         init(&mut context, &["task", "stub"]);
         let (rc, _, stderr) = run(&mut context);
         assert_eq!((rc, stderr.as_str()), (2, "Command 'stub' is not yet implemented.\n"));
+
+        let mut context = self::context();
+        init(&mut context, &["task", "runtime"]);
+        let (rc, _, stderr) = run(&mut context);
+        assert_eq!((rc, stderr.as_str()), (3, "Unknown error. Please report.\n"));
     }
 
     #[test]
