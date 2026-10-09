@@ -13,6 +13,7 @@ pub mod pig;
 pub mod fs;
 pub mod timer;
 pub mod configuration;
+pub mod localtime;
 pub mod datetime;
 pub mod duration;
 pub mod json;

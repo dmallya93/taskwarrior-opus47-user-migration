@@ -27,11 +27,16 @@
 //! not exist yet. Those calls are explicit hook points (no-ops, or bootstrap
 //! approximations), each documented where it occurs:
 //!
-//! - **Milestone 2** (Datetime/Duration/JSON/Lexer): `Lexer::minimumMatchLength`,
+//! - **Milestone 2** (Datetime/Duration/JSON/Lexer): done.
+//!   `staticInitialization` sets `Lexer::minimumMatchLength`,
 //!   `Lexer::dateFormat`, `Datetime::weekstart` / `isoEnabled` /
-//!   `standalone*Enabled`, `Duration::standaloneSecondsEnabled` in
-//!   `staticInitialization`; `Datetime` formatting is done with libc here.
-//! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics,
+//!   `standalone*Enabled` and `Duration::standaloneSecondsEnabled`
+//!   ([`Lexer`], [`Datetime`], [`Duration`]; thread-local statics, which is
+//!   equivalent to the C++ statics for the single-threaded binary), and all
+//!   date formatting goes through [`Datetime`].
+//! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics
+//!   (including the `Variant::dateFormat` half of `Lexer::dateFormat =
+//!   Variant::dateFormat`),
 //!   `Eval::getOperators` / `getBinaryOperators` entities, and the
 //!   `colorize*` functions (identity until the colour rules exist; libshared
 //!   `Color` and `Table` themselves are already ported).
@@ -68,12 +73,15 @@ use crate::columns::column::Column;
 use crate::commands::command::{self, Registry};
 use crate::error::{Result, TwError};
 use crate::hooks::Hooks;
+use crate::lexer::Lexer;
 use crate::recur;
 use crate::rules;
 use crate::shared::configuration::Configuration;
+use crate::shared::datetime::Datetime;
+use crate::shared::duration::Duration;
 use crate::shared::format::{format, printf_f};
 use crate::shared::fs::{Directory, File, Path};
-use crate::shared::shared::{close_enough, confirm, split};
+use crate::shared::shared::{confirm, split};
 use crate::shared::timer::Timer;
 use crate::task::Task;
 use crate::tdb2::Tdb2;
@@ -513,52 +521,6 @@ pub fn stdout_is_tty() -> bool {
     unsafe { libc::isatty(libc::STDOUT_FILENO) == 1 }
 }
 
-/// The current time as a broken-down `struct tm`, local or UTC.
-pub(crate) fn now_tm(local: bool) -> libc::tm {
-    // SAFETY: time(NULL) cannot fail; localtime_r/gmtime_r fill `tm` from a
-    // valid time_t, and an all-zero tm is a valid initial value.
-    unsafe {
-        let now = libc::time(std::ptr::null_mut());
-        let mut tm: libc::tm = std::mem::zeroed();
-        if local {
-            libc::localtime_r(&now, &mut tm);
-        } else {
-            libc::gmtime_r(&now, &mut tm);
-        }
-        tm
-    }
-}
-
-/// C++ `Datetime ().toString ("m/d/Y H:N:S")` (local time; month and day
-/// unpadded, the time fields two digits). Milestone 2 hook: `Datetime`.
-fn now_created_stamp() -> String {
-    let t = now_tm(true);
-    format!(
-        "{}/{}/{} {:02}:{:02}:{:02}",
-        t.tm_mon + 1,
-        t.tm_mday,
-        t.tm_year + 1900,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec
-    )
-}
-
-/// C++ `Datetime ().toISO ()`: `YYYYMMDDTHHMMSSZ` in UTC. Milestone 2 hook:
-/// `Datetime`.
-fn now_iso() -> String {
-    let t = now_tm(false);
-    format!(
-        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
-        t.tm_year + 1900,
-        t.tm_mon + 1,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec
-    )
-}
-
 /// C++ `(int) strtol (text, nullptr, 10)`: optional leading whitespace and
 /// sign, then the leading decimal digits; 0 if none.
 fn strtol(text: &str) -> i32 {
@@ -574,26 +536,6 @@ fn strtol(text: &str) -> i32 {
     }
     let value = if negative { -value } else { value };
     value as i32
-}
-
-/// libshared `Datetime::dayOfWeek (const std::string&)`: the index (0 =
-/// Sunday) of the day name `input` abbreviates (at least
-/// `Datetime::minimumMatchLength` = 3 characters, case-insensitive), or -1.
-/// Milestone 2 hook: `Datetime`.
-fn day_of_week(input: &str) -> i32 {
-    const DAY_NAMES: [&str; 7] = [
-        "sunday",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-    ];
-    DAY_NAMES
-        .iter()
-        .position(|day| close_enough(day, input, 3))
-        .map_or(-1, |i| i as i32)
 }
 
 // Milestone 3 (Color) / 6 (rules.cpp) hooks: C++ `colorizeHeader`,
@@ -1110,7 +1052,7 @@ impl Context {
             - self.time_hooks_us;
         let s = format!(
             "Perf {PACKAGE_STRING} {PERF_COMMIT} {} init:{} load:{} gc:{} filter:{} commit:{} sort:{} render:{} hooks:{} other:{} total:{}\n",
-            now_iso(),
+            Datetime::new().to_iso(),
             self.time_init_us,
             self.time_load_us,
             gc,
@@ -1425,26 +1367,31 @@ impl Context {
     /// is not Sunday or Monday.
     fn static_initialization(&mut self) -> Result<()> {
         cli2::set_minimum_match_length(self.config.get_integer("abbreviation.minimum"));
-        // Milestone 2 hook: Lexer::minimumMatchLength = abbreviation.minimum.
+        // C++ assigns the int to a std::string::size_type (wrapping negatives).
+        Lexer::set_minimum_match_length(self.config.get_integer("abbreviation.minimum") as usize);
 
         // Milestone 4 hook: Task::defaultProject / defaultDue / defaultScheduled
         // from default.project / default.due / default.scheduled.
 
         // Milestone 3/4 hooks: Task::searchCaseSensitive =
         // Variant::searchCaseSensitive = search.case.sensitive; Task::regex =
-        // Variant::searchUsingRegex = regex; Lexer::dateFormat =
-        // Variant::dateFormat = dateformat.
+        // Variant::searchUsingRegex = regex.
 
-        let week_start = day_of_week(&self.config.get("weekstart"));
+        // C++ `Lexer::dateFormat = Variant::dateFormat = dateformat`.
+        // Milestone 3 hook: the Variant::dateFormat half.
+        Lexer::set_date_format(&self.config.get("dateformat"));
+
+        let week_start = Datetime::day_of_week_str(&self.config.get("weekstart"));
         if week_start != 0 && week_start != 1 {
             return Err(TwError::Message(
                 "The 'weekstart' configuration variable may only contain 'Sunday' or 'Monday'.".to_string(),
             ));
         }
-        // Milestone 2 hook: Datetime::weekstart = week_start; Datetime::isoEnabled
-        // = date.iso; Datetime::standaloneDateEnabled = false;
-        // Datetime::standaloneTimeEnabled = false;
-        // Duration::standaloneSecondsEnabled = false.
+        Datetime::set_weekstart(week_start);
+        Datetime::set_iso_enabled(self.config.get_boolean("date.iso"));
+        Datetime::set_standalone_date_enabled(false);
+        Datetime::set_standalone_time_enabled(false);
+        Duration::set_standalone_seconds_enabled(false);
 
         self.tdb2.debug_mode = self.config.get_boolean("debug");
 
@@ -1483,8 +1430,9 @@ impl Context {
                 return Err(TwError::Message("Cannot proceed without rc file.".to_string()));
             }
 
+            let now = Datetime::new();
             let mut contents = String::new();
-            contents.push_str(&format!("# [Created by {PACKAGE_STRING} {}]\n", now_created_stamp()));
+            contents.push_str(&format!("# [Created by {PACKAGE_STRING} {}]\n", now.to_string("m/d/Y H:N:S")));
             contents.push_str(&format!("data.location={}\n", self.data_dir.original));
             contents.push_str(&format!("news.version={}\n", Version::current()));
             contents.push_str("\n# To use the default location of the XDG directories,\n");
@@ -1756,12 +1704,6 @@ mod tests {
         assert_eq!(strtol("  12abc"), 12);
         assert_eq!(strtol("-3"), -3);
         assert_eq!(strtol("page"), 0);
-        assert_eq!(day_of_week("Sunday"), 0);
-        assert_eq!(day_of_week("mon"), 1);
-        assert_eq!(day_of_week("mo"), -1);
-        assert_eq!(day_of_week("friday"), 5);
-        assert_eq!(now_iso().len(), 16);
-        assert!(now_created_stamp().contains('/'));
         assert_eq!(MODIFIER_NAMES.len(), 22);
     }
 
@@ -2331,6 +2273,57 @@ mod tests {
         assert_eq!(cli2::minimum_match_length(), 4);
         assert_eq!(context.cli2.get_command(), "alpha");
         cli2::set_minimum_match_length(3);
+    }
+
+    /// Restores the Lexer/Datetime/Duration statics (and the CLI2 match
+    /// length) to their defaults when dropped. Declared after the fixture
+    /// so it drops first, before the fixture releases the env lock.
+    struct StaticsGuard;
+
+    impl Drop for StaticsGuard {
+        fn drop(&mut self) {
+            cli2::set_minimum_match_length(3);
+            Lexer::set_minimum_match_length(3);
+            Lexer::set_date_format("");
+            Datetime::set_weekstart(1);
+            Datetime::set_iso_enabled(true);
+            Datetime::set_standalone_date_enabled(true);
+            Datetime::set_standalone_time_enabled(true);
+            Duration::set_standalone_seconds_enabled(true);
+        }
+    }
+
+    #[test]
+    fn static_initialization_sets_lexer_datetime_duration_statics() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(
+            &format!("{}/.taskrc", f.home),
+            "abbreviation.minimum=5\ndateformat=D.M.Y\nweekstart=Monday\ndate.iso=0\n",
+        );
+        let mut configured = context();
+        let (status, _, _) = init(&mut configured, &["task", "alpha"]);
+        assert_eq!(status, 0);
+        assert_eq!(Lexer::minimum_match_length(), 5);
+        assert_eq!(Lexer::date_format(), "D.M.Y");
+        assert_eq!(Datetime::weekstart(), 1);
+        assert!(!Datetime::iso_enabled());
+        assert!(!Datetime::standalone_date_enabled());
+        assert!(!Datetime::standalone_time_enabled());
+        assert!(!Duration::standalone_seconds_enabled());
+
+        // The compiled-in defaults: abbreviation.minimum=2, dateformat=Y-M-D,
+        // weekstart=sunday, date.iso=1.
+        write(&format!("{}/.taskrc", f.home), "\n");
+        let mut defaulted = context();
+        let (status, _, _) = init(&mut defaulted, &["task", "alpha"]);
+        assert_eq!(status, 0);
+        assert_eq!(Lexer::minimum_match_length(), 2);
+        assert_eq!(Lexer::date_format(), "Y-M-D");
+        assert_eq!(Datetime::weekstart(), 0);
+        assert!(Datetime::iso_enabled());
+        assert!(!Datetime::standalone_date_enabled());
+        assert!(!Duration::standalone_seconds_enabled());
     }
 
     #[test]

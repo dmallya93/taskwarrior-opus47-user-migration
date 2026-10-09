@@ -266,6 +266,49 @@ fn version_copyright_follows_tz() {
     assert!(out.contains("Copyright (C) 2006 - 20"), "{out}");
 }
 
+/// `faketime` runs `task` under libfaketime, which intercepts the libc time
+/// calls `shared::localtime` makes (spec Design Decision 5). Skipped when the
+/// `faketime` wrapper is not installed.
+fn faketime_task(env: &Env, timestamp: &str, args: &[&str]) -> Option<Output> {
+    let available = Command::new("faketime").arg("--version").output().is_ok();
+    if !available {
+        eprintln!("faketime not installed; skipping");
+        return None;
+    }
+    let output = Command::new("faketime")
+        .arg(timestamp)
+        .arg(env!("CARGO_BIN_EXE_task"))
+        .args(args)
+        .current_dir(env.dir.path())
+        .env("HOME", env.home())
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .env("TZ", "UTC")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("TASK_USE_PATH")
+        .output()
+        .unwrap();
+    Some(output)
+}
+
+#[test]
+fn faketime_drives_datetime_now() {
+    let env = Env::new("");
+    let Some(output) = faketime_task(&env, "2031-06-15 12:34:56", &["version"]) else {
+        return;
+    };
+    let out = stdout(&output);
+    assert!(out.contains("Copyright (C) 2006 - 2031 T. Babej, P. Beckingham, F. Hernandez."), "{out}");
+
+    // The rc.debug Perf line stamps Datetime ().toISO ().
+    let Some(output) = faketime_task(&env, "2031-06-15 12:34:56", &["rc.debug=1", "version"]) else {
+        return;
+    };
+    let err = stderr(&output);
+    assert!(err.contains("Perf task 3.5.0 "), "{err}");
+    assert!(err.contains(" 20310615T1234"), "{err}");
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // _show and configuration loading
 

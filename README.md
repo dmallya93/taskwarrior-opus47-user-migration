@@ -113,7 +113,9 @@ a doc comment naming the C++ file and the milestone that fills them.
 | `src/columns/col_<name>.rs` | `src/columns/Col<Name>.cpp` (e.g. `col_type_date.rs` = `ColTypeDate.cpp`, `col_uuid.rs` = `ColUUID.cpp`) |
 | `src/commands/command.rs` | `src/commands/Command.cpp` (`Command` trait, registry) |
 | `src/commands/cmd_<name>.rs` | `src/commands/Cmd<Name>.cpp` (e.g. `cmd_ids.rs` = `CmdIDs.cpp`, `cmd_import_v2.rs` = `CmdImportV2.cpp`) |
-| `src/shared/<name>.rs` | libshared `src/<Name>.cpp`: `shared`, `format`, `utf8`, `unicode`, `pig` (Pig), `fs` (FS), `timer` (Timer), `configuration` (Configuration), `datetime` (Datetime), `duration` (Duration), `json` (JSON), `color` (Color), `table` (Table), `rx` (RX) |
+| `src/shared/<name>.rs` | libshared `src/<Name>.cpp`: `shared`, `format`, `utf8`, `unicode`, `pig` (Pig), `fs` (FS), `timer` (Timer), `configuration` (Configuration), `datetime` (Datetime; upstream tests in `datetime_tests.rs`), `duration` (Duration), `json` (JSON, plus `SAX.cpp`), `color` (Color), `table` (Table), `rx` (RX) |
+| `src/shared/localtime.rs` | the libc time boundary (`localtime_r`/`mktime`/`timegm`/`time`) used by `datetime`, so `TZ` and libfaketime behave as in C++ |
+| `src/lexer_tests.rs` | `test/lexer_test.cpp` (included by `src/lexer.rs` as a test module) |
 
 libshared is translated from GothenburgBitFactory/libshared at commit
 `d899eba6d1a863f78f15e5e82d45d857278e9471` (the submodule pinned by the C++
