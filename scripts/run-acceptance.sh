@@ -80,7 +80,7 @@ if [ "$BUILD" -eq 1 ]; then
 fi
 
 RELEASE_DIR="$REPO_ROOT/target/release"
-for b in task make_tc_task; do
+for b in task make_tc_task calc; do
     [ -x "$RELEASE_DIR/$b" ] || die "missing binary $RELEASE_DIR/$b (build first or drop --no-build)"
 done
 
