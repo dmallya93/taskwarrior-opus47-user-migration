@@ -45,7 +45,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 }
 
 /// C++ `strerror (errno)` text for an OS error code.
-fn strerror(code: i32) -> String {
+pub(crate) fn strerror(code: i32) -> String {
     // SAFETY: strerror returns a pointer to a NUL-terminated static or
     // thread-local message buffer, which is copied out immediately.
     unsafe { CStr::from_ptr(libc::strerror(code)) }
