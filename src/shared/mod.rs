@@ -7,6 +7,7 @@
 pub mod shared;
 pub mod format;
 pub mod utf8;
+pub mod wcwidth;
 pub mod unicode;
 pub mod pig;
 pub mod fs;
