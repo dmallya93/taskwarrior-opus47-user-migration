@@ -1,0 +1,6 @@
+# Pinned to the MSRV declared by the C++ source's bridge crate
+# (src/taskchampion-cpp/Cargo.toml: rust-version = "1.94.1"), which taskchampion 3.1 needs.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
