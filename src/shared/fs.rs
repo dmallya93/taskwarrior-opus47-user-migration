@@ -1308,38 +1308,12 @@ mod tests {
     //! - `~` is the temporary home directory the test sets `HOME` to.
     //! - `Directory::cd` changes into the current directory (a no-op), so the
     //!   process CWD that other tests see never changes.
-    //! - Tests that change `HOME`/`FOO` or the umask hold [`LOCK`] and
+    //! - Tests that change `HOME`/`FOO` or the umask hold the crate-wide
+    //!   [`crate::test_util::env_lock`] and
     //!   restore them afterwards.
 
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    /// Serializes the tests that change process-wide state.
-    static LOCK: Mutex<()> = Mutex::new(());
-
-    fn lock() -> MutexGuard<'static, ()> {
-        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    /// Restores environment variables when dropped.
-    struct EnvGuard(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-    impl EnvGuard {
-        fn save(names: &[&'static str]) -> Self {
-            EnvGuard(names.iter().map(|&n| (n, std::env::var_os(n))).collect())
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (name, value) in &self.0 {
-                match value {
-                    Some(value) => std::env::set_var(name, value),
-                    None => std::env::remove_var(name),
-                }
-            }
-        }
-    }
+    use crate::test_util::{env_lock as lock, EnvGuard};
 
     /// Restores the umask when dropped.
     struct UmaskGuard(libc::mode_t);

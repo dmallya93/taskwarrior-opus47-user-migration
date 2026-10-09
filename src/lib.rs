@@ -36,3 +36,6 @@ pub mod columns;
 pub mod commands;
 
 pub use error::{Result, TwError};
+
+#[cfg(test)]
+mod test_util;
