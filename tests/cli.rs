@@ -395,3 +395,148 @@ fn show_matches_compiled_in_defaults() {
     assert_eq!(stdout(&output), text);
     assert_eq!(stderr(&output), "");
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdConfig.cpp: config, _config
+
+/// `task rc:<rc> <args>` with `stdin` as input.
+fn config_task(env: &Env, args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let rc = format!("rc:{}", env.rc().display());
+    let mut all = vec![rc.as_str()];
+    all.extend_from_slice(args);
+    let mut child = env
+        .command(&all)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+fn rc_text(env: &Env) -> String {
+    std::fs::read_to_string(env.rc()).unwrap()
+}
+
+#[test]
+fn config_set_new_modify_blank_and_remove() {
+    let env = Env::new("confirmation=off\n");
+    let base = rc_text(&env);
+    let modified = format!("Config file {} modified.\n", env.rc().display());
+
+    let output = config_task(&env, &["config", "foo", "bar"], "");
+    assert_eq!(stdout(&output), modified);
+    assert_eq!(stderr(&output), format!("TASKRC override: {}\n", env.rc().display()));
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(rc_text(&env), format!("{base}foo=bar\n"));
+
+    // Modify, joining the value words; the value is JSON-encoded.
+    let output = config_task(&env, &["config", "foo", "one", "two/\"3\""], "");
+    assert_eq!(stdout(&output), modified);
+    assert_eq!(rc_text(&env), format!("{base}foo=one two\\/\\\"3\\\"\n"));
+    let output = config_task(&env, &["_show"], "");
+    assert_eq!(show(&output)["foo"], "one two/\"3\"", "decoded again on load");
+
+    // Blank value, with -- as the basetest harness does.
+    let output = config_task(&env, &["config", "--", "foo", ""], "");
+    assert_eq!(stdout(&output), modified);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(rc_text(&env), format!("{base}foo=\n"));
+
+    // Remove.
+    let output = config_task(&env, &["config", "foo"], "");
+    assert_eq!(stdout(&output), modified);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(rc_text(&env), base);
+}
+
+#[test]
+fn config_remove_nonexistent_and_missing_name() {
+    let env = Env::new("confirmation=off\n");
+    let base = rc_text(&env);
+    let header = format!("TASKRC override: {}\n", env.rc().display());
+
+    let output = config_task(&env, &["config", "nosuch"], "");
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), format!("{header}No entry named 'nosuch' found.\n"));
+    assert_eq!(output.status.code(), Some(2));
+
+    let output = config_task(&env, &["config"], "");
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), format!("{header}Specify the name of a config variable to modify.\n"));
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(rc_text(&env), base);
+}
+
+#[test]
+fn config_keeps_comments_and_overrides_are_not_words() {
+    let env = Env::new("confirmation=off\nfoo=old # why\n# foo=commented\n");
+    let base = format!("data.location={}\nhooks=off\nnews.version=2.6.0\nconfirmation=off\n", env.data().display());
+
+    let output = config_task(&env, &["rc.verbose=nothing", "config", "rc.x=1", "foo", "new"], "");
+    assert_eq!(stdout(&output), format!("Config file {} modified.\n", env.rc().display()));
+    assert_eq!(rc_text(&env), format!("{base}foo=new  # why\n# foo=commented\n"));
+}
+
+#[test]
+fn config_confirmation_prompts() {
+    // confirmation defaults to on.
+    let env = Env::new("foo=old\n");
+    let base = rc_text(&env);
+
+    // Declined (end of input counts as no).
+    let output = config_task(&env, &["config", "foo", "new"], "");
+    assert_eq!(
+        stdout(&output),
+        "Are you sure you want to change the value of 'foo' from 'old' to 'new'? (yes/no) No changes made.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(rc_text(&env), base);
+
+    let output = config_task(&env, &["config", "bar", "x"], "n\n");
+    assert_eq!(
+        stdout(&output),
+        "Are you sure you want to add 'bar' with a value of 'x'? (yes/no) No changes made.\n"
+    );
+    assert_eq!(rc_text(&env), base);
+
+    // A declined removal exits 1.
+    let output = config_task(&env, &["config", "foo"], "no\n");
+    assert_eq!(stdout(&output), "Are you sure you want to remove 'foo'? (yes/no) No changes made.\n");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(rc_text(&env), base);
+
+    // Accepted.
+    let modified = format!("Config file {} modified.\n", env.rc().display());
+    let output = config_task(&env, &["config", "foo", "new"], "y\n");
+    assert_eq!(
+        stdout(&output),
+        format!("Are you sure you want to change the value of 'foo' from 'old' to 'new'? (yes/no) {modified}")
+    );
+    assert!(rc_text(&env).ends_with("\nfoo=new\n"));
+
+    // rc.confirmation=off skips the prompt.
+    let output = config_task(&env, &["rc.confirmation=off", "config", "foo"], "");
+    assert_eq!(stdout(&output), modified);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(rc_text(&env), base.replace("foo=old\n", ""));
+}
+
+#[test]
+fn completion_config_lists_sorted_names() {
+    let env = Env::new("zzz.custom=1\n");
+    let output = config_task(&env, &["_config"], "");
+    assert_eq!(output.status.code(), Some(0));
+    let names: Vec<String> = stdout(&output).lines().map(str::to_string).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted);
+    assert!(names.contains(&"zzz.custom".to_string()));
+    assert!(names.contains(&"confirmation".to_string()));
+    assert!(names.contains(&"data.location".to_string()));
+    assert_eq!(names.len(), show(&config_task(&env, &["_show"], "")).len());
+}

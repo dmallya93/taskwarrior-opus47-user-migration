@@ -13,7 +13,8 @@
 //! - A *bootstrap* [`Cli2`] object: the C++ member functions that are pure
 //!   bookkeeping are ported exactly (`entity`, `alias`, `add`, `getBinary`,
 //!   `getCommand`, `exactMatch`, `canonicalize`, `handleArg0`, `findCommand`),
-//!   and [`Cli2::analyze`] runs the C++ `analyze` steps that select the
+//!   a bootstrap [`Cli2::get_words`] (`getWords` for miscellaneous-only
+//!   commands such as `config`), and [`Cli2::analyze`] runs the C++ `analyze` steps that select the
 //!   command (arg0 handling, `--` termination, alias expansion, command
 //!   lookup, `rc.default.command` / assumed `information`).
 //!
@@ -32,6 +33,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::context::Context;
 use crate::error::{Result, TwError};
+use crate::shared::color::Color;
 use crate::shared::configuration::Configuration;
 use crate::shared::format::format;
 use crate::shared::fs::{File, Path};
@@ -268,6 +270,48 @@ impl Cli2 {
         }
 
         String::new()
+    }
+
+    /// Bootstrap C++ `CLI2::getWords`: the raw text of every MISCELLANEOUS
+    /// argument. With `debug.parser` >= 2 a `CLI2::getWords` debug message
+    /// lists them.
+    ///
+    /// The bootstrap does not categorise arguments, so this applies the C++
+    /// `categorizeArgs` rules for a command that accepts only miscellaneous
+    /// arguments (such as `config`): every argument except the binary
+    /// (`BINARY`), the command (`CMD`), the first `--` (a
+    /// `Lexer::Type::separator`) and, before that `--`, the `rc:<file>` /
+    /// `rc.<name>=<value>` pairs (tagged `RC` / `CONFIG` in C++). Arguments
+    /// after `--` are words, so they are always included, as are later
+    /// `--`s. Milestone 5 replaces this with the real categorisation.
+    ///
+    /// `debug_messages` is the Context debug sink (C++
+    /// `Context::getContext().debug`).
+    pub fn get_words(&self, config: &Configuration, debug_messages: &mut Vec<String>) -> Vec<String> {
+        let words: Vec<String> = self
+            .args
+            .iter()
+            .filter(|a| {
+                !(a.has_tag("BINARY")
+                    || a.has_tag("CMD")
+                    || a.has_tag("TERMINATOR")
+                    || (!a.has_tag("TERMINATED") && is_rc_pair(&a.attribute("raw"))))
+            })
+            .map(|a| a.attribute("raw"))
+            .collect();
+
+        if config.get_integer("debug.parser") >= 2 {
+            let color_orig_args = Color::parse("gray10 on gray4").unwrap_or_default();
+            let mut message = " ".to_string();
+            for word in &words {
+                message += &color_orig_args.colorize(word);
+                message.push(' ');
+            }
+            // C++ `Context::debug` drops empty messages; this one never is.
+            debug_messages.push(format!("CLI2::getWords{message}"));
+        }
+
+        words
     }
 
     /// C++ `CLI2::exactMatch`.
@@ -510,6 +554,51 @@ impl Cli2 {
     }
 }
 
+/// C++ `Lexer::isSingleCharOperator`.
+fn is_single_char_operator(c: char) -> bool {
+    matches!(c, '+' | '-' | '*' | '/' | '(' | ')' | '<' | '>' | '^' | '!' | '%' | '=' | '~')
+}
+
+/// Bootstrap stand-in for "becomes a `Lexer::Type::pair` argument whose
+/// `Lexer::decomposePair` name is `rc`" (the C++ `A2` constructor tags those
+/// `RC`, or `CONFIG` when there is a modifier).
+///
+/// C++ `lexArguments` keeps an argument as a pair when its first token is a
+/// pair that reaches the end of the argument, or when the argument
+/// `Lexer::wasQuoted` (contains one of ` \t()<>&~`). The first token is a
+/// pair when the argument starts with an identifier (C++
+/// `Lexer::isIdentifier`, which stops at `:`, `=`, whitespace and
+/// single-character operators) immediately followed by `:`, `=`, `::` or
+/// `:=`; an unquoted value then always reaches the end or stops at
+/// whitespace or a parenthesis (making the argument "quoted"), so only a
+/// value that is a quoted string ending before the argument does falls
+/// through to a plain word. The name is the identifier's text before its
+/// first `.` (or the whole identifier).
+///
+/// Milestone 5 hook: replaced by the real Lexer.
+fn is_rc_pair(raw: &str) -> bool {
+    let end = raw
+        .find(|c: char| c == ':' || c == '=' || c.is_whitespace() || is_single_char_operator(c))
+        .unwrap_or(raw.len());
+    let name = raw[..end].split('.').next().unwrap_or("");
+    let rest = &raw[end..];
+    if name != "rc" || !(rest.starts_with(':') || rest.starts_with('=')) {
+        return false;
+    }
+
+    let separator = if rest.starts_with("::") || rest.starts_with(":=") { 2 } else { 1 };
+    let value = &rest[separator..];
+    let short_quoted = value
+        .chars()
+        .next()
+        .filter(|&q| q == '\'' || q == '"')
+        .and_then(|q| value[1..].find(q))
+        .is_some_and(|close| close + 2 < value.len());
+    let was_quoted = raw.contains([' ', '\t', '(', ')', '<', '>', '&', '~']);
+
+    !short_quoted || was_quoted
+}
+
 /// Bootstrap stand-in for "lexes as `Lexer::Type::number` or `uuid`".
 fn looks_like_sequence(raw: &str) -> bool {
     let is_number = !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit());
@@ -688,6 +777,55 @@ mod tests {
         let mut debug = Vec::new();
         cli.analyze(&Configuration::new(), &mut debug).unwrap();
         assert_eq!(debug, ["Nested alias limit of 10 reached."]);
+    }
+
+    #[test]
+    fn get_words_skips_binary_command_overrides_and_terminator() {
+        let words = |list: &[&str]| {
+            let mut cli = Cli2::new();
+            cli.entity("cmd", "config");
+            for a in list {
+                cli.add(a);
+            }
+            cli.analyze(&Configuration::new(), &mut Vec::new()).unwrap();
+            cli.get_words(&Configuration::new(), &mut Vec::new())
+        };
+
+        assert_eq!(words(&["task", "config", "a", "b c", ""]), ["a", "b c", ""]);
+        assert_eq!(
+            words(&["task", "rc:/x/rc", "rc.confirmation=off", "config", "rc.a:1", "name", "v"]),
+            ["name", "v"]
+        );
+        assert_eq!(words(&["task", "config", "--", "rc.a=1", "--", "x"]), ["rc.a=1", "--", "x"]);
+        assert_eq!(words(&["task", "pre", "config", "post"]), ["pre", "post"], "before the command too");
+        assert_eq!(words(&["task", "config", "config"]), ["config"], "only the first is the command");
+        // Not single `rc` pairs: they lex as words.
+        assert_eq!(
+            words(&["task", "config", "rcx=1", "rc", "rc.a-b=1", "rc.a='b'c", "rcfile"]),
+            ["rcx=1", "rc", "rc.a-b=1", "rc.a='b'c", "rcfile"]
+        );
+        // `rc=`, `rc::`, `rc.:`, empty, quoted and "quoted" values are rc pairs.
+        assert!(words(&["task", "config", "rc=x", "rc::x", "rc.:x", "rc.a=", "rc.a='b'", "rc.a=b c", "rc.a='b' c"])
+            .is_empty());
+    }
+
+    #[test]
+    fn get_words_debug_parser() {
+        let mut cli = Cli2::new();
+        cli.entity("cmd", "config");
+        for a in ["task", "config", "a", "b"] {
+            cli.add(a);
+        }
+        let mut config = Configuration::new();
+        cli.analyze(&config, &mut Vec::new()).unwrap();
+        let mut debug = Vec::new();
+        cli.get_words(&config, &mut debug);
+        assert!(debug.is_empty());
+
+        config.set("debug.parser", 2);
+        cli.get_words(&config, &mut debug);
+        let color = Color::parse("gray10 on gray4").unwrap();
+        assert_eq!(debug, [format!("CLI2::getWords {} {} ", color.colorize("a"), color.colorize("b"))]);
     }
 
     #[test]

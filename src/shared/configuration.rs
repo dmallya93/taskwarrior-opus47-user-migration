@@ -53,11 +53,8 @@
 //! - Any other non-blank line is an error: `Malformed entry '<line>' in
 //!   config file.`
 //!
-//! # Deviation
-//!
-//! Values are decoded with a private translation of libshared
-//! `json::decode`, because `JSON.cpp` is ported by milestone 2. Once
-//! `crate::shared::json::decode` exists this module should call it instead.
+//! Values are decoded with [`crate::shared::json::decode`] (libshared
+//! `json::decode`).
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
@@ -66,8 +63,8 @@ use std::ops::{Deref, DerefMut};
 use crate::error::{Result, TwError};
 use crate::shared::format::{format, format_double};
 use crate::shared::fs::{File, Path};
+use crate::shared::json;
 use crate::shared::shared::{lower_case, split, trim};
-use crate::shared::utf8::utf8_character;
 
 /// An empty search-path list: the C++ default argument `search_paths = {}`.
 pub const NO_SEARCH_PATHS: &[&str] = &[];
@@ -300,7 +297,7 @@ impl Configuration {
                 let value = trim(&line[equal + 1..]);
                 let value = Path::expand(&value);
 
-                self.map.insert(key, json_decode(&value));
+                self.map.insert(key, json::decode(&value));
             } else if let Some(include) = line.find("include") {
                 let mut included = Path::new(&trim(&line[include + 7..]));
 
@@ -591,90 +588,6 @@ fn strtod(text: &str) -> f64 {
     // SAFETY: `text` is a valid NUL-terminated string and a null `endptr` is
     // permitted.
     unsafe { libc::strtod(text.as_ptr(), std::ptr::null_mut()) }
-}
-
-/// Value of the hex digit `x`; non-hex digits count as 0 (libshared
-/// `utf8.cpp` `XDIGIT`).
-fn xdigit(x: u8) -> u32 {
-    match x {
-        b'0'..=b'9' => (x - b'0') as u32,
-        b'a'..=b'f' => (x + 10 - b'a') as u32,
-        b'A'..=b'F' => (x + 10 - b'A') as u32,
-        _ => 0,
-    }
-}
-
-/// libshared `utf8_codepoint` on raw bytes (the C++ argument is a byte
-/// `substr` that need not start on a UTF-8 boundary). Same rules as
-/// [`crate::shared::utf8::utf8_codepoint`].
-fn utf8_codepoint_bytes(input: &[u8]) -> u32 {
-    let length = input.len();
-    if length >= 6 && ((input[0] == b'U' && input[1] == b'+') || (input[0] == b'\\' && input[1] == b'u')) {
-        xdigit(input[2]) << 12 | xdigit(input[3]) << 8 | xdigit(input[4]) << 4 | xdigit(input[5])
-    } else if length >= 4 {
-        xdigit(input[0]) << 12 | xdigit(input[1]) << 8 | xdigit(input[2]) << 4 | xdigit(input[3])
-    } else {
-        0
-    }
-}
-
-/// libshared `json::decode` (`JSON.cpp`), used by `Configuration::parse` on
-/// every value. Works on bytes like the C++; byte sequences that are not
-/// valid UTF-8 afterwards (only possible when a `\u` escape swallows part of
-/// a multi-byte character) are replaced by U+FFFD.
-fn json_decode(input: &str) -> String {
-    let input = input.as_bytes();
-    let mut output: Vec<u8> = Vec::with_capacity(input.len()); // Same size.
-
-    let mut pos = 0;
-    while pos < input.len() {
-        if input[pos] == b'\\' {
-            pos += 1;
-            // End-of-string reads as NUL, as in C++11.
-            let c = input.get(pos).copied().unwrap_or(0);
-            match c {
-                // Simple translations.
-                b'"' => output.push(b'"'),
-                b'\\' => output.push(b'\\'),
-                b'/' => output.push(b'/'),
-                b'b' => output.push(0x08),
-                b'f' => output.push(0x0c),
-                b'n' => output.push(b'\n'),
-                b'r' => output.push(b'\r'),
-                b't' => output.push(b'\t'),
-
-                // Compose a UTF8 unicode character.
-                b'u' => {
-                    pos += 1;
-                    let rest = &input[pos.min(input.len())..];
-                    output.extend_from_slice(utf8_character(utf8_codepoint_bytes(rest)).as_bytes());
-                    pos += 3;
-                }
-
-                // End-of-string will always have a NUL in C++11.
-                0 => output.push(b'\\'),
-
-                // If it is an unrecognized sequence, do nothing.
-                other => {
-                    output.push(b'\\');
-                    output.push(other);
-                }
-            }
-            pos += 1;
-        } else {
-            let next_backslash = input[pos..]
-                .iter()
-                .position(|&b| b == b'\\')
-                .map_or(input.len(), |p| pos + p);
-            output.extend_from_slice(&input[pos..next_backslash]);
-            pos = next_backslash;
-        }
-    }
-
-    match String::from_utf8(output) {
-        Ok(text) => text,
-        Err(err) => String::from_utf8_lossy(err.as_bytes()).into_owned(),
-    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1008,12 +921,12 @@ mod tests {
 
     #[test]
     fn json_decode_details() {
-        assert_eq!(json_decode(""), "");
-        assert_eq!(json_decode("plain"), "plain");
-        assert_eq!(json_decode("\\n\\t"), "\n\t");
-        assert_eq!(json_decode("\\u20acX"), "\u{20ac}X");
-        assert_eq!(json_decode("\\uU+0041"), "A41", "the U+ form of utf8_codepoint, but only 4 bytes are skipped");
-        assert_eq!(json_decode("a\\\0b"), "a\\b", "embedded NUL after a backslash is dropped");
+        assert_eq!(json::decode(""), "");
+        assert_eq!(json::decode("plain"), "plain");
+        assert_eq!(json::decode("\\n\\t"), "\n\t");
+        assert_eq!(json::decode("\\u20acX"), "\u{20ac}X");
+        assert_eq!(json::decode("\\uU+0041"), "A41", "the U+ form of utf8_codepoint, but only 4 bytes are skipped");
+        assert_eq!(json::decode("a\\\0b"), "a\\b", "embedded NUL after a backslash is dropped");
     }
 
     // ---------------------------------------------------------------------

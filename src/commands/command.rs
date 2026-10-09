@@ -789,7 +789,7 @@ mod tests {
 
     /// Commands whose `execute` has been ported (milestone 1: `version`,
     /// `_version` and `_show`); every other one must still be a stub.
-    const PORTED: [&str; 3] = ["_show", "_version", "version"];
+    const PORTED: [&str; 5] = ["_config", "_show", "_version", "config", "version"];
 
     fn default_config() -> Configuration {
         let mut config = Configuration::new();
@@ -986,6 +986,13 @@ mod tests {
         context.config = default_config();
         for keyword in PORTED {
             let mut output = String::new();
+            if keyword == "config" {
+                // Without a name to modify, `config` fails like C++.
+                let err = all[keyword].execute(&mut context, &mut output).unwrap_err();
+                assert_eq!(err.to_string(), "Specify the name of a config variable to modify.");
+                assert_eq!(output, "");
+                continue;
+            }
             let rc = all[keyword].execute(&mut context, &mut output).unwrap();
             assert_eq!(rc, 0, "{keyword}");
             assert!(output.ends_with('\n') && output.len() > 1, "{keyword}: {output:?}");
