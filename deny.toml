@@ -1,0 +1,51 @@
+# cargo-deny configuration. CI gate: `cargo deny check licenses`.
+# Only permissive licenses are accepted (spec Design Decision 5).
+
+[graph]
+all-features = false
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# The list is a superset of what the current dependency tree needs; do not
+# warn about entries that happen to be unused.
+unused-allowed-license = "allow"
+allow = [
+    # This crate, taskchampion, and most of the ecosystem.
+    "MIT",
+    # Dual-licensed MIT/Apache-2.0 crates (uuid, regex, libc, unicode-width, tokio, ...).
+    "Apache-2.0",
+    # wasi / wasm-related crates and other rustc-adjacent crates.
+    "Apache-2.0 WITH LLVM-exception",
+    # Permissive BSD variants (e.g. subtle, some encoding crates).
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    # ring, rustls-webpki, untrusted and similar TLS crates.
+    "ISC",
+    # unicode-ident and ICU4X data crates used by url/idna.
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    # Compression crates (adler/miniz variants, zlib-rs).
+    "Zlib",
+    # Public-domain dedications (e.g. some hashing crates).
+    "CC0-1.0",
+    # Weak file-level copyleft (webpki-roots / option-ext); compatible with MIT distribution.
+    "MPL-2.0",
+    # Boost license (e.g. xxhash-rust, ryu alternatives).
+    "BSL-1.0",
+    # webpki-root-certs / webpki-roots certificate data.
+    "CDLA-Permissive-2.0",
+    # Older ring releases bundle OpenSSL-licensed code.
+    "OpenSSL",
+]
+
+[advisories]
+version = 2
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

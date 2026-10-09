@@ -1,0 +1,42 @@
+[package]
+name = "task"
+version = "3.5.0"
+edition = "2021"
+rust-version = "1.94.1"
+license = "MIT"
+description = "Taskwarrior - a command-line TODO list manager (Rust translation)"
+homepage = "https://taskwarrior.org/"
+publish = false
+default-run = "task"
+
+[lib]
+name = "taskwarrior"
+path = "src/lib.rs"
+
+[[bin]]
+name = "task"
+path = "src/main.rs"
+
+[[bin]]
+name = "make_tc_task"
+path = "src/bin/make_tc_task.rs"
+
+[features]
+# Use native CA roots instead of bundled ones (mirrors src/taskchampion-cpp/Cargo.toml).
+tls-native-roots = ["taskchampion/tls-native-roots"]
+
+[dependencies]
+taskchampion = { version = "3.1", features = ["server-git"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+libc = "0.2"
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = false

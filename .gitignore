@@ -1,0 +1,23 @@
+# Rust build output
+/target/
+**/*.rs.bk
+
+# Python (acceptance-test harness)
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+
+# Acceptance-test harness output
+/acceptance-results/
+
+# Editors and OS files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+.DS_Store
