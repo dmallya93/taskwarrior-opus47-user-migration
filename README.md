@@ -41,6 +41,26 @@ bash TAP (`tw-*.test.sh`) suites, run against `target/release/task` with
 `TASK_USE_PATH=1` and `target/release` on `PATH`. Results are written to
 `acceptance-results/`.
 
+```sh
+scripts/run-acceptance.sh                         # build, then run all 148 files
+scripts/run-acceptance.sh --no-build -j 4         # skip build, 4 files in parallel
+scripts/run-acceptance.sh version.test.py 'tw-*.test.sh'   # subset (names/globs)
+scripts/run-acceptance.sh --strict                # final gate: nonzero on any failure
+```
+
+The reference repo defaults to `../taskwarrior-opus47-dmallya93` (override with
+`TW_REFERENCE_DIR`), and the per-file timeout is 300s (`-t SECS` or
+`TW_ACCEPTANCE_TIMEOUT`). The reference `test/` directory is copied to
+`acceptance-results/work/test`, and `basetest/utils.py` gets the same
+`${CMAKE_BINARY_DIR}`/`${CMAKE_SOURCE_DIR}` substitution that CMake's
+`configure_file` does. `CMAKE_BINARY_DIR` is set to `acceptance-results/work`,
+which holds the `src/task` and `test/make_tc_task` symlinks. `CMAKE_SOURCE_DIR` is
+set to the reference repo root. Each file's output goes to
+`acceptance-results/logs/<file>.log`, and the results are written to
+`summary.txt` and `summary.json`: pass, fail, timeout, skip, and xfail/xpass
+for files on the reference `WILL_FAIL` list, with TAP case counts. Without
+`--strict`, the script exits nonzero only on harness errors.
+
 ## Layout
 
 ```
