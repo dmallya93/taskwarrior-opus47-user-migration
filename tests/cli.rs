@@ -1422,3 +1422,82 @@ fn zsh_attributes_lists_sorted_columns() {
     // Accepts no filter.
     assert_eq!(quiet(&env, &["1", "_zshattributes"]).2, 2);
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdColor.cpp
+
+#[test]
+fn colors_off_sample_legend_and_chart() {
+    let env = Env::new("");
+    // Not a TTY and no _forcecolor: the hint, exit status 1.
+    assert_eq!(
+        quiet(&env, &["colors"]),
+        (
+            "Color is currently turned off in your .taskrc file.  To enable color, remove the line \
+             'color=off', or change the 'off' to 'on'.\n"
+                .into(),
+            String::new(),
+            1
+        )
+    );
+
+    // A sample of the words as a colour spec.
+    let (out, err, rc) = quiet(&env, &["rc._forcecolor:on", "colors", "red"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\nUse this command to see how colors are displayed by your terminal.\n\n\n\
+         16-color usage (supports underline, bold text, bright background):\n\
+         \x20 \x1b[30;103mtask color black on bright yellow\x1b[0m\n\
+         \x20 \x1b[4;36;104mtask color underline cyan on bright blue\x1b[0m\n\n\
+         256-color usage (supports underline):\n\
+         \x20 \x1b[38;5;214;48;5;202mtask color color214 on color202\x1b[0m\n\
+         \x20 \x1b[38;5;82;48;5;28mtask color rgb150 on rgb020\x1b[0m\n\
+         \x20 \x1b[4;38;5;242;48;5;235mtask color underline grey10 on grey3\x1b[0m\n\
+         \x20 \x1b[38;5;1;48;5;173mtask color red on color173\x1b[0m\n\n\
+         Your sample:\n\n\
+         \x20 \x1b[31mtask color red\x1b[0m\n\n"
+    );
+
+    // Unrecognized colour: the Color error, exit status 2.
+    let (out, err, rc) = quiet(&env, &["rc._forcecolor:on", "colors", "bogus"]);
+    assert_eq!((out.as_str(), rc), ("", 2));
+    assert!(err.contains("The color 'bogus' is not recognized."), "{err:?}");
+
+    // Legend (any prefix of "legend"), obeying rc overrides.
+    let (out, _, rc) = quiet(&env, &["rc._forcecolor:on", "rc.color.debug:red", "colors", "leg"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("\nHere are the colors currently in use:\n"), "{out:?}");
+    assert!(out.contains("color.debug              \x1b[0m \x1b[31mred"), "{out:?}");
+    assert!(!out.contains("_forcecolor"));
+    assert!(out.ends_with("\x1b[0m\n\n"), "{out:?}");
+
+    // The full chart.
+    let (out, _, rc) = quiet(&env, &["rc._forcecolor:on", "colors"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("\nBasic colors\n \x1b[30m black \x1b[0m \x1b[31m red \x1b[0m"), "{out:?}");
+    assert!(out.contains("\n\ncolor0 - color15\n  0 1 2 . . .\n  \x1b[48;5;0m  \x1b[0m"));
+    assert!(out.contains("Color cube rgb\x1b[1;31m0\x1b[0m"));
+    assert!(out.contains("\x1b[48;5;231m  \x1b[0m \n\nGray ramp gray0 - gray23 (also color232 - color255)\n"));
+    assert!(out.ends_with("\x1b[48;5;255m  \x1b[0m\n\nTry running 'task color white on red'.\n\n"), "{out:?}");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdUrgency.cpp
+
+#[test]
+fn urgency_per_task_and_no_match() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "one"]).2, 0);
+    assert_eq!(quiet(&env, &["add", "two", "+x", "project:P"]).2, 0);
+    assert_eq!(quiet(&env, &["1", "_urgency"]), ("task 1 urgency 0\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["2", "_urgency"]), ("task 2 urgency 1.8\n".into(), String::new(), 0));
+    let (out, _, rc) = quiet(&env, &["_urgency"]);
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort_unstable();
+    assert_eq!((lines, rc), (vec!["task 1 urgency 0", "task 2 urgency 1.8"], 0));
+    // Nothing selected: footnote and exit status 1 (helper commands are quiet).
+    let output = env.task(&["99", "_urgency"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+}

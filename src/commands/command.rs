@@ -951,12 +951,13 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 19] = [
+    const PORTED: [&str; 21] = [
         "_config",
         "_get",
         "_ids",
         "_show",
         "_unique",
+        "_urgency",
         "_uuids",
         "_version",
         "_zshattributes",
@@ -964,6 +965,7 @@ mod tests {
         "_zshuuids",
         "add",
         "calc",
+        "colors",
         "config",
         "count",
         "export",
@@ -1206,11 +1208,24 @@ mod tests {
                     | "_uuids"
                     | "_zshuuids"
                     | "_unique"
+                    | "_urgency"
                     | "_zshattributes"
             ) {
                 // These read the replica (or, for `_zshattributes`, the column
                 // registry Context::initialize builds); covered end to end in
                 // tests/cli.rs.
+                continue;
+            }
+            if keyword == "colors" {
+                // Without colour (no TTY, no _forcecolor) the C++ hint and 1.
+                let rc = all[keyword].execute(&mut context, &mut output).unwrap();
+                if !context.color() {
+                    assert_eq!(rc, 1);
+                    assert!(output.starts_with("Color is currently turned off"), "{output:?}");
+                } else {
+                    assert_eq!(rc, 0);
+                    assert!(output.contains("Basic colors"), "{output:?}");
+                }
                 continue;
             }
             let rc = all[keyword].execute(&mut context, &mut output).unwrap();
