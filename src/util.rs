@@ -346,16 +346,31 @@ mod tests {
         }
     }
 
-    /// Assertions of util_test.cpp ported here: 4 `indentProject` + 9
-    /// `nontrivial`. Not ported here (they test other modules, which are
-    /// not available in milestone 4): the 6 `Task::diff` assertions
-    /// (feedback/Task, restored by milestone 7) and the 3
-    /// `checked_add_datetime` assertions (recur.cpp, milestone 7).
-    const UTIL_TEST_ASSERTIONS: usize = 13;
+    /// Assertions of util_test.cpp ported here: 1 `Task::operator==`
+    /// ("Detected changes"), 4 `indentProject` + 9 `nontrivial`. Not ported
+    /// here (they test functions deferred to later milestones): the other 5
+    /// `Task::diff` assertions (`Task::diff` is restored by milestone 7) and
+    /// the 3 `checked_add_datetime` assertions (recur.cpp, milestone 7).
+    const UTIL_TEST_ASSERTIONS: usize = 14;
 
     #[test]
     fn util_test_cpp() {
         let mut t = UnitTest::new();
+
+        // These are in feedback.cpp, not util.cpp (C++ comment).
+        let mut left = crate::task::Task::new();
+        left.set("zero", "0");
+        left.set_int("one", 1);
+        left.set_int("two", 2);
+
+        let mut right = crate::task::Task::new();
+        right.set("zero", "00");
+        right.set_int("two", 2);
+        right.set_int("three", 3);
+
+        // `left.diff (right)` (milestone 7) is not computed here; the
+        // `operator==` assertion does not depend on it.
+        t.ok(!(left == right), "Detected changes");
 
         // std::vector<std::string> indentProject (const std::string&, const std::string whitespace="  ",
         // char delimiter='.');

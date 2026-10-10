@@ -20,7 +20,9 @@ fn usage() -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let mut args = std::env::args().skip(1);
+    // The bridge converted every C++ string with `to_string_lossy`, so
+    // arguments that are not valid UTF-8 are accepted the same way here.
+    let mut args = std::env::args_os().skip(1).map(|arg| arg.to_string_lossy().into_owned());
     let Some(datadir) = args.next() else {
         return usage();
     };
