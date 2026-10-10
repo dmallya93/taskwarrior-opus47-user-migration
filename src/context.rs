@@ -42,7 +42,11 @@
 //!   `colorize*` functions (identity until the colour rules exist; libshared
 //!   `Color` and `Table` themselves are already ported).
 //! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
-//!   coefficients, `TDB2::open_replica`, `TDB2::gc` ([`crate::tdb2::Tdb2`]).
+//!   coefficients. `TDB2::open_replica` and `TDB2::gc`
+//!   ([`crate::tdb2::Tdb2`]) are ported: the replica is opened for every
+//!   registered command (as in C++) and `gc` time is added to
+//!   `time_gc_us`; task loading time accumulates in `Tdb2::time_load_us`
+//!   and is folded into `time_load_us` for the Perf line.
 //! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the full `CLI2` parser
 //!   ([`crate::cli2::Cli2`] is a bootstrap that only selects the command),
 //!   `prepareFilter`, `dump`.
@@ -623,7 +627,6 @@ pub struct Context {
     /// C++ `time_hooks_us`.
     pub time_hooks_us: i64,
     /// C++ `currentTask`: the current task for DOM references, or `None`.
-    /// Placeholder type until milestone 4.
     pub current_task: Option<Rc<Task>>,
 }
 
@@ -917,7 +920,6 @@ impl Context {
             // itself is read-write.
             let read_write =
                 (self.config.get_boolean("gc") && (c.needs_gc() || c.needs_recur_update())) || !c.read_only();
-            // Milestone 4 hook: `tdb2.open_replica` is a no-op for now.
             self.tdb2.open_replica(&self.data_dir, create_if_missing, read_write)?;
         }
 
@@ -1051,6 +1053,10 @@ impl Context {
         self.timer_total.stop();
         self.time_total_us += self.timer_total.total_us() as i64;
 
+        // C++ `TDB2::all_tasks` / `pending_tasks` add their load time straight
+        // to `Context::time_load_us`; Tdb2 accumulates it separately.
+        self.time_load_us += std::mem::take(&mut self.tdb2.time_load_us);
+
         let gc = if self.time_gc_us > 0 {
             self.time_gc_us - self.time_load_us
         } else {
@@ -1104,8 +1110,7 @@ impl Context {
 
             // The command know whether they need a GC or recurrence update.
             if c.needs_gc() {
-                // Milestone 4 hook: `tdb2.gc` is a no-op for now.
-                self.tdb2.gc()?;
+                self.time_gc_us += self.tdb2.gc(self.config.get_boolean("gc"))?;
             }
 
             // This is something that is only needed for write commands with no other
@@ -1384,15 +1389,19 @@ impl Context {
         // C++ assigns the int to a std::string::size_type (wrapping negatives).
         Lexer::set_minimum_match_length(self.config.get_integer("abbreviation.minimum") as usize);
 
-        // Milestone 4 hook: Task::defaultProject / defaultDue / defaultScheduled
-        // from default.project / default.due / default.scheduled.
+        Task::set_default_project(&self.config.get("default.project"));
+        Task::set_default_due(&self.config.get("default.due"));
+        Task::set_default_scheduled(&self.config.get("default.scheduled"));
 
         // C++ `Task::searchCaseSensitive = Variant::searchCaseSensitive =
-        // search.case.sensitive`. Milestone 4 hook: the Task half.
-        Variant::set_search_case_sensitive(self.config.get_boolean("search.case.sensitive"));
+        // search.case.sensitive`.
+        let search_case_sensitive = self.config.get_boolean("search.case.sensitive");
+        Task::set_search_case_sensitive(search_case_sensitive);
+        Variant::set_search_case_sensitive(search_case_sensitive);
         // C++ `Task::regex = Variant::searchUsingRegex = regex`.
-        // Milestone 4 hook: the Task half.
-        Variant::set_search_using_regex(self.config.get_boolean("regex"));
+        let regex = self.config.get_boolean("regex");
+        Task::set_regex(regex);
+        Variant::set_search_using_regex(regex);
         // C++ `Lexer::dateFormat = Variant::dateFormat = dateformat`.
         Variant::set_date_format(&self.config.get("dateformat"));
         Lexer::set_date_format(&self.config.get("dateformat"));
@@ -1411,12 +1420,65 @@ impl Context {
 
         self.tdb2.debug_mode = self.config.get_boolean("debug");
 
-        // Milestone 4 hooks: Task::customOrder from uda.<name>.values (reversed);
-        // Task::attributes / Lexer::attributes from the column types;
-        // Task::urgency*Coefficient and Task::urgencyAgeMax from
-        // urgency.*.coefficient / urgency.age.max; Task::coefficients from
-        // urgency.user.* and urgency.uda.* (skipping urgency.uda.<name>.* for
-        // non-UDA columns).
+        let mut custom_order = Task::custom_order();
+        for (key, value) in self.config.iter() {
+            if let Some(rest) = key.strip_prefix("uda.") {
+                // C++ `rc.first.substr (rc.first.length () - 7, 7)` throws
+                // std::out_of_range for "uda.", "uda.x" and "uda.xx"; that
+                // reaches the user as "Unknown error. Please report.".
+                if key.len() < 7 {
+                    return Err(TwError::Runtime("basic_string::substr".to_string()));
+                }
+                if key.ends_with(".values") {
+                    // C++ `substr (4, length - 7 - 4)`: for "uda.values" the
+                    // count wraps to npos, giving "values".
+                    let name = if key.len() >= 11 { &rest[..rest.len() - 7] } else { rest };
+                    let values = split(value, ',');
+
+                    let order = custom_order.entry(name.to_string()).or_default();
+                    for r in values.iter().rev() {
+                        order.push(r.clone());
+                    }
+                }
+            }
+        }
+        Task::set_custom_order(custom_order);
+
+        // Milestone 6 hook: `Task::attributes[col] = Lexer::attributes[col] =
+        // column->type ()` for every column (the Column trait has no type ()
+        // yet and the registry is empty).
+
+        Task::set_urgency_project_coefficient(self.config.get_real("urgency.project.coefficient") as f32);
+        Task::set_urgency_active_coefficient(self.config.get_real("urgency.active.coefficient") as f32);
+        Task::set_urgency_scheduled_coefficient(self.config.get_real("urgency.scheduled.coefficient") as f32);
+        Task::set_urgency_waiting_coefficient(self.config.get_real("urgency.waiting.coefficient") as f32);
+        Task::set_urgency_blocked_coefficient(self.config.get_real("urgency.blocked.coefficient") as f32);
+        Task::set_urgency_annotations_coefficient(self.config.get_real("urgency.annotations.coefficient") as f32);
+        Task::set_urgency_tags_coefficient(self.config.get_real("urgency.tags.coefficient") as f32);
+        Task::set_urgency_due_coefficient(self.config.get_real("urgency.due.coefficient") as f32);
+        Task::set_urgency_blocking_coefficient(self.config.get_real("urgency.blocking.coefficient") as f32);
+        Task::set_urgency_age_coefficient(self.config.get_real("urgency.age.coefficient") as f32);
+        Task::set_urgency_age_max(self.config.get_real("urgency.age.max") as f32);
+
+        // Tag- and project-specific coefficients.
+        let mut coefficients = Task::coefficients();
+        for var in self.config.all() {
+            // urgency.uda.<name>.* does not apply to built-in attributes such as tags;
+            // 'task show' reports these.
+            if let Some(rest) = var.strip_prefix("urgency.uda.") {
+                let name = rest.find('.').map_or(rest, |dot| &rest[..dot]);
+                if let Some(col) = self.columns.get(name) {
+                    if !col.is_uda() {
+                        continue;
+                    }
+                }
+            }
+
+            if var.starts_with("urgency.user.") || var.starts_with("urgency.uda.") {
+                coefficients.insert(var.clone(), self.config.get_real(&var) as f32);
+            }
+        }
+        Task::set_coefficients(coefficients);
 
         Ok(())
     }
@@ -2334,7 +2396,79 @@ mod tests {
             Datetime::set_standalone_date_enabled(true);
             Datetime::set_standalone_time_enabled(true);
             Duration::set_standalone_seconds_enabled(true);
+            Task::set_default_project("");
+            Task::set_default_due("");
+            Task::set_default_scheduled("");
+            Task::set_search_case_sensitive(true);
+            Task::set_regex(false);
+            Task::set_custom_order(BTreeMap::new());
+            Task::set_coefficients(BTreeMap::new());
+            for set in [
+                Task::set_urgency_project_coefficient,
+                Task::set_urgency_active_coefficient,
+                Task::set_urgency_scheduled_coefficient,
+                Task::set_urgency_waiting_coefficient,
+                Task::set_urgency_blocked_coefficient,
+                Task::set_urgency_annotations_coefficient,
+                Task::set_urgency_tags_coefficient,
+                Task::set_urgency_due_coefficient,
+                Task::set_urgency_blocking_coefficient,
+                Task::set_urgency_age_coefficient,
+                Task::set_urgency_age_max,
+            ] {
+                set(0.0);
+            }
         }
+    }
+
+    #[test]
+    fn static_initialization_sets_task_statics() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(
+            &format!("{}/.taskrc", f.home),
+            "default.project=home\ndefault.due=eom\ndefault.scheduled=tomorrow\nsearch.case.sensitive=0\n\
+             regex=0\nuda.size.values=S,M,L\nurgency.user.tag.foo.coefficient=2.5\nurgency.uda.size.L.coefficient=1.5\n",
+        );
+        let mut context = context();
+        let (status, _, _) = init(&mut context, &["task", "alpha"]);
+        assert_eq!(status, 0);
+        assert_eq!(Task::default_project(), "home");
+        assert_eq!(Task::default_due(), "eom");
+        assert_eq!(Task::default_scheduled(), "tomorrow");
+        assert!(!Task::search_case_sensitive());
+        assert!(!Task::regex());
+        let order = Task::custom_order();
+        assert_eq!(order["size"], vec!["L", "M", "S"]);
+        assert_eq!(order["priority"], vec!["", "L", "M", "H"]);
+        assert_eq!(Task::urgency_project_coefficient(), 1.0);
+        assert_eq!(Task::urgency_active_coefficient(), 4.0);
+        assert_eq!(Task::urgency_scheduled_coefficient(), 5.0);
+        assert_eq!(Task::urgency_waiting_coefficient(), -3.0);
+        assert_eq!(Task::urgency_blocked_coefficient(), -5.0);
+        assert_eq!(Task::urgency_annotations_coefficient(), 1.0);
+        assert_eq!(Task::urgency_tags_coefficient(), 1.0);
+        assert_eq!(Task::urgency_due_coefficient(), 12.0);
+        assert_eq!(Task::urgency_blocking_coefficient(), 8.0);
+        assert_eq!(Task::urgency_age_coefficient(), 2.0);
+        assert_eq!(Task::urgency_age_max(), 365.0);
+        let coefficients = Task::coefficients();
+        assert_eq!(coefficients["urgency.user.tag.next.coefficient"], 15.0);
+        assert_eq!(coefficients["urgency.user.tag.foo.coefficient"], 2.5);
+        assert_eq!(coefficients["urgency.uda.size.L.coefficient"], 1.5);
+        assert_eq!(coefficients["urgency.uda.priority.M.coefficient"], 3.9f32);
+        assert!(!coefficients.contains_key("urgency.due.coefficient"));
+    }
+
+    #[test]
+    fn static_initialization_short_uda_key_is_unknown_error() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(&format!("{}/.taskrc", f.home), "uda.ab=1\n");
+        let mut context = context();
+        let (status, _, err) = init(&mut context, &["task", "alpha"]);
+        assert_ne!(status, 0);
+        assert!(err.contains("Unknown error. Please report."), "{err}");
     }
 
     #[test]

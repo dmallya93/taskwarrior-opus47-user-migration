@@ -353,10 +353,10 @@ fn cast_real_details() {
 }
 
 #[test]
-fn placeholder_task_has_no_annotations_or_tags() {
+fn empty_task_has_no_annotations_or_tags() {
     let task = Task::default();
-    assert!(task.get_annotations().is_empty());
-    assert!(!task.has_tag("anything"));
+    assert!(VariantTask::get_annotations(&task).is_empty());
+    assert!(!VariantTask::has_tag(&task, "anything").unwrap());
 }
 
 #[test]

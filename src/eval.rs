@@ -505,9 +505,9 @@ impl Eval {
                     } else if op == "!~" {
                         Variant::from_bool(left.op_nomatch(&right, context_task)?)
                     } else if op == "_hastag_" {
-                        Variant::from_bool(left.op_hastag(&right, context_task))
+                        Variant::from_bool(left.op_hastag(&right, context_task)?)
                     } else if op == "_notag_" {
-                        Variant::from_bool(left.op_notag(&right, context_task))
+                        Variant::from_bool(left.op_notag(&right, context_task)?)
                     } else {
                         return Err(TwError::Message(format("Unsupported operator '{1}'.", &[&token.0])));
                     }

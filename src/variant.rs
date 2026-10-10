@@ -43,13 +43,15 @@
 //!   return `Result<()>` (C++ returns `*this`), the binary forms
 //!   `Result<Variant>`; they are not `std::ops` impls because the C++
 //!   throws.
-//! * `Task::customOrder` (read by the ordering operators) is defined here
-//!   until the Task port, see [`Task::custom_order`].
+//! * `Task::customOrder` (read by the ordering operators) is the Task static
+//!   [`Task::custom_order`] (task.rs).
 //! * `operator_match` / `operator_nomatch` -> `op_match` / `op_nomatch`
 //!   (`Result<bool>`: an invalid regex is [`TwError::Runtime`]),
 //!   `operator_partial` / `operator_nopartial` -> `op_partial` /
 //!   `op_nopartial` (`Result<bool>`, casts), `operator_hastag` /
-//!   `operator_notag` -> `op_hastag` / `op_notag` (`bool`).
+//!   `operator_notag` -> `op_hastag` / `op_notag` (`Result<bool>`: a
+//!   virtual tag can throw in C++ `Task::hasTag`, e.g. an invalid status
+//!   or a failing `tdb2.latest_id ()`).
 //! * The `Task&` parameters of `operator_match` / `operator_hastag` are
 //!   abstracted by [`VariantTask`].
 
@@ -128,9 +130,6 @@ thread_local! {
     /// C++ `static bool Variant::isoEnabled;` (declared only, see
     /// [`Variant::iso_enabled`]).
     static ISO_ENABLED: Cell<bool> = const { Cell::new(false) };
-    /// C++ `std::map<std::string, std::vector<std::string>> Task::customOrder;`
-    /// (Task.cpp), read by the ordering operators; see [`Task::custom_order`].
-    static TASK_CUSTOM_ORDER: RefCell<BTreeMap<String, Vec<String>>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// C++ `enum Variant::type { type_boolean, type_integer, type_real,
@@ -154,43 +153,18 @@ pub enum Type {
 
 /// The `Task` operations Variant.cpp uses: `task.getAnnotations ()` in
 /// `operator_match` and `task.hasTag (...)` in `operator_hastag`.
+/// Implemented by [`Task`] (virtual tags without a context) and
+/// [`crate::task::TaskWithEnv`] (virtual tags against a context).
 pub trait VariantTask {
     /// C++ `std::map<std::string, std::string> Task::getAnnotations () const`
     /// (key `annotation_<epoch>`, value the annotation text).
     fn get_annotations(&self) -> BTreeMap<String, String>;
 
     /// C++ `bool Task::hasTag (const std::string&) const`.
-    fn has_tag(&self, tag: &str) -> bool;
-}
-
-/// The placeholder [`Task`] has no annotations and no tags. Milestone 4
-/// (Task model) replaces this impl with one backed by the real task data.
-impl VariantTask for Task {
-    fn get_annotations(&self) -> BTreeMap<String, String> {
-        BTreeMap::new()
-    }
-
-    fn has_tag(&self, _tag: &str) -> bool {
-        false
-    }
-}
-
-/// The `Task::customOrder` static (C++ `Task.h` / `Task.cpp`), which
-/// Variant.cpp's `operator<`, `operator<=`, `operator>` and `operator>=` read.
-///
-/// Deviation: the static belongs to `Task` (task.rs, milestone 4); until that
-/// port it is defined here, as a thread-local getter/setter pair on [`Task`]
-/// (wiki "Process-wide statics"), defaulting to the empty map as in C++.
-impl Task {
-    /// C++ `Task::customOrder` (read).
-    pub fn custom_order() -> BTreeMap<String, Vec<String>> {
-        TASK_CUSTOM_ORDER.with(|c| c.borrow().clone())
-    }
-
-    /// C++ `Task::customOrder = value`.
-    pub fn set_custom_order(value: BTreeMap<String, Vec<String>>) {
-        TASK_CUSTOM_ORDER.with(|c| *c.borrow_mut() = value);
-    }
+    ///
+    /// # Errors
+    /// Whatever C++ `hasTag` throws (e.g. `The status '{1}' is not valid.`).
+    fn has_tag(&self, tag: &str) -> Result<bool>;
 }
 
 /// C++ `auto order = Task::customOrder.find (source)` followed, when found, by
@@ -198,8 +172,8 @@ impl Task {
 /// same for `right`: the iterator positions as indices, the vector length
 /// for `end ()` (not found). `None` when `source` has no custom order.
 fn custom_order_positions(source: &str, left: &str, right: &str) -> Option<(usize, usize)> {
-    TASK_CUSTOM_ORDER.with(|c| {
-        c.borrow().get(source).map(|order| {
+    Task::with_custom_order(|c| {
+        c.get(source).map(|order| {
             let pos_left = order.iter().position(|v| v == left).unwrap_or(order.len());
             let pos_right = order.iter().position(|v| v == right).unwrap_or(order.len());
             (pos_left, pos_right)
@@ -1450,7 +1424,10 @@ impl Variant {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `bool Variant::operator_hastag (const Variant& other, const Task&
     /// task) const`.
-    pub fn op_hastag(&self, other: &Variant, task: &dyn VariantTask) -> bool {
+    ///
+    /// # Errors
+    /// As [`VariantTask::has_tag`].
+    pub fn op_hastag(&self, other: &Variant, task: &dyn VariantTask) -> Result<bool> {
         let mut right = other.clone();
         right.cast_infallible(Type::String);
         Lexer::dequote(&mut right._string);
@@ -1460,8 +1437,11 @@ impl Variant {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `bool Variant::operator_notag (const Variant& other, const Task&
     /// task) const`.
-    pub fn op_notag(&self, other: &Variant, task: &dyn VariantTask) -> bool {
-        !self.op_hastag(other, task)
+    ///
+    /// # Errors
+    /// As [`VariantTask::has_tag`].
+    pub fn op_notag(&self, other: &Variant, task: &dyn VariantTask) -> Result<bool> {
+        Ok(!self.op_hastag(other, task)?)
     }
 
     ////////////////////////////////////////////////////////////////////////////

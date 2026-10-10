@@ -2501,6 +2501,7 @@ dependencies = [
  "regex",
  "taskchampion",
  "tempfile",
+ "tokio",
  "unicode-width",
  "uuid",
 ]

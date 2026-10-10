@@ -310,8 +310,8 @@ impl VariantTask for MockTask {
         self.annotations.clone()
     }
 
-    fn has_tag(&self, tag: &str) -> bool {
-        self.tags.iter().any(|t| t == tag)
+    fn has_tag(&self, tag: &str) -> crate::Result<bool> {
+        Ok(self.tags.iter().any(|t| t == tag))
     }
 }
 
@@ -362,16 +362,16 @@ fn annotations_and_tags() {
 
     // hastag / notag: the right operand is cast to string and dequoted.
     let v = Variant::default();
-    assert!(v.op_hastag(&s("home"), &task));
-    assert!(v.op_hastag(&s("'next'"), &task));
-    assert!(!v.op_hastag(&s("work"), &task));
-    assert!(!v.op_notag(&s("home"), &task));
-    assert!(v.op_notag(&s("work"), &task));
-    assert!(!v.op_hastag(&Variant::from_int(1), &task));
-    assert!(MockTask::new(&[], &["42"]).has_tag("42"));
-    assert!(v.op_hastag(&Variant::from_int(42), &MockTask::new(&[], &["42"])));
-    assert!(!v.op_hastag(&s("home"), &Task::default()));
-    assert!(v.op_notag(&s("home"), &Task::default()));
+    assert!(v.op_hastag(&s("home"), &task).unwrap());
+    assert!(v.op_hastag(&s("'next'"), &task).unwrap());
+    assert!(!v.op_hastag(&s("work"), &task).unwrap());
+    assert!(!v.op_notag(&s("home"), &task).unwrap());
+    assert!(v.op_notag(&s("work"), &task).unwrap());
+    assert!(!v.op_hastag(&Variant::from_int(1), &task).unwrap());
+    assert!(MockTask::new(&[], &["42"]).has_tag("42").unwrap());
+    assert!(v.op_hastag(&Variant::from_int(42), &MockTask::new(&[], &["42"])).unwrap());
+    assert!(!v.op_hastag(&s("home"), &Task::default()).unwrap());
+    assert!(v.op_notag(&s("home"), &Task::default()).unwrap());
 }
 
 #[test]
