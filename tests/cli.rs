@@ -4,7 +4,7 @@
 //! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
 //! `information`, abbreviations, `--`, argument checks, message colours),
 //! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
-//! `ids`/`uuids` family.
+//! `ids`/`uuids` family, `_unique` and `_zshattributes`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1305,4 +1305,49 @@ fn uuids_sorted_and_zsh_format() {
 
     let output = env.task(&["uuids"]);
     assert_eq!(stderr(&output), "");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdUnique.cpp
+
+#[test]
+fn unique_attribute_values() {
+    let env = Env::new("uda.size.type=string\n");
+    for args in [
+        &["add", "one", "project:A", "+x"][..],
+        &["add", "two", "project:A", "size:big"],
+        &["add", "three", "project:B", "+x", "+y"],
+        &["log", "five", "project:D", "size:small"],
+    ] {
+        assert_eq!(quiet(&env, args).2, 0, "{args:?}");
+    }
+    // Sorted and distinct; completed tasks included.
+    assert_eq!(quiet(&env, &["_unique", "project"]), ("A\nB\nD\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["status:pending", "_unique", "project"]).0, "A\nB\n");
+    assert_eq!(quiet(&env, &["_unique", "status"]).0, "completed\npending\n");
+    // Abbreviations and UDAs are canonicalized.
+    assert_eq!(quiet(&env, &["_unique", "proj"]).0, "A\nB\nD\n");
+    assert_eq!(quiet(&env, &["_unique", "size"]).0, "big\nsmall\n");
+    // Tags as stored (comma-separated).
+    assert_eq!(quiet(&env, &["_unique", "tags"]).0, "x\nx,y\n");
+    // `id` is synthesized for non-completed tasks only.
+    assert_eq!(quiet(&env, &["_unique", "id"]).0, "1\n2\n3\n");
+    // No match: empty output.
+    assert_eq!(quiet(&env, &["/nomatch/", "_unique", "project"]), (String::new(), String::new(), 0));
+    // Headers are cleared.
+    let output = env.task(&["_unique", "project"]);
+    assert_eq!((stdout(&output), stderr(&output)), ("A\nB\nD\n".into(), String::new()));
+
+    assert_eq!(
+        quiet(&env, &["_unique"]),
+        (
+            String::new(),
+            "An attribute must be specified.  See 'task _columns'.\n".into(),
+            2
+        )
+    );
+    assert_eq!(
+        quiet(&env, &["_unique", "nosuchattr"]),
+        (String::new(), "You must specify an attribute or UDA.\n".into(), 2)
+    );
 }
