@@ -36,14 +36,14 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI32, Ordering};
 
-use crate::context::Context;
+use crate::context::{strtol, Context};
 use crate::error::{Result, TwError};
 use crate::lexer::{Lexer, Type as LexerType};
 use crate::shared::color::Color;
 use crate::shared::configuration::Configuration;
 use crate::shared::format::format;
 use crate::shared::fs::{File, Path};
-use crate::shared::shared::auto_complete;
+use crate::shared::shared::{auto_complete, split};
 use crate::shared::utf8::{utf8_character, utf8_next_char};
 
 /// C++ `int CLI2::minimumMatchLength = 3;` (set from `abbreviation.minimum`
@@ -1360,61 +1360,842 @@ impl Cli2 {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // CLI2 part B: C++ `CLI2::desugarFilterTags` (`+tag` --> `tags _hastag_
-    // tag`, `-tag` --> `tags _notag_ tag`). Placeholder: does nothing yet.
-    fn desugar_filter_tags(&mut self, _ctx: &mut Context) {}
+    /// C++ `CLI2::desugarFilterTags`:
+    ///
+    /// ```text
+    /// +tag --> tags _hastag_ tag
+    /// -tag --> tags _notag_ tag
+    /// ```
+    fn desugar_filter_tags(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+        let mut reconstructed = Vec::new();
+        for a in &self.args {
+            if a.lextype == LexerType::tag && a.has_tag("FILTER") {
+                changes = true;
 
-    // CLI2 part B: C++ `CLI2::findStrayModifications`. Placeholder: does
-    // nothing yet.
-    fn find_stray_modifications(&mut self, _ctx: &mut Context) {}
+                let mut left = A2::new("tags", LexerType::dom);
+                left.tag("FILTER");
+                reconstructed.push(left);
 
-    // CLI2 part B: C++ `CLI2::desugarFilterAttributes` (throws `Error:
-    // unrecognized attribute modifier '{1}'.`, hence the `Result`; uses
-    // `ctx.columns`). Placeholder: does nothing yet.
-    fn desugar_filter_attributes(&mut self, _ctx: &mut Context) -> Result<()> {
+                let raw = a.attribute("raw");
+
+                let mut op = A2::new(
+                    if raw.starts_with('+') { "_hastag_" } else { "_notag_" },
+                    LexerType::op,
+                );
+                op.tag("FILTER");
+                reconstructed.push(op);
+
+                // C++ `raw.substr (1)`; Lexer tags start with an ASCII sign.
+                let mut right = A2::new(raw.get(1..).unwrap_or(""), LexerType::string);
+                right.tag("FILTER");
+                reconstructed.push(right);
+            } else {
+                reconstructed.push(a.clone());
+            }
+        }
+
+        if changes {
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter desugarFilterTags"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::findStrayModifications`: for `add` and `log`, every
+    /// `FILTER` argument is re-tagged `MODIFICATION`.
+    fn find_stray_modifications(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+
+        let command = self.get_command();
+        if command == "add" || command == "log" {
+            for a in self.args.iter_mut() {
+                if a.has_tag("FILTER") {
+                    a.un_tag("FILTER");
+                    a.tag("MODIFICATION");
+                    changes = true;
+                }
+            }
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::prepareFilter findStrayModifications"));
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::desugarFilterAttributes`:
+    ///
+    /// ```text
+    /// <name>[.<mod>]:['"][<value>]['"] --> name <op> value
+    /// ```
+    ///
+    /// Modifiers map to operators as: (none) `=`, `before`/`under`/`below`
+    /// `<`, `after`/`over`/`above` `>`, `by` `<=`, `none` `== ''`, `any`
+    /// `!== ''`, `is`/`equals` `==`, `not` `!=`, `isnt` `!==`,
+    /// `has`/`contains` `~`, `hasnt` `!~`, `startswith`/`left` `~ ^value`,
+    /// `endswith`/`right` `~ value$`, `word` `~ \bvalue\b`, `noword`
+    /// `!~ \bvalue\b` (macOS: the bare value; Solaris: `\<value\>`).
+    ///
+    /// Fails with `Error: unrecognized attribute modifier '<mod>'.` (a C++
+    /// `throw std::string`). As in C++, the in-place demotion of earlier
+    /// unrecognised pairs to words survives the error; the reconstruction
+    /// does not.
+    ///
+    /// Deviations:
+    /// - C++ `Context::getContext ().columns[canonical]` autovivifies a null
+    ///   entry for a name without a column; the Rust registry only holds
+    ///   columns, so it is looked up without insertion.
+    /// - C++ reads `values[0]` even when the value lexes to no tokens (e.g.
+    ///   whitespace only; undefined behaviour); here the type is then
+    ///   `Lexer::Type::string`.
+    fn desugar_filter_attributes(&mut self, ctx: &mut Context) -> Result<()> {
+        let mut changes = false;
+        let mut reconstructed = Vec::new();
+        for i in 0..self.args.len() {
+            if self.args[i].lextype == LexerType::pair && self.args[i].has_tag("FILTER") {
+                let a = &self.args[i];
+                let name = a.attribute("name");
+                let mod_ = a.attribute("modifier");
+                let mut value = a.attribute("value");
+
+                // An unquoted string, while equivalent to an empty string, doesn't cause
+                // an operand shortage in eval.
+                if value.is_empty() {
+                    value = "''".to_string();
+                }
+
+                // Some values are expressions, which need to be lexed. The best way to
+                // determine whether an expression is either a single value, or needs to
+                // be lexed, is to lex it and count the tokens. For example:
+                //    now+1d
+                // This should be lexed and surrounded by parentheses:
+                //    (
+                //    now
+                //    +
+                //    1d
+                //    )
+                // Use this sequence in place of a single value.
+                let values = self.lex_expression(&value);
+                if debug_parser(ctx) {
+                    ctx.debug(&format!("CLI2::lexExpression {name}:{value}"));
+                    for v in &values {
+                        ctx.debug(&format!("  {}", v.dump()));
+                    }
+                    ctx.debug(" ");
+                }
+
+                let mut found = false;
+                if let Some(canonical) = self.canonicalize("attribute", &name) {
+                    // Certain attribute types do not suport math.
+                    //   string   --> no
+                    //   numeric  --> yes
+                    //   date     --> yes
+                    //   duration --> yes
+                    let mut eval_supported = true;
+                    if ctx.columns.get(&canonical).is_some_and(|col| col.type_() == "string") {
+                        eval_supported = false;
+                    }
+
+                    let mut lhs = A2::new(&name, LexerType::dom);
+                    lhs.tag("FILTER");
+                    lhs.set_attribute("canonical", &canonical);
+                    lhs.set_attribute("modifier", &mod_);
+
+                    let mut op = A2::new("", LexerType::op);
+                    op.tag("FILTER");
+
+                    // Attribute types that do not support evaluation should be interpreted
+                    // as strings (currently this means that string attributes are not evaluated)
+                    let rhs_type = if eval_supported {
+                        values.first().map_or(LexerType::string, |v| v.lextype)
+                    } else {
+                        LexerType::string
+                    };
+                    let mut rhs = A2::new("", rhs_type);
+                    rhs.tag("FILTER");
+
+                    // Special case for '<name>:<value>'.
+                    let (op_raw, rhs_raw) = match mod_.as_str() {
+                        "" => ("=", value.clone()),
+                        "before" | "under" | "below" => ("<", value.clone()),
+                        "after" | "over" | "above" => (">", value.clone()),
+                        "by" => ("<=", value.clone()),
+                        "none" => ("==", "''".to_string()),
+                        "any" => ("!==", "''".to_string()),
+                        "is" | "equals" => ("==", value.clone()),
+                        "not" => ("!=", value.clone()),
+                        "isnt" => ("!==", value.clone()),
+                        "has" | "contains" => ("~", value.clone()),
+                        "hasnt" => ("!~", value.clone()),
+                        "startswith" | "left" => ("~", format!("^{value}")),
+                        "endswith" | "right" => ("~", format!("{value}$")),
+                        "word" => ("~", word_boundary(&value)),
+                        "noword" => ("!~", word_boundary(&value)),
+                        _ => {
+                            return Err(TwError::Message(format(
+                                "Error: unrecognized attribute modifier '{1}'.",
+                                &[&mod_],
+                            )));
+                        }
+                    };
+                    op.set_attribute("raw", op_raw);
+                    rhs.set_attribute("raw", &rhs_raw);
+
+                    reconstructed.push(lhs);
+                    reconstructed.push(op);
+
+                    // Do not modify this construct without full understanding.
+                    // Getting this wrong breaks a whole lot of filtering tests.
+                    if eval_supported {
+                        reconstructed.extend(values);
+                    } else if Lexer::is_dom_str(&rhs.attribute("raw")) {
+                        rhs.lextype = LexerType::dom;
+                        reconstructed.push(rhs);
+                    } else {
+                        reconstructed.push(rhs);
+                    }
+
+                    found = true;
+                }
+                // If the name does not canonicalize to either an attribute or a UDA
+                // then it is not a recognized Lexer::Type::pair, so downgrade it to
+                // Lexer::Type::word.
+                else {
+                    self.args[i].lextype = LexerType::word;
+                }
+
+                if found {
+                    changes = true;
+                } else {
+                    reconstructed.push(self.args[i].clone());
+                }
+            }
+            // Not a FILTER pair.
+            else {
+                reconstructed.push(self.args[i].clone());
+            }
+        }
+
+        if changes {
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter desugarFilterAttributes"));
+            }
+        }
         Ok(())
     }
 
-    // CLI2 part B: C++ `CLI2::desugarFilterPatterns`. Placeholder: does
-    // nothing yet.
-    fn desugar_filter_patterns(&mut self, _ctx: &mut Context) {}
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::desugarFilterPatterns`:
+    ///
+    /// ```text
+    /// /pattern/ --> description ~ 'pattern'
+    /// ```
+    fn desugar_filter_patterns(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+        let mut reconstructed = Vec::new();
+        for a in &self.args {
+            if a.lextype == LexerType::pattern && a.has_tag("FILTER") {
+                changes = true;
 
-    // CLI2 part B: C++ `CLI2::findIDs` (fills `id_ranges`; honours
-    // `rc.sugar`). Placeholder: does nothing yet.
-    fn find_ids(&mut self, _ctx: &mut Context) {}
+                let mut lhs = A2::new("description", LexerType::dom);
+                lhs.tag("FILTER");
+                reconstructed.push(lhs);
 
-    // CLI2 part B: C++ `CLI2::findUUIDs` (fills `uuid_list`; honours
-    // `rc.sugar`). Placeholder: does nothing yet.
-    fn find_uuids(&mut self, _ctx: &mut Context) {}
+                let mut op = A2::new("~", LexerType::op);
+                op.tag("FILTER");
+                reconstructed.push(op);
 
-    // CLI2 part B: C++ `CLI2::insertIDExpr`. Placeholder: does nothing yet.
-    fn insert_id_expr(&mut self, _ctx: &mut Context) {}
+                let mut rhs = A2::new(&a.attribute("pattern"), LexerType::string);
+                rhs.set_attribute("flags", &a.attribute("flags"));
+                rhs.tag("FILTER");
+                reconstructed.push(rhs);
+            } else {
+                reconstructed.push(a.clone());
+            }
+        }
 
-    // CLI2 part B: C++ `CLI2::lexFilterArgs` (FILTER word args are lexed).
-    // Placeholder: does nothing yet.
-    fn lex_filter_args(&mut self, _ctx: &mut Context) {}
+        if changes {
+            self.args = reconstructed;
 
-    // CLI2 part B: C++ `CLI2::isEmptyParenExpression (iterator it, bool
-    // forward = true)`; the iterator becomes an index into `args`.
-    // Placeholder: always `false` until `insert_junctions` is ported.
-    #[allow(dead_code)]
-    fn is_empty_paren_expression(&self, _index: usize, _forward: bool) -> bool {
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter desugarFilterPatterns"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::findIDs`. An ID sequence can be:
+    ///
+    /// ```text
+    ///   a single ID:          1
+    ///   a list of IDs:        1,3,5
+    ///   a list of IDs:        1 3 5
+    ///   a range:              5-10
+    ///   or a combination:     1,3,5-10 12
+    /// ```
+    ///
+    /// With `rc.sugar` the ranges are collected into `id_ranges` (a number
+    /// preceded by an operator other than `(`/`)` is skipped; when there is
+    /// no FILTER argument at all, plain-integer numbers and sets tagged
+    /// `MODIFICATION` become FILTER IDs, except for `add`/`log`). Without
+    /// sugar, every FILTER number becomes an `id:<n>` pair.
+    fn find_ids(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+
+        if ctx.config.get_boolean("sugar") {
+            let mut previous_filter_arg_was_an_operator = false;
+            let mut filter_count = 0;
+
+            for a in &self.args {
+                if a.has_tag("FILTER") {
+                    filter_count += 1;
+
+                    if a.lextype == LexerType::number {
+                        // Skip any number that was preceded by an operator.
+                        if !previous_filter_arg_was_an_operator {
+                            changes = true;
+                            let number = a.attribute("raw");
+                            self.id_ranges.push((number.clone(), number));
+                        }
+                    } else if a.lextype == LexerType::set {
+                        // Split the ID list into elements.
+                        let elements = split(&a.attribute("raw"), ',');
+
+                        for element in &elements {
+                            changes = true;
+                            push_id_range(&mut self.id_ranges, element);
+                        }
+                    }
+
+                    let raw = a.attribute("raw");
+                    previous_filter_arg_was_an_operator = a.lextype == LexerType::op && raw != "(" && raw != ")";
+                }
+            }
+
+            // If no IDs were found, and no filter was specified, look for number/set
+            // listed as a MODIFICATION.
+            let command = self.get_command();
+
+            if self.id_ranges.is_empty() && filter_count == 0 && command != "add" && command != "log" {
+                for a in self.args.iter_mut() {
+                    if a.has_tag("MODIFICATION") {
+                        let raw = a.attribute("raw");
+
+                        // For a number to be an ID, it must not contain any sign or floating
+                        // point elements.
+                        if a.lextype == LexerType::number && !raw.contains('.') && !raw.contains('e') && !raw.contains('-')
+                        {
+                            changes = true;
+                            a.un_tag("MODIFICATION");
+                            a.tag("FILTER");
+                            self.id_ranges.push((raw.clone(), raw));
+                        } else if a.lextype == LexerType::set {
+                            a.un_tag("MODIFICATION");
+                            a.tag("FILTER");
+
+                            // Split the ID list into elements.
+                            let elements = split(&raw, ',');
+
+                            for element in &elements {
+                                changes = true;
+                                push_id_range(&mut self.id_ranges, element);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Sugar-free.
+        else {
+            let mut reconstructed = Vec::new();
+            for a in &self.args {
+                if a.has_tag("FILTER") && a.lextype == LexerType::number {
+                    changes = true;
+                    let mut pair = A2::new(&format!("id:{}", a.attribute("raw")), LexerType::pair);
+                    pair.tag("FILTER");
+                    pair.decompose();
+                    reconstructed.push(pair);
+                } else {
+                    reconstructed.push(a.clone());
+                }
+            }
+
+            if changes {
+                self.args = reconstructed;
+            }
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::prepareFilter findIDs"));
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::findUUIDs`: with `rc.sugar`, collects FILTER UUIDs into
+    /// `uuid_list` (or, when there are none, the `MODIFICATION` ones, which
+    /// become FILTER). Without sugar, every FILTER UUID becomes a
+    /// `uuid:<uuid>` pair.
+    fn find_uuids(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+
+        if ctx.config.get_boolean("sugar") {
+            for a in &self.args {
+                if a.lextype == LexerType::uuid && a.has_tag("FILTER") {
+                    changes = true;
+                    self.uuid_list.push(a.attribute("raw"));
+                }
+            }
+
+            if self.uuid_list.is_empty() {
+                for a in self.args.iter_mut() {
+                    if a.lextype == LexerType::uuid && a.has_tag("MODIFICATION") {
+                        changes = true;
+                        a.un_tag("MODIFICATION");
+                        a.tag("FILTER");
+                        self.uuid_list.push(a.attribute("raw"));
+                    }
+                }
+            }
+        }
+        // Sugar-free.
+        else {
+            let mut reconstructed = Vec::new();
+            for a in &self.args {
+                if a.has_tag("FILTER") && a.lextype == LexerType::uuid {
+                    changes = true;
+                    let mut pair = A2::new(&format!("uuid:{}", a.attribute("raw")), LexerType::pair);
+                    pair.tag("FILTER");
+                    pair.decompose();
+                    reconstructed.push(pair);
+                } else {
+                    reconstructed.push(a.clone());
+                }
+            }
+
+            if changes {
+                self.args = reconstructed;
+            }
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::prepareFilter findUUIDs"));
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::insertIDExpr`: replaces the *first* FILTER set/number/uuid
+    /// argument with one expression covering all of `id_ranges` and
+    /// `uuid_list`; all other such arguments are eaten.
+    fn insert_id_expr(&mut self, ctx: &mut Context) {
+        // Skip completely if no ID/UUID was found. This is because below, '(' and ')'
+        // are inserted regardless of list size.
+        if self.id_ranges.is_empty() && self.uuid_list.is_empty() {
+            return;
+        }
+
+        // Find the *first* occurence of lexer type set/number/uuid, and replace it
+        // with a synthesized expression. All other occurences are eaten.
+        let mut changes = false;
+        let mut found_id = false;
+        let mut reconstructed = Vec::new();
+        for a in &self.args {
+            if matches!(a.lextype, LexerType::set | LexerType::number | LexerType::uuid) && a.has_tag("FILTER") {
+                if !found_id {
+                    found_id = true;
+                    changes = true;
+
+                    // Construct a single sequence that represents all _id_ranges and
+                    // _uuid_list in one clause. This is essentially converting this:
+                    //
+                    //   1,2-3 uuid,uuid uuid 4
+                    //
+                    // into:
+                    //
+                    //   (
+                    //        ( id == 1 )
+                    //     or ( ( id >= 2 ) and ( id <= 3 ) )
+                    //     or ( id == 4 )
+                    //     or ( uuid = $UUID )
+                    //     or ( uuid = $UUID )
+                    //   )
+
+                    // Building block operators.
+                    let filter_arg = |raw: &str, lextype: LexerType| {
+                        let mut a = A2::new(raw, lextype);
+                        a.tag("FILTER");
+                        a
+                    };
+                    let open_paren = filter_arg("(", LexerType::op);
+                    let close_paren = filter_arg(")", LexerType::op);
+                    let op_or = filter_arg("or", LexerType::op);
+                    let op_and = filter_arg("and", LexerType::op);
+                    let op_similar = filter_arg("=", LexerType::op);
+                    let op_equal = filter_arg("==", LexerType::op);
+                    let op_gte = filter_arg(">=", LexerType::op);
+                    let op_lte = filter_arg("<=", LexerType::op);
+
+                    // Building block attributes.
+                    let arg_id = filter_arg("id", LexerType::dom);
+                    let arg_uuid = filter_arg("uuid", LexerType::dom);
+
+                    reconstructed.push(open_paren.clone());
+
+                    // Add all ID ranges.
+                    for (r, (first, second)) in self.id_ranges.iter().enumerate() {
+                        if r != 0 {
+                            reconstructed.push(op_or.clone());
+                        }
+
+                        if first == second {
+                            reconstructed.push(open_paren.clone());
+                            reconstructed.push(arg_id.clone());
+                            reconstructed.push(op_equal.clone());
+
+                            reconstructed.push(filter_arg(first, LexerType::number));
+
+                            reconstructed.push(close_paren.clone());
+                        } else {
+                            let low = strtol(first);
+                            let high = strtol(second);
+                            let ascending = low <= high;
+
+                            reconstructed.push(open_paren.clone());
+                            reconstructed.push(arg_id.clone());
+                            reconstructed.push(op_gte.clone());
+
+                            reconstructed.push(filter_arg(if ascending { first } else { second }, LexerType::number));
+
+                            reconstructed.push(op_and.clone());
+                            reconstructed.push(arg_id.clone());
+                            reconstructed.push(op_lte.clone());
+
+                            reconstructed.push(filter_arg(if ascending { second } else { first }, LexerType::number));
+
+                            reconstructed.push(close_paren.clone());
+                        }
+                    }
+
+                    // Combine the ID and UUID sections with 'or'.
+                    if !self.id_ranges.is_empty() && !self.uuid_list.is_empty() {
+                        reconstructed.push(op_or.clone());
+                    }
+
+                    // Add all UUID list items.
+                    for (u, uuid) in self.uuid_list.iter().enumerate() {
+                        if u != 0 {
+                            reconstructed.push(op_or.clone());
+                        }
+
+                        reconstructed.push(open_paren.clone());
+                        reconstructed.push(arg_uuid.clone());
+                        reconstructed.push(op_similar.clone());
+
+                        reconstructed.push(filter_arg(uuid, LexerType::string));
+
+                        reconstructed.push(close_paren.clone());
+                    }
+
+                    reconstructed.push(close_paren);
+                }
+
+                // No 'else' because all set/number/uuid args but the first are removed.
+            } else {
+                reconstructed.push(a.clone());
+            }
+        }
+
+        if changes {
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter insertIDExpr"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::lexFilterArgs`: FILTER `Lexer::Type::word` args will
+    /// become part of an expression, and so they need to be Lexed.
+    fn lex_filter_args(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+        let mut reconstructed = Vec::new();
+        for a in &self.args {
+            if a.lextype == LexerType::word && a.has_tag("FILTER") {
+                changes = true;
+
+                let mut lexeme = String::new();
+                let mut type_ = LexerType::word;
+                let mut lex = Lexer::new(&a.attribute("raw"));
+                while lex.token(&mut lexeme, &mut type_) {
+                    let mut extra = A2::new(&lexeme, type_);
+                    extra.tag("FILTER");
+                    reconstructed.push(extra);
+                }
+            } else {
+                reconstructed.push(a.clone());
+            }
+        }
+
+        if changes {
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter lexFilterArgs"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::isEmptyParenExpression (iterator it, bool forward = true)`:
+    /// detects if the bracket at `index` is a start or end of an empty paren
+    /// expression. Examples:
+    ///
+    /// ```text
+    /// ( status = pending ) ( )
+    ///                      ^
+    ///              it -----|         => true
+    ///
+    /// ( status = pending ) ( project = Home )
+    ///                      ^
+    ///              it -----|         => false
+    /// ```
+    ///
+    /// As in C++, the backward scan stops before reaching `args[0]`.
+    fn is_empty_paren_expression(&self, index: usize, forward: bool) -> bool {
+        let mut open = 0;
+        let mut closed = 0;
+
+        let mut a = index;
+        while if forward { a < self.args.len() } else { a != 0 } {
+            let raw = self.args[a].attribute("raw");
+            if raw == "(" {
+                open += 1;
+            } else if raw == ")" {
+                closed += 1;
+            } else {
+                // Encountering a non-paren token means there is something between parenthees
+                return false;
+            }
+
+            // Getting balanced parentheses means we have an empty paren expression
+            if open == closed && open != 0 {
+                return true;
+            }
+
+            if forward {
+                a += 1;
+            } else {
+                a -= 1;
+            }
+        }
+
+        // Should not end here.
         false
     }
 
-    // CLI2 part B: C++ `CLI2::desugarFilterPlainArgs`. Placeholder: does
-    // nothing yet.
-    fn desugar_filter_plain_args(&mut self, _ctx: &mut Context) {}
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::desugarFilterPlainArgs`: FILTER, `Lexer::Type::word` args
+    /// are treated as search terms.
+    ///
+    /// Algorithm:
+    ///
+    /// ```text
+    ///   Given:
+    ///     - task ... argX candidate argY
+    ///   Where:
+    ///     - neither argX nor argY are an operator, except (, ), and, or, xor
+    ///     - candidate is one of: Lexer::Type::word
+    ///                            Lexer::Type::identifier
+    ///                            Lexer::Type::date
+    /// ```
+    ///
+    /// Each candidate becomes `description ~ <dequoted word>` (all three
+    /// tagged `FILTER` and `PLAIN`). As in C++, a *last* argument that is a
+    /// date is not a candidate.
+    ///
+    /// Deviation: C++ indexes `_args[0]` and `_args[size - 2]`
+    /// unconditionally (undefined behaviour with fewer than two arguments,
+    /// which cannot happen after `analyze`); here such lists are left alone.
+    fn desugar_filter_plain_args(&mut self, ctx: &mut Context) {
+        if self.args.len() < 2 {
+            return;
+        }
 
-    // CLI2 part B: C++ `CLI2::insertJunctions` (implicit `and`).
-    // Placeholder: does nothing yet.
-    fn insert_junctions(&mut self, _ctx: &mut Context) {}
+        let is_junction = |raw: &str| matches!(raw, "(" | ")" | "and" | "or" | "xor");
 
-    // CLI2 part B: C++ `CLI2::lexExpression`, used by
-    // `desugarFilterAttributes`. Placeholder: returns no tokens yet.
-    #[allow(dead_code)]
-    fn lex_expression(&self, _expression: &str) -> Vec<A2> {
-        Vec::new()
+        // First walk the arg list looking for plain words that are not part of an
+        // existing expression.
+        let mut prevprev = 0usize;
+        let mut prev = 0usize;
+        for i in 0..self.args.len() {
+            let a = &self.args[i];
+            let raw = a.attribute("raw");
+            let ppraw = self.args[prevprev].attribute("raw");
+
+            let p = &self.args[prev];
+            if (self.args[prevprev].lextype != LexerType::op || is_junction(&ppraw)) // argX
+                && matches!(p.lextype, LexerType::identifier | LexerType::date | LexerType::word) // candidate
+                && p.has_tag("FILTER") // candidate
+                && (a.lextype != LexerType::op || is_junction(&raw))
+            // argY
+            {
+                self.args[prev].tag("PLAIN");
+            }
+
+            prevprev = prev;
+            prev = i;
+        }
+
+        // Cover the case where the *last* argument is a plain arg.
+        let len = self.args.len();
+        let penultimate = &self.args[len - 2];
+        let praw = penultimate.attribute("raw");
+        let last = &self.args[len - 1];
+        if (penultimate.lextype != LexerType::op || is_junction(&praw)) // argX
+            && matches!(last.lextype, LexerType::identifier | LexerType::word) // candidate
+            && last.has_tag("FILTER")
+        // candidate
+        {
+            self.args[len - 1].tag("PLAIN");
+        }
+
+        // Walk the list again, upgrading PLAIN args.
+        let mut changes = false;
+        let mut reconstructed = Vec::new();
+        for a in &self.args {
+            if a.has_tag("PLAIN") {
+                changes = true;
+
+                let mut lhs = A2::new("description", LexerType::dom);
+                lhs.set_attribute("canonical", "description");
+                lhs.tag("FILTER");
+                lhs.tag("PLAIN");
+                reconstructed.push(lhs);
+
+                let mut op = A2::new("~", LexerType::op);
+                op.tag("FILTER");
+                op.tag("PLAIN");
+                reconstructed.push(op);
+
+                let mut word = a.attribute("raw");
+                Lexer::dequote(&mut word);
+                let mut rhs = A2::new(&word, LexerType::string);
+                rhs.tag("FILTER");
+                rhs.tag("PLAIN");
+                reconstructed.push(rhs);
+            } else {
+                reconstructed.push(a.clone());
+            }
+        }
+
+        if changes {
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter desugarFilterPlainArgs"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::insertJunctions`: two consecutive FILTER, non-OP arguments
+    /// that are not "(" or ")" need an "and" operator inserted between them.
+    ///
+    /// ```text
+    ///   ) <non-op>         -->  ) and <non-op>
+    ///   <non-op> (         -->  <non-op> <and> (
+    ///   ) (                -->  ) and (
+    ///   <non-op> <non-op>  -->  <non-op> and <non-op>
+    /// ```
+    ///
+    /// Empty paren expressions (`( )`) do not get a junction.
+    fn insert_junctions(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+        let mut reconstructed = Vec::new();
+        // C++ `auto prev = _args.begin ()`: index 0 means "no FILTER arg yet".
+        let mut prev = 0usize;
+
+        for a in 0..self.args.len() {
+            if self.args[a].has_tag("FILTER") {
+                // The prev iterator should be the first FILTER arg. (C++
+                // `if (prev == _args.begin ()) prev = a;`, which the
+                // assignment below repeats.)
+                //
+                // Insert AND between terms.
+                if prev != 0 && a != prev {
+                    let p = &self.args[prev];
+                    let c = &self.args[a];
+                    let p_raw = p.attribute("raw");
+                    let c_raw = c.attribute("raw");
+                    if (p.lextype != LexerType::op && c_raw == "(" && !self.is_empty_paren_expression(a, true))
+                        || (p_raw == ")" && c.lextype != LexerType::op && !self.is_empty_paren_expression(prev, false))
+                        || (p_raw == ")"
+                            && c_raw == "("
+                            && !self.is_empty_paren_expression(a, true)
+                            && !self.is_empty_paren_expression(prev, false))
+                        || (p.lextype != LexerType::op && c.lextype != LexerType::op)
+                    {
+                        let mut op_or = A2::new("and", LexerType::op);
+                        op_or.tag("FILTER");
+                        reconstructed.push(op_or);
+                        changes = true;
+                    }
+                }
+
+                // Previous FILTER arg.
+                prev = a;
+            }
+
+            reconstructed.push(self.args[a].clone());
+        }
+
+        if changes {
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::prepareFilter insertJunctions"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::lexExpression`: lexes an attribute value into FILTER
+    /// tokens; if there were multiple tokens, they are parenthesized,
+    /// because the expression will be used as a value:
+    ///
+    /// ```text
+    ///    now+1d --> ( now + 1d )
+    /// ```
+    fn lex_expression(&self, expression: &str) -> Vec<A2> {
+        let mut lexed = Vec::new();
+        let mut lexeme = String::new();
+        let mut type_ = LexerType::word;
+        let mut lex = Lexer::new(expression);
+        while lex.token(&mut lexeme, &mut type_) {
+            let mut token = A2::new(&lexeme, type_);
+            token.tag("FILTER");
+            lexed.push(token);
+        }
+
+        // If there were multiple tokens, parenthesize, because this expression will
+        // be used as a value.
+        if lexed.len() > 1 {
+            let mut open_paren = A2::new("(", LexerType::op);
+            open_paren.tag("FILTER");
+            let mut close_paren = A2::new(")", LexerType::op);
+            close_paren.tag("FILTER");
+
+            lexed.insert(0, open_paren);
+            lexed.push(close_paren);
+        }
+
+        lexed
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -1500,6 +2281,29 @@ fn lex_into(value: &str, list: &mut Vec<A2>) {
     let mut lex = Lexer::new(value);
     while lex.token(&mut lexeme, &mut type_) {
         list.push(A2::new(&lexeme, type_));
+    }
+}
+
+/// The C++ `findIDs` element idiom: `element` (from a split ID set) with a
+/// `-` becomes the range `(before, after)` of the first hyphen, otherwise
+/// the single ID `(element, element)`.
+fn push_id_range(id_ranges: &mut Vec<(String, String)>, element: &str) {
+    match element.find('-') {
+        Some(hyphen) => id_ranges.push((element[..hyphen].to_string(), element[hyphen + 1..].to_string())),
+        None => id_ranges.push((element.to_string(), element.to_string())),
+    }
+}
+
+/// The `word`/`noword` modifier value in `desugarFilterAttributes`: the C++
+/// `#if defined(DARWIN)` bare value, `#elif defined(SOLARIS)` `\<value\>`,
+/// else `\bvalue\b`.
+fn word_boundary(value: &str) -> String {
+    if cfg!(target_os = "macos") {
+        value.to_string()
+    } else if cfg!(any(target_os = "solaris", target_os = "illumos")) {
+        format!("\\<{value}\\>")
+    } else {
+        format!("\\b{value}\\b")
     }
 }
 
@@ -1982,6 +2786,6 @@ mod tests {
         ctx.verbosity = ["filter".to_string()].into_iter().collect();
         parse(&mut ctx, &["task", "+a", "export"]).unwrap();
         with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
-        assert_eq!(ctx.footnotes, ["Filter: ( +a )"]);
+        assert_eq!(ctx.footnotes, ["Filter: ( tags _hastag_ a )"]);
     }
 }

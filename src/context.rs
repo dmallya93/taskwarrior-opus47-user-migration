@@ -531,7 +531,7 @@ pub fn stdout_is_tty() -> bool {
 
 /// C++ `(int) strtol (text, nullptr, 10)`: optional leading whitespace and
 /// sign, then the leading decimal digits; 0 if none.
-fn strtol(text: &str) -> i32 {
+pub(crate) fn strtol(text: &str) -> i32 {
     let text = text.trim_start_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
     let (negative, digits) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),
