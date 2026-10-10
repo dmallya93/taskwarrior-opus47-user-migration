@@ -951,7 +951,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 8] = ["_config", "_show", "_version", "add", "calc", "config", "log", "version"];
+    const PORTED: [&str; 9] = ["_config", "_show", "_version", "add", "calc", "config", "count", "log", "version"];
 
     fn default_config() -> Configuration {
         let mut config = Configuration::new();
