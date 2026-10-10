@@ -951,7 +951,8 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 22] = [
+    const PORTED: [&str; 25] = [
+        "_columns",
         "_config",
         "_get",
         "_ids",
@@ -966,12 +967,14 @@ mod tests {
         "add",
         "calc",
         "colors",
+        "columns",
         "config",
         "count",
         "export",
         "ids",
         "information",
         "log",
+        "reports",
         "uuids",
         "version",
     ];
@@ -1212,10 +1215,11 @@ mod tests {
                     | "_urgency"
                     | "information"
                     | "_zshattributes"
+                    | "_columns"
             ) {
-                // These read the replica (or, for `_zshattributes`, the column
-                // registry Context::initialize builds); covered end to end in
-                // tests/cli.rs.
+                // These read the replica (or, for `_zshattributes` and
+                // `_columns`, the column registry Context::initialize builds);
+                // covered end to end in tests/cli.rs.
                 continue;
             }
             if keyword == "colors" {

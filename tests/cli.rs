@@ -1536,3 +1536,70 @@ fn information_tables_and_no_match() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!((stdout(&output), stderr(&output)), (String::new(), "No matches.\n".to_string()));
 }
+
+#[test]
+fn columns_substring_table_and_errors() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\n");
+    // Case-insensitive substring filter; the <uda> rows and footnote text always follow.
+    let (out, err, rc) = quiet(&env, &["columns", "PROJ"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "Columns Type   Modifiable Supported Formats Example\n\
+         ------- ------ ---------- ----------------- -------------\n\
+         project string Modifiable full*             home.garden\n\
+         \x20                         parent            home\n\
+         \x20                         indented            home.garden\n\
+         <uda>   <type> Modifiable default*\n\
+         \x20                         indicator\n\
+         \n\
+         * Means default format, and therefore optional.  For example, 'due' and 'due.formatted' are equivalent.\n"
+    );
+    // Blank line with the default verbosity; `escr` matches only description.
+    let output = env.task(&["columns", "escr"]);
+    let out = stdout(&output);
+    assert!(out.starts_with("\nColumns     Type   Modifiable"), "{out:?}");
+    assert!(out.contains("description string Modifiable combined*") && !out.contains("uuid") && !out.contains("project"));
+    // fontunderline (default on) without colour underlines the labels instead of dashes.
+    let (out, _, _) = quiet(&env, &["rc.fontunderline=on", "columns", "proj"]);
+    assert!(out.starts_with("\x1b[4mColumns\x1b[0m \x1b[4mType  \x1b[0m"), "{out:?}");
+    // More than one search word.
+    let (out, err, rc) = quiet(&env, &["columns", "a", "b"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "You can only specify one search string.\n", 2));
+}
+
+#[test]
+fn completion_columns_include_udas() {
+    let env = Env::new("uda.zzz.type=string\n");
+    let (out, err, rc) = quiet(&env, &["_columns"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let names: Vec<&str> = out.lines().collect();
+    assert_eq!(names.first(), Some(&"depends"));
+    assert_eq!(names.last(), Some(&"zzz"));
+    assert!(names.contains(&"description") && names.contains(&"urgency") && names.contains(&"uuid"), "{out}");
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted);
+}
+
+#[test]
+fn reports_table_and_count() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\nreport.mine.columns=id\nreport.mine.description=Mine\n");
+    let output = env.task(&["reports"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = stdout(&output);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "");
+    assert_eq!(lines[1], "Report           Description");
+    assert_eq!(lines[2], "---------------- --------------------------------------------------");
+    assert_eq!(lines[3], "active           Active tasks");
+    assert!(lines.contains(&"mine             Mine"), "{out}");
+    assert!(lines.contains(&"information      Shows all data and metadata"), "{out}");
+    assert!(out.ends_with("waiting          Waiting (hidden) tasks\n\n30 reports\n"), "{out:?}");
+    // Forced colour: the header takes color.label, alternate rows color.alternate.
+    let (out, _, rc) = quiet(&env, &["rc._forcecolor=on", "rc.color.alternate=on gray2", "rc.color.label=bold", "reports"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("\x1b[1mReport          \x1b[0m"), "{out:?}");
+    assert!(out.contains("\x1b[48;5;234mactive          \x1b[0m"), "{out:?}");
+    assert!(out.ends_with("\n30 reports\n") && !out.contains("\n\n30"), "{out:?}");
+}
