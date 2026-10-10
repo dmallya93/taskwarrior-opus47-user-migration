@@ -627,7 +627,6 @@ pub struct Context {
     /// C++ `time_hooks_us`.
     pub time_hooks_us: i64,
     /// C++ `currentTask`: the current task for DOM references, or `None`.
-    /// Placeholder type until milestone 4.
     pub current_task: Option<Rc<Task>>,
 }
 
