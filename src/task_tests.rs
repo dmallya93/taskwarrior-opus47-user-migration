@@ -3,9 +3,9 @@
 //!
 //! Counted assertions (what actually executes in C++; the `UnitTest t(N)`
 //! plans are not used):
-//! * `t_test.cpp`: 25 executed (its plan says 48, which is stale). It calls no
-//!   function deferred to a later milestone (`Task::modify`/`substitute` ->
-//!   milestone 5, `Task::diff` -> milestone 7), so nothing is excluded.
+//! * `t_test.cpp`: 25 executed (its plan says 48, which is stale). It calls
+//!   neither `Task::modify`/`substitute` (tested in `task_modify_tests.rs`)
+//!   nor the milestone-7 `Task::diff`, so nothing is excluded.
 //! * `tw_2689_test.cpp`: 12 executed (plan 12). Nothing excluded.
 //!
 //! Both C++ tests build a `Context` (never initialized: no rc file, empty

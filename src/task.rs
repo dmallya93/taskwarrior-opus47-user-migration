@@ -5512,3 +5512,8 @@ mod json_tests {
 #[cfg(test)]
 #[path = "task_tests.rs"]
 mod upstream_tests;
+
+// Task::modify / Task::substitute over a real Context and CLI2 parse.
+#[cfg(test)]
+#[path = "task_modify_tests.rs"]
+mod modify_tests;
