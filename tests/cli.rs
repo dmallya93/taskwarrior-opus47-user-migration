@@ -1351,3 +1351,31 @@ fn unique_attribute_values() {
         (String::new(), "You must specify an attribute or UDA.\n".into(), 2)
     );
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdAttributes.cpp
+
+#[test]
+fn zsh_attributes_lists_sorted_columns() {
+    let builtin = [
+        "depends", "description", "due", "end", "entry", "id", "imask", "last", "mask", "modified", "parent",
+        // `priority` is a UDA in the compiled-in defaults.
+        "priority", "project", "recur", "rtype", "scheduled", "start", "status", "tags", "template", "until", "urgency",
+        "uuid", "wait",
+    ];
+    let lines = |names: &[&str]| names.iter().map(|n| format!("{n}:{n}\n")).collect::<String>();
+
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["_zshattributes"]), (lines(&builtin), String::new(), 0));
+
+    // UDAs are columns too, sorted in with the built-ins.
+    let env = Env::new("uda.size.type=string\nuda.aaa.type=numeric\n");
+    let mut all = builtin.to_vec();
+    all.extend(["size", "aaa"]);
+    all.sort();
+    let output = env.task(&["_zshattributes"]);
+    // Helper (`_`) commands run with verbosity `nothing`: no override headers.
+    assert_eq!((stdout(&output), stderr(&output)), (lines(&all), String::new()));
+    // Accepts no filter.
+    assert_eq!(quiet(&env, &["1", "_zshattributes"]).2, 2);
+}

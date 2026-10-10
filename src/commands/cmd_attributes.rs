@@ -1,14 +1,12 @@
 //! Rust translation of `src/commands/CmdAttributes.cpp`.
 //!
-//! Not yet ported: this module is filled in by milestone 8 (remaining commands).
-//!
-//! Each struct below is one C++ class from `CmdAttributes.cpp`, carrying the exact
-//! metadata of its C++ constructor; `execute` is a stub returning
-//! [`TwError::NotImplemented`] until the port lands (foundation DD4).
+//! `task _zshattributes`: every column name (built-in and UDA), sorted, as
+//! `name:name` lines for zsh completion.  This is the only class in the C++
+//! file; 3.5.0 has no `_attributes` command.
 
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
-use crate::error::{Result, TwError};
+use crate::error::Result;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdZshAttributes` (`_zshattributes`).
@@ -50,9 +48,18 @@ impl Command for CmdZshAttributes {
         &self.meta
     }
 
-    /// C++ `CmdZshAttributes::execute`: not yet implemented; ported by milestone 8 (remaining
-    /// commands).
-    fn execute(&self, _context: &mut Context, _output: &mut String) -> Result<i32> {
-        Err(TwError::NotImplemented(self.meta.keyword.clone()))
+    /// C++ `CmdZshAttributes::execute`.  Cannot fail.
+    fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
+        // Get a list of all columns, sort them.
+        let mut columns = context.get_columns();
+        columns.sort();
+
+        let mut out = String::new();
+        for col in &columns {
+            out += &format!("{col}:{col}\n");
+        }
+
+        *output = out;
+        Ok(0)
     }
 }

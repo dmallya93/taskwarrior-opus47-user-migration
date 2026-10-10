@@ -951,9 +951,26 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 18] = [
-        "_config", "_get", "_ids", "_show", "_unique", "_uuids", "_version", "_zshids", "_zshuuids", "add", "calc", "config",
-        "count", "export", "ids", "log", "uuids", "version",
+    const PORTED: [&str; 19] = [
+        "_config",
+        "_get",
+        "_ids",
+        "_show",
+        "_unique",
+        "_uuids",
+        "_version",
+        "_zshattributes",
+        "_zshids",
+        "_zshuuids",
+        "add",
+        "calc",
+        "config",
+        "count",
+        "export",
+        "ids",
+        "log",
+        "uuids",
+        "version",
     ];
 
     fn default_config() -> Configuration {
@@ -1189,8 +1206,11 @@ mod tests {
                     | "_uuids"
                     | "_zshuuids"
                     | "_unique"
+                    | "_zshattributes"
             ) {
-                // These read the replica; covered end to end in tests/cli.rs.
+                // These read the replica (or, for `_zshattributes`, the column
+                // registry Context::initialize builds); covered end to end in
+                // tests/cli.rs.
                 continue;
             }
             let rc = all[keyword].execute(&mut context, &mut output).unwrap();
