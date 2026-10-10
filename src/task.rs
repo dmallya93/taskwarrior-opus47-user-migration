@@ -6,7 +6,9 @@
 //! typed getters and setters, the virtual-tag predicates, tags, annotations,
 //! dependency attributes, `encode`/`decode`, and `parseTC` (the
 //! `Task (rust::Box<tc::TaskData>)` constructor) over the native
-//! [`taskchampion::TaskData`], urgency ([`Task::urgency`], every coefficient
+//! [`taskchampion::TaskData`], the JSON/legacy parsers ([`Task::parse`],
+//! [`Task::parse_json`], [`Task::parse_json_object`], [`Task::parse_legacy`],
+//! [`Task::determine_version`]) and [`Task::compose_json`], urgency ([`Task::urgency`], every coefficient
 //! term, the user tag/project/keyword/UDA coefficients and
 //! `urgency.inherit`, in C++ `float`/`double` evaluation order), and the
 //! later-milestone stubs [`Task::modify`] / [`Task::substitute`] (milestone
@@ -27,7 +29,13 @@
 //!   [`VariantTask`].
 //! * Overloads become distinct names: `set (name, long long)` ->
 //!   [`Task::set_int`]; `Task (rust::Box<tc::TaskData>)` ->
-//!   [`Task::from_task_data`].
+//!   [`Task::from_task_data`]; `Task (const std::string&)` ->
+//!   [`Task::from_input`]; `Task (const json::object*)` ->
+//!   [`Task::from_json_object`]; `parseJSON (const json::object*)` ->
+//!   [`Task::parse_json_object`]; `composeJSON (false)` also as the
+//!   Context-free [`Task::compose_json_plain`].
+//! * The parsers take the Context because `addDependency` (circular check,
+//!   footnotes) and the orphan debug message need it.
 //! * `isupper`, `strtol`, `strtoul`, `strtof` follow the C locale, through
 //!   libc for the numeric conversions.
 
@@ -37,9 +45,11 @@ use std::ffi::CString;
 
 use crate::context::Context;
 use crate::shared::datetime::Datetime;
-use crate::shared::format::format;
+use crate::shared::format::{format, stream_double};
+use crate::shared::json::{self, JType, JsonValue};
+use crate::lexer::Lexer;
 use crate::shared::localtime;
-use crate::shared::shared::{join, str_replace};
+use crate::shared::shared::{join, split, str_replace};
 use crate::variant::VariantTask;
 use crate::{Result, TwError};
 
@@ -2095,6 +2105,582 @@ impl Task {
     }
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+// Parsing (JSON, legacy) and JSON composition.
+
+/// C++ `std::string::operator[]` on bytes for the legacy format probes: an
+/// index at or past the end reads `'\0'` (the C++ only defines `[length ()]`;
+/// further out it is undefined, and `'\0'` is the benign reading).
+fn byte_at(bytes: &[u8], index: usize) -> u8 {
+    bytes.get(index).copied().unwrap_or(0)
+}
+
+/// C++ `std::string::npos`.
+const NPOS: usize = usize::MAX;
+
+/// C++ `std::string::find (needle, pos)` on bytes: [`NPOS`] when absent or
+/// when `pos` is past the end.
+fn cpp_find(haystack: &str, needle: &str, pos: usize) -> usize {
+    let hay = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if pos > hay.len() || needle.len() > hay.len() - pos {
+        return NPOS;
+    }
+
+    (pos..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle).unwrap_or(NPOS)
+}
+
+/// C++ `i.second->dump ()` followed by `Lexer::dequote (text)`.
+fn dequoted_dump(value: &JsonValue) -> String {
+    let mut text = value.dump();
+    Lexer::dequote(&mut text);
+    text
+}
+
+/// C++ `((json::string*) v)->_data`: the raw (still escaped) string of a
+/// string node. The C++ casts without checking; for a node of another type
+/// that is undefined behaviour, so the Rust port uses the dequoted dump
+/// instead (the closest well-defined reading).
+fn raw_string(value: &JsonValue) -> String {
+    match value.as_str() {
+        Some(text) => text.to_string(),
+        None => dequoted_dump(value),
+    }
+}
+
+/// C++ `Task::attributes[name]` as a lookup. The C++ `operator[]` inserts an
+/// empty entry for an unknown name; nothing ever iterates the static map, so
+/// that insertion is unobservable and is not reproduced.
+fn attribute_type(name: &str) -> String {
+    Task::with_attributes(|attributes| attributes.get(name).cloned().unwrap_or_default())
+}
+
+impl Task {
+    /// C++ `Task::Task (const std::string& input)`: a task parsed from a JSON
+    /// line with [`Task::parse`].
+    ///
+    /// The C++ constructor reaches the Context through `addDependency` and
+    /// the orphan debug message, so the Rust one takes it explicitly.
+    ///
+    /// # Errors
+    /// Those of [`Task::parse`].
+    pub fn from_input(ctx: &mut Context, input: &str) -> Result<Task> {
+        let mut task = Task::default();
+        task.parse(ctx, input)?;
+        Ok(task)
+    }
+
+    /// C++ `Task::Task (const json::object* obj)`: a task built from a parsed
+    /// JSON object with [`Task::parse_json_object`] (no `tags`/`depends`
+    /// fix-ups, unlike [`Task::from_input`]).
+    ///
+    /// # Errors
+    /// Those of [`Task::parse_json_object`].
+    pub fn from_json_object(ctx: &mut Context, obj: &JsonValue) -> Result<Task> {
+        let mut task = Task::default();
+        task.parse_json_object(ctx, obj)?;
+        Ok(task)
+    }
+
+    /// C++ `void Task::parse (const std::string& input)`: a JSON parse, then
+    /// the legacy `tags`/`depends` comma-separated attributes are mirrored
+    /// into `tag_..`/`dep_..` attributes and back.
+    ///
+    /// # Errors
+    /// Those of [`Task::parse_json`].
+    pub fn parse(&mut self, ctx: &mut Context, input: &str) -> Result<()> {
+        self.parse_json(ctx, input)?;
+
+        // for compatibility, include all tags in `tags` as `tag_..` attributes
+        if let Some(tags) = self.data.get("tags").cloned() {
+            for tag in split(&tags, ',') {
+                self.data.insert(Task::tag2attr(&tag), "x".to_string());
+            }
+        }
+        // ..and similarly, update `tags` to match the `tag_..` attributes
+        self.fix_tags_attribute();
+
+        // same for `depends` / `dep_..`
+        if let Some(depends) = self.data.get("depends").cloned() {
+            for dep in split(&depends, ',') {
+                self.data.insert(Task::dep2attr(&dep), "x".to_string());
+            }
+        }
+        self.fix_depends_attribute();
+
+        self.recalc_urgency = true;
+        Ok(())
+    }
+
+    /// C++ `void Task::parseJSON (const std::string& line)`: parses the whole
+    /// line; a root that is not an object (an array) is silently ignored.
+    ///
+    /// # Errors
+    /// The [`json::parse`] errors (verbatim C++ text), and those of
+    /// [`Task::parse_json_object`].
+    pub fn parse_json(&mut self, ctx: &mut Context, line: &str) -> Result<()> {
+        // Parse the whole thing.
+        let root = json::parse(line)?;
+        if root.jtype() == JType::Object {
+            self.parse_json_object(ctx, &root)?;
+        }
+        Ok(())
+    }
+
+    /// C++ `void Task::parseJSON (const json::object* root_obj)`. Note that
+    /// all fields undergo encode/decode.
+    ///
+    /// `Task::attributes` (name -> type) decides the handling of each element;
+    /// names without a type are UDA orphans (or `annotations`). A `root_obj`
+    /// that is not an object contributes nothing (the C++ cast would be
+    /// undefined behaviour).
+    ///
+    /// # Errors
+    /// * `Annotations is malformed: {1}` when `annotations` is not an array;
+    /// * `Annotation is missing a description: {1}` for an annotation without
+    ///   a `description` (an element that is not an object counts as such);
+    /// * `'{1}' is not a valid date in the '{2}' format.` for a date (or
+    ///   `modification`, or annotation `entry`) that does not parse;
+    /// * those of [`Task::add_dependency`] for `depends`.
+    pub fn parse_json_object(&mut self, ctx: &mut Context, root_obj: &JsonValue) -> Result<()> {
+        let Some(elements) = root_obj.as_object() else {
+            return Ok(());
+        };
+
+        // For each object element...
+        for (name, value) in elements {
+            // If the attribute is a recognized column.
+            let type_ = attribute_type(name);
+            if !type_.is_empty() {
+                // Any specified id is ignored.
+                // Urgency, if present, is ignored.
+                if name == "id" || name == "urgency" {
+                }
+                // TW-1274 Standardization.
+                else if name == "modification" {
+                    let text = dequoted_dump(value);
+                    let d = Datetime::from_string(&text, "")?;
+                    self.set("modified", &d.to_epoch_string());
+                }
+                // Dates are converted from ISO to epoch.
+                else if type_ == "date" {
+                    let text = dequoted_dump(value);
+                    let d = Datetime::from_string(&text, "")?;
+                    let epoch = if text.is_empty() { String::new() } else { d.to_epoch_string() };
+                    self.set(name, &epoch);
+                }
+                // Tags are an array of JSON strings.
+                else if name == "tags" && value.jtype() == JType::Array {
+                    for t in value.as_array().into_iter().flatten() {
+                        self.add_tag(&raw_string(t));
+                    }
+                }
+                // Dependencies can be exported as an array of strings.
+                // 2016-02-21: This will be the only option in future releases.
+                //             See other 2016-02-21 comments for details.
+                else if name == "depends" && value.jtype() == JType::Array {
+                    for t in value.as_array().into_iter().flatten() {
+                        self.add_dependency(ctx, &raw_string(t))?;
+                    }
+                }
+                // Dependencies can be exported as a single comma-separated string.
+                // 2016-02-21: Deprecated - see other 2016-02-21 comments for details.
+                else if name == "depends" && value.jtype() == JType::String {
+                    // Fix for issue#2689: taskserver sometimes encodes the depends
+                    // property as a string of the format `[\"uuid\",\"uuid\"]`
+                    // The string includes the backslash-escaped `"` characters, making
+                    // it invalid JSON.  Since we know the characters we're looking for,
+                    // we'll just filter out everything else.
+                    //
+                    // (`front ()`/`back ()` of an empty string are undefined in C++;
+                    // an empty string is simply not bracketed here.)
+                    let mut deps_str = raw_string(value);
+                    if deps_str.starts_with('[') && deps_str.ends_with(']') {
+                        deps_str = deps_str
+                            .chars()
+                            .filter(|&c| c.is_ascii_digit() || ('a'..='f').contains(&c) || c == ',' || c == '-')
+                            .collect();
+                    }
+                    let uuids = split(&deps_str, ',');
+
+                    for uuid in &uuids {
+                        self.add_dependency(ctx, uuid)?;
+                    }
+                }
+                // Strings are decoded.
+                else if type_ == "string" {
+                    let text = dequoted_dump(value);
+                    self.set(name, &json::decode(&text));
+                }
+                // Other types are simply added.
+                else {
+                    let text = dequoted_dump(value);
+                    self.set(name, &text);
+                }
+            }
+            // UDA orphans and annotations do not have columns.
+            else {
+                // Annotations are an array of JSON objects with 'entry' and
+                // 'description' values and must be converted.
+                if name == "annotations" {
+                    let mut annos: BTreeMap<String, String> = BTreeMap::new();
+
+                    // Fail if 'annotations' is not an array
+                    let Some(atts) = value.as_array() else {
+                        return Err(TwError::Message(format("Annotations is malformed: {1}", &[&value.dump()])));
+                    };
+
+                    for annotation in atts {
+                        // Extract description. Fail if not present.
+                        let Some(what) = annotation.get("description") else {
+                            return Err(TwError::Message(format(
+                                "Annotation is missing a description: {1}",
+                                &[&annotation.dump()],
+                            )));
+                        };
+
+                        // Extract 64-bit annotation entry value
+                        // Time travelers from 2038, we have your back.
+                        //
+                        // Extract entry. Use current time if not present.
+                        let mut ann_timestamp: i64 = match annotation.get("entry") {
+                            Some(when) => Datetime::from_string(&raw_string(when), "")?.to_epoch(),
+                            None => Datetime::new().to_epoch(),
+                        };
+
+                        let mut key = format!("annotation_{ann_timestamp}");
+
+                        // Increment the entry timestamp in case of a conflict. Same
+                        // behaviour as CmdAnnotate.
+                        while annos.contains_key(&key) {
+                            ann_timestamp += 1;
+                            key = format!("annotation_{ann_timestamp}");
+                        }
+
+                        annos.entry(key).or_insert_with(|| json::decode(&raw_string(what)));
+                    }
+
+                    self.set_annotations(&annos);
+                }
+                // UDA Orphan - must be preserved.
+                else {
+                    // The C++ streams the `json::value*` itself, i.e. its
+                    // address; `{:p}` prints the address of the node likewise.
+                    ctx.debug(&format!(
+                        "Task::parseJSON found orphan '{name}' with value '{:p}' --> preserved\n",
+                        value
+                    ));
+                    let text = dequoted_dump(value);
+                    self.set(name, &json::decode(&text));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// C++ `void Task::parseLegacy (const std::string& line)`: no legacy
+    /// formats are currently supported as of 2.4.0. Format 4 is accepted (and
+    /// only marks urgency for recalculation); formats 1-3 and unrecognized
+    /// lines are errors. The unrecognized case logs a debug message to `ctx`
+    /// when one is given.
+    ///
+    /// # Errors
+    /// The C++ text for formats 1, 2 and 3, or `Unrecognized Taskwarrior file
+    /// format or blank line in data.`.
+    pub fn parse_legacy(&mut self, ctx: Option<&mut Context>, line: &str) -> Result<()> {
+        match Task::determine_version(line) {
+            // File format version 1, from 2006-11-27 - 2007-12-31, v0.x+ - v0.9.3
+            1 => {
+                return Err(TwError::Message(
+                    "Taskwarrior no longer supports file format 1, originally used between 27 November 2006 \
+                     and 31 December 2007."
+                        .to_string(),
+                ))
+            }
+
+            // File format version 2, from 2008-1-1 - 2009-3-23, v0.9.3 - v1.5.0
+            2 => {
+                return Err(TwError::Message(
+                    "Taskwarrior no longer supports file format 2, originally used between 1 January 2008 \
+                     and 12 April 2009."
+                        .to_string(),
+                ))
+            }
+
+            // File format version 3, from 2009-3-23 - 2009-05-16, v1.6.0 - v1.7.1
+            3 => {
+                return Err(TwError::Message(
+                    "Taskwarrior no longer supports file format 3, originally used between 23 March 2009 and \
+                     16 May 2009."
+                        .to_string(),
+                ))
+            }
+
+            // File format version 4, from 2009-05-16 - today, v1.7.1+
+            4 => {}
+
+            _ => {
+                if let Some(ctx) = ctx {
+                    ctx.debug(&format!("Invalid fileformat at line '{line}'"));
+                }
+                return Err(TwError::Message(
+                    "Unrecognized Taskwarrior file format or blank line in data.".to_string(),
+                ));
+            }
+        }
+
+        self.recalc_urgency = true;
+        Ok(())
+    }
+
+    /// C++ `static int Task::determineVersion (const std::string& line)`:
+    /// 1-4 for the historical file formats, 0 for "no idea". Positions past
+    /// the end of `line` read as `'\0'`.
+    pub fn determine_version(line: &str) -> i32 {
+        let b = line.as_bytes();
+        let last = byte_at(b, b.len().wrapping_sub(1));
+
+        // Version 2 looks like:
+        //
+        //   uuid status [tags] [attributes] description\n
+        //
+        // Where uuid looks like:
+        //
+        //   27755d92-c5e9-4c21-bd8e-c3dd9e6d3cf7
+        //
+        // Scan for the hyphens in the uuid, the following space, and a valid status
+        // character.
+        if byte_at(b, 8) == b'-'
+            && byte_at(b, 13) == b'-'
+            && byte_at(b, 18) == b'-'
+            && byte_at(b, 23) == b'-'
+            && byte_at(b, 36) == b' '
+            && matches!(byte_at(b, 37), b'-' | b'+' | b'X' | b'r')
+        {
+            // Version 3 looks like:
+            //
+            //   uuid status [tags] [attributes] [annotations] description\n
+            //
+            // Scan for the number of [] pairs. (As in C++, `npos + 1` wraps
+            // to 0.)
+            let tag_atts = cpp_find(line, "] [", 0);
+            let atts_anno = cpp_find(line, "] [", tag_atts.wrapping_add(1));
+            let anno_desc = cpp_find(line, "] ", atts_anno.wrapping_add(1));
+            if tag_atts != NPOS && atts_anno != NPOS && anno_desc != NPOS {
+                3
+            } else {
+                2
+            }
+        }
+        // Version 4 looks like:
+        //
+        //   [name:"value" ...]
+        //
+        // Scan for [, ] and :".
+        else if byte_at(b, 0) == b'[' && last == b']' && line.contains("uuid:\"") {
+            4
+        }
+        // Version 1 looks like:
+        //
+        //   [tags] [attributes] description\n
+        //   X [tags] [attributes] description\n
+        //
+        // Scan for the first character being either the bracket or X.
+        else if line.starts_with("X [") || (byte_at(b, 0) == b'[' && last != b']' && b.len() > 3) {
+            1
+        }
+        // Version 5?
+        //
+        // Fortunately, with the hindsight that will come with version 5, the
+        // identifying characteristics of 1, 2, 3 and 4 may be modified such that if 5
+        // has a UUID followed by a status, then there is still a way to differentiate
+        // between 2, 3, 4 and 5.
+        //
+        // The danger is that a version 3 binary reads and misinterprets a version 4
+        // file.  This is why it is a good idea to rely on an explicit version
+        // declaration rather than chance positioning.
+
+        // Zero means 'no idea'.
+        else {
+            0
+        }
+    }
+
+    /// C++ `std::string Task::composeJSON (bool decorate = false)`. With
+    /// `decorate` the output starts with `"id":<id>` and ends with
+    /// `"urgency":<urgency ()>` (C++ `out << float`: `%g` at precision 6).
+    ///
+    /// # Errors
+    /// Those of [`Task::urgency`] (when decorating) and of
+    /// [`Task::compose_json_plain`].
+    pub fn compose_json(&mut self, ctx: &mut Context, decorate: bool) -> Result<String> {
+        let urgency = if decorate { Some(self.urgency(ctx)?) } else { None };
+        self.compose_json_impl(decorate, urgency)
+    }
+
+    /// C++ `composeJSON ()` / `composeJSON (false)`: the undecorated form,
+    /// which needs no Context.
+    ///
+    /// # Errors
+    /// `'{1}' is not a valid date in the '' format.` when a date attribute (or
+    /// an annotation timestamp) does not parse, as the C++ `Datetime`
+    /// constructor throws.
+    pub fn compose_json_plain(&self) -> Result<String> {
+        self.compose_json_impl(false, None)
+    }
+
+    fn compose_json_impl(&self, decorate: bool, urgency: Option<f32>) -> Result<String> {
+        let mut out = String::new();
+        out.push('{');
+
+        // ID inclusion is optional, but not a good idea, because it remains correct
+        // only until the next gc.
+        if decorate {
+            out.push_str(&format!("\"id\":{},", self.id));
+        }
+
+        // First the non-annotations.
+        let mut attributes_written = 0;
+        for (name, value) in &self.data {
+            // Annotations are not written out here.
+            if name.starts_with("annotation_") {
+                continue;
+            }
+
+            // Tags and dependencies are handled below
+            if name == "tags" || Task::is_tag_attr(name) {
+                continue;
+            }
+            if name == "depends" || Task::is_dep_attr(name) {
+                continue;
+            }
+
+            // If value is an empty string, do not ever output it
+            if value.is_empty() {
+                continue;
+            }
+
+            let mut type_ = attribute_type(name);
+            if type_.is_empty() {
+                type_ = "string".to_string();
+            }
+
+            // Date fields are written as ISO 8601.
+            if type_ == "date" {
+                let epoch = self.get_date(name);
+                if epoch != 0 {
+                    let d = Datetime::from_string(value, "")?;
+                    if attributes_written != 0 {
+                        out.push(',');
+                    }
+
+                    out.push('"');
+                    out.push_str(if name == "modification" { "modified" } else { name });
+                    out.push_str("\":\"");
+                    // Date was deleted, do not export parsed empty string
+                    out.push_str(&d.to_iso());
+                    out.push('"');
+
+                    attributes_written += 1;
+                }
+            } else if type_ == "numeric" {
+                if attributes_written != 0 {
+                    out.push(',');
+                }
+
+                out.push('"');
+                out.push_str(name);
+                out.push_str("\":");
+                out.push_str(value);
+
+                attributes_written += 1;
+            }
+            // Everything else is a quoted value.
+            else {
+                if attributes_written != 0 {
+                    out.push(',');
+                }
+
+                out.push('"');
+                out.push_str(name);
+                out.push_str("\":\"");
+                if type_ == "string" {
+                    out.push_str(&json::encode(value));
+                } else {
+                    out.push_str(value);
+                }
+                out.push('"');
+
+                attributes_written += 1;
+            }
+        }
+
+        // Now the annotations, if any.
+        if self.annotation_count != 0 {
+            out.push_str(",\"annotations\":[");
+
+            let mut annotations_written = 0;
+            for (name, value) in &self.data {
+                if let Some(stamp) = name.strip_prefix("annotation_") {
+                    if annotations_written != 0 {
+                        out.push(',');
+                    }
+
+                    let d = Datetime::from_string(stamp, "")?;
+                    out.push_str("{\"entry\":\"");
+                    out.push_str(&d.to_iso());
+                    out.push_str("\",\"description\":\"");
+                    out.push_str(&json::encode(value));
+                    out.push_str("\"}");
+
+                    annotations_written += 1;
+                }
+            }
+
+            out.push(']');
+        }
+
+        let tags = self.get_tags();
+        if !tags.is_empty() {
+            out.push_str(",\"tags\":[");
+            for (count, tag) in tags.iter().enumerate() {
+                if count != 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                out.push_str(tag);
+                out.push('"');
+            }
+            out.push(']');
+        }
+
+        let depends = self.get_dependency_uuids();
+        if !depends.is_empty() {
+            out.push_str(",\"depends\":[");
+            for (count, dep) in depends.iter().enumerate() {
+                if count != 0 {
+                    out.push(',');
+                }
+                out.push('"');
+                out.push_str(dep);
+                out.push('"');
+            }
+            out.push(']');
+        }
+
+        // Include urgency.
+        if let Some(urgency) = urgency {
+            out.push_str(",\"urgency\":");
+            out.push_str(&stream_double(f64::from(urgency)));
+        }
+
+        out.push('}');
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4051,5 +4637,408 @@ mod urgency_tests {
             Err(TwError::NotImplemented(ref s)) if s == "Task::substitute"
         ));
         assert!(matches!(t.diff(&Task::new()), Err(TwError::NotImplemented(ref s)) if s == "Task::diff"));
+    }
+}
+
+#[cfg(test)]
+mod json_tests {
+    use super::*;
+    use crate::test_util::env_lock;
+    use tempfile::TempDir;
+
+    const UUID_A: &str = "92a40a34-37f3-4785-8ca1-ff89cfbfd105";
+    const UUID_B: &str = "e08e35fa-e42b-4de0-acc4-518fca8f6365";
+
+    /// Restores the `Task::attributes` and urgency thread-local statics when
+    /// dropped.
+    struct StaticsGuard;
+
+    impl Drop for StaticsGuard {
+        fn drop(&mut self) {
+            Task::set_attributes(BTreeMap::new());
+            Task::set_urgency_tags_coefficient(0.0);
+        }
+    }
+
+    /// A Context whose replica lives in a temporary data directory. Fields
+    /// drop in declaration order: the TempDir is removed and the statics are
+    /// restored before the lock is released.
+    struct Fixture {
+        ctx: Context,
+        _dir: TempDir,
+        _statics: StaticsGuard,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn fixture(attributes: &[(&str, &str)]) -> Fixture {
+        // Context::new reads $HOME; serialize with env-mutating tests.
+        let lock = env_lock();
+        let dir = TempDir::new().unwrap();
+        let mut ctx = Context::new();
+        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        Task::set_attributes(attributes.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+        Fixture { ctx, _dir: dir, _statics: StaticsGuard, _lock: lock }
+    }
+
+    /// The `t_test.cpp` / `tw_2689_test.cpp` attribute types.
+    const COLUMNS: &[(&str, &str)] = &[
+        ("description", "string"),
+        ("entry", "date"),
+        ("tags", "string"),
+        ("uuid", "string"),
+        ("depends", "string"),
+    ];
+
+    fn err<T: std::fmt::Debug>(r: Result<T>) -> String {
+        r.unwrap_err().to_string()
+    }
+
+    #[test]
+    fn t_test_compose_set_remove() {
+        let _statics = StaticsGuard;
+        Task::set_attributes(BTreeMap::new());
+        let mut task = Task::new();
+        task.set("name", "value");
+        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value"}"#);
+        task.set_int("one", 1);
+        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value","one":"1"}"#);
+        task.set("two", "4294967295");
+        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value","one":"1","two":"4294967295"}"#);
+        task.remove("one");
+        task.remove("two");
+        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value"}"#);
+    }
+
+    #[test]
+    fn t_test_parse_and_tags() {
+        let mut f = fixture(COLUMNS);
+        assert!(Task::from_input(&mut f.ctx, "{}").is_ok());
+        let t5 = Task::from_input(
+            &mut f.ctx,
+            r#"{"uuid":"00000000-0000-0000-000000000001","description":"foo","entry":"1234567890"}"#,
+        )
+        .unwrap();
+        assert_eq!(t5.get("entry"), "1234567890");
+        assert_eq!(t5.get("description"), "foo");
+
+        let mut t6 = Task::new();
+        t6.set("entry", "20130602T224000Z");
+        t6.set("description", "DESC");
+        t6.add_tag("tag1");
+        assert_eq!(
+            t6.compose_json(&mut f.ctx, false).unwrap(),
+            r#"{"description":"DESC","entry":"20130602T224000Z","tags":["tag1"]}"#
+        );
+        t6.add_tag("tag2");
+        assert_eq!(
+            t6.compose_json_plain().unwrap(),
+            r#"{"description":"DESC","entry":"20130602T224000Z","tags":["tag1","tag2"]}"#
+        );
+
+        let line = r#"{"description":"DESC","entry":"20130602T224000Z","tags":["tag1","tag2"]}"#;
+        let t7 = Task::from_input(&mut f.ctx, line).unwrap();
+        assert_eq!(t7.get("entry"), "1370212800");
+        assert_eq!(t7.get("tags"), "tag1,tag2");
+        assert_eq!(t7.compose_json_plain().unwrap(), line);
+    }
+
+    #[test]
+    fn tw_2689_depends_forms() {
+        let mut f = fixture(COLUMNS);
+        let samples = [
+            format!(
+                r#"{{"depends":"[\"{UUID_A}\",\"{UUID_B}\"]","uuid":"00000000-0000-0000-0000-000000000000"}}"#
+            ),
+            format!(r#"{{"depends":"{UUID_A},{UUID_B}","uuid":"00000000-0000-0000-0000-000000000000"}}"#),
+            format!(r#"{{"depends":["{UUID_A}","{UUID_B}"],"uuid":"00000000-0000-0000-0000-000000000000"}}"#),
+        ];
+        for sample in &samples {
+            let t = Task::from_input(&mut f.ctx, sample).unwrap();
+            assert_eq!(t.get("uuid"), "00000000-0000-0000-0000-000000000000", "{sample}");
+            assert_eq!(t.get("depends"), format!("{UUID_A},{UUID_B}"), "{sample}");
+            assert!(t.has(&format!("dep_{UUID_A}")));
+            assert!(t.has(&format!("dep_{UUID_B}")));
+            assert_eq!(
+                t.compose_json_plain().unwrap(),
+                format!(r#"{{"uuid":"00000000-0000-0000-0000-000000000000","depends":["{UUID_A}","{UUID_B}"]}}"#)
+            );
+        }
+    }
+
+    #[test]
+    fn untyped_legacy_strings_are_split_by_parse() {
+        // With no column types, `tags`/`depends` are orphans stored verbatim;
+        // `parse` then mirrors them into `tag_..`/`dep_..`.
+        let mut f = fixture(&[]);
+        let line = format!(r#"{{"depends":"{UUID_B},{UUID_A}","tags":"b,a"}}"#);
+        let t = Task::from_input(&mut f.ctx, &line).unwrap();
+        assert_eq!(t.get("tags"), "a,b");
+        assert!(t.has("tag_a") && t.has("tag_b"));
+        assert_eq!(t.get("depends"), format!("{UUID_A},{UUID_B}"));
+
+        // The object constructor does not apply the parse fix-ups.
+        let root = json::parse(&line).unwrap();
+        let t = Task::from_json_object(&mut f.ctx, &root).unwrap();
+        assert_eq!(t.get("tags"), "b,a");
+        assert!(!t.has("tag_a"));
+        assert_eq!(t.get("depends"), format!("{UUID_B},{UUID_A}"));
+        assert!(t.get_dependency_uuids().is_empty());
+    }
+
+    #[test]
+    fn id_urgency_skipped_only_when_typed() {
+        let mut f = fixture(&[("id", "numeric"), ("urgency", "numeric"), ("description", "string")]);
+        let t = Task::from_input(&mut f.ctx, r#"{"id":4,"urgency":3.5,"description":"x"}"#).unwrap();
+        assert!(!t.has("id"));
+        assert!(!t.has("urgency"));
+        assert_eq!(t.get("description"), "x");
+
+        Task::set_attributes(BTreeMap::new());
+        f.ctx.debug_messages.clear();
+        let t = Task::from_input(&mut f.ctx, r#"{"id":4,"urgency":3.5}"#).unwrap();
+        assert_eq!(t.get("id"), "4.000000");
+        assert_eq!(t.get("urgency"), "3.500000");
+        assert_eq!(f.ctx.debug_messages.len(), 2);
+        for (message, name) in f.ctx.debug_messages.iter().zip(["id", "urgency"]) {
+            assert!(message.starts_with(&format!("Task::parseJSON found orphan '{name}' with value '0x")), "{message}");
+            assert!(message.ends_with("' --> preserved\n"), "{message}");
+        }
+    }
+
+    #[test]
+    fn strings_decoded_and_encoded() {
+        let mut f = fixture(&[("description", "string"), ("recur", "duration")]);
+        let line = r#"{"description":"say \"hi\"\\now","orphan":"a\tb","recur":"1d"}"#;
+        let t = Task::from_input(&mut f.ctx, line).unwrap();
+        assert_eq!(t.get("description"), "say \"hi\"\\now");
+        assert_eq!(t.get("orphan"), "a\tb");
+        assert_eq!(t.get("recur"), "1d");
+        // Round trip: string (and untyped) values are re-encoded.
+        assert_eq!(t.compose_json_plain().unwrap(), line);
+
+        // Non-string, non-date, non-numeric types are written unencoded.
+        let mut t = Task::new();
+        t.set("recur", "a\"b");
+        assert_eq!(t.compose_json_plain().unwrap(), r#"{"recur":"a"b"}"#);
+    }
+
+    #[test]
+    fn numeric_values() {
+        let mut f = fixture(&[("imask", "numeric")]);
+        let t = Task::from_input(&mut f.ctx, r#"{"imask":1}"#).unwrap();
+        assert_eq!(t.get("imask"), "1.000000");
+        assert_eq!(t.compose_json_plain().unwrap(), r#"{"imask":1.000000}"#);
+        let t = Task::from_input(&mut f.ctx, r#"{"imask":"2"}"#).unwrap();
+        assert_eq!(t.compose_json_plain().unwrap(), r#"{"imask":2}"#);
+    }
+
+    #[test]
+    fn dates_iso_epoch_and_modification() {
+        let mut f = fixture(&[("entry", "date"), ("due", "date"), ("modification", "date"), ("modified", "date")]);
+        let t = Task::from_input(&mut f.ctx, r#"{"due":"1370212800","entry":"20130602T224000Z"}"#).unwrap();
+        assert_eq!(t.get("entry"), "1370212800");
+        assert_eq!(t.get("due"), "1370212800");
+        assert_eq!(t.compose_json_plain().unwrap(), r#"{"due":"20130602T224000Z","entry":"20130602T224000Z"}"#);
+
+        // TW-1274: `modification` is stored as `modified`.
+        let t = Task::from_input(&mut f.ctx, r#"{"modification":"20130602T224000Z"}"#).unwrap();
+        assert!(!t.has("modification"));
+        assert_eq!(t.get("modified"), "1370212800");
+
+        // ..and a stored `modification` is written as `modified`.
+        let mut t = Task::new();
+        t.set("modification", "1370212800");
+        assert_eq!(t.compose_json_plain().unwrap(), r#"{"modified":"20130602T224000Z"}"#);
+
+        // A zero date is not written.
+        let mut t = Task::new();
+        t.set("due", "0");
+        assert_eq!(t.compose_json_plain().unwrap(), "{}");
+
+        // Invalid dates throw the Datetime constructor error.
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, r#"{"due":"garbage"}"#)),
+            "'garbage' is not a valid date in the '' format."
+        );
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, r#"{"modification":"nope"}"#)),
+            "'nope' is not a valid date in the '' format."
+        );
+        let mut t = Task::new();
+        t.set("due", "12abc");
+        assert_eq!(err(t.compose_json_plain()), "'12abc' is not a valid date in the '' format.");
+    }
+
+    #[test]
+    fn annotations() {
+        let mut f = fixture(&[("description", "string")]);
+        let line = r#"{"annotations":[{"entry":"20130602T224000Z","description":"one \"q\""},{"entry":"1370212800","description":"two"},{"description":"three"}],"description":"d"}"#;
+        let t = Task::from_input(&mut f.ctx, line).unwrap();
+        assert_eq!(t.annotation_count, 3);
+        assert_eq!(t.get("annotation_1370212800"), "one \"q\"");
+        // Conflicting entries are incremented.
+        assert_eq!(t.get("annotation_1370212801"), "two");
+        // A missing entry uses the current time.
+        let anns = t.get_annotations();
+        assert_eq!(anns.len(), 3);
+        let now_key = anns.iter().find(|(_, v)| *v == "three").unwrap().0.clone();
+        let stamp: i64 = now_key["annotation_".len()..].parse().unwrap();
+        assert!((stamp - localtime::time_now()).abs() < 5);
+
+        let mut t2 = Task::new();
+        t2.set("description", "d");
+        t2.set_annotations(&BTreeMap::from([
+            ("annotation_1370212800".to_string(), "one \"q\"".to_string()),
+            ("annotation_1370212801".to_string(), "two".to_string()),
+        ]));
+        t2.add_tag("t");
+        assert_eq!(
+            t2.compose_json_plain().unwrap(),
+            r#"{"description":"d","annotations":[{"entry":"20130602T224000Z","description":"one \"q\""},{"entry":"20130602T224001Z","description":"two"}],"tags":["t"]}"#
+        );
+
+        // As in C++, the separator is written even with no attributes before.
+        let mut t3 = Task::new();
+        t3.set("annotation_1370212800", "x");
+        assert_eq!(
+            t3.compose_json_plain().unwrap(),
+            r#"{,"annotations":[{"entry":"20130602T224000Z","description":"x"}]}"#
+        );
+    }
+
+    #[test]
+    fn annotation_errors() {
+        let mut f = fixture(&[]);
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, r#"{"annotations":"foo"}"#)),
+            r#"Annotations is malformed: "foo""#
+        );
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, r#"{"annotations":{"a":1}}"#)),
+            r#"Annotations is malformed: {"a":1.000000}"#
+        );
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, r#"{"annotations":[{"entry":"20130602T224000Z"}]}"#)),
+            r#"Annotation is missing a description: {"entry":"20130602T224000Z"}"#
+        );
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, r#"{"annotations":[{"entry":"bad","description":"x"}]}"#)),
+            "'bad' is not a valid date in the '' format."
+        );
+    }
+
+    #[test]
+    fn json_errors_propagate() {
+        let mut f = fixture(&[]);
+        for bad in ["{", "x", "{} x", r#"{"a":}"#] {
+            let expected = json::parse(bad).unwrap_err().to_string();
+            assert_eq!(err(Task::from_input(&mut f.ctx, bad)), expected, "{bad}");
+        }
+        assert_eq!(err(Task::from_input(&mut f.ctx, "x")), "Error: expected '{' or '[' at position 0");
+        // A non-object root is ignored.
+        let t = Task::from_input(&mut f.ctx, r#"[{"description":"x"}]"#).unwrap();
+        assert!(t.is_empty());
+    }
+
+    #[test]
+    fn depends_errors_propagate() {
+        let mut f = fixture(&[("depends", "string")]);
+        let mut t = Task::new();
+        t.set("uuid", UUID_A);
+        assert_eq!(
+            err(t.parse_json(&mut f.ctx, &format!(r#"{{"depends":["{UUID_A}"]}}"#))),
+            "A task cannot be dependent on itself."
+        );
+        let mut t = Task::new();
+        t.set("uuid", UUID_A);
+        assert_eq!(
+            err(t.parse(&mut f.ctx, &format!(r#"{{"depends":"{UUID_B},{UUID_A}"}}"#))),
+            "A task cannot be dependent on itself."
+        );
+    }
+
+    #[test]
+    fn decorate_with_id_and_urgency() {
+        let mut f = fixture(&[("description", "string")]);
+        let mut t = Task::new();
+        t.id = 5;
+        t.set("description", "x");
+        assert_eq!(t.compose_json(&mut f.ctx, true).unwrap(), r#"{"id":5,"description":"x","urgency":0}"#);
+
+        // urgency_tags for one tag is 0.8 (a float): `out << float` prints 0.8.
+        Task::set_urgency_tags_coefficient(1.0);
+        t.add_tag("a");
+        assert_eq!(
+            t.compose_json(&mut f.ctx, true).unwrap(),
+            r#"{"id":5,"description":"x","tags":["a"],"urgency":0.8}"#
+        );
+        // Undecorated output omits both.
+        assert_eq!(t.compose_json(&mut f.ctx, false).unwrap(), r#"{"description":"x","tags":["a"]}"#);
+
+        // Round trip through parse.
+        Task::set_attributes(
+            [("description", "string"), ("id", "numeric"), ("urgency", "numeric"), ("tags", "string")]
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+        let decorated = t.compose_json(&mut f.ctx, true).unwrap();
+        let mut back = Task::from_input(&mut f.ctx, &decorated).unwrap();
+        assert_eq!(back.id, 0);
+        assert_eq!(back.compose_json_plain().unwrap(), r#"{"description":"x","tags":["a"]}"#);
+        assert_eq!(back.urgency(&mut f.ctx).unwrap(), 0.8f32);
+    }
+
+    #[test]
+    fn determine_version_cases() {
+        let uuid = "27755d92-c5e9-4c21-bd8e-c3dd9e6d3cf7";
+        assert_eq!(Task::determine_version(&format!("{uuid} - [t] [a] desc")), 2);
+        assert_eq!(Task::determine_version(&format!("{uuid} + [t] [a] [n] desc")), 3);
+        assert_eq!(Task::determine_version(&format!("{uuid} X [] [] [] desc")), 3);
+        assert_eq!(Task::determine_version(&format!("{uuid} r desc")), 2);
+        // Status character not recognised.
+        assert_eq!(Task::determine_version(&format!("{uuid} p [t] [a] desc")), 0);
+        assert_eq!(Task::determine_version(r#"[description:"x" uuid:"u"]"#), 4);
+        assert_eq!(Task::determine_version(r#"[description:"x"]"#), 0);
+        assert_eq!(Task::determine_version("X [a] [b] desc"), 1);
+        assert_eq!(Task::determine_version("[a] [b] desc"), 1);
+        assert_eq!(Task::determine_version("[ab"), 0);
+        assert_eq!(Task::determine_version("[abc"), 1);
+        assert_eq!(Task::determine_version("[]"), 0);
+        assert_eq!(Task::determine_version(""), 0);
+        assert_eq!(Task::determine_version("{}"), 0);
+        assert_eq!(Task::determine_version(r#"{"uuid":"x"}"#), 0);
+    }
+
+    #[test]
+    fn parse_legacy_cases() {
+        let mut f = fixture(&[]);
+        let uuid = "27755d92-c5e9-4c21-bd8e-c3dd9e6d3cf7";
+        let mut t = Task::new();
+        assert_eq!(
+            err(t.parse_legacy(None, "X [a] [b] desc")),
+            "Taskwarrior no longer supports file format 1, originally used between 27 November 2006 and 31 December 2007."
+        );
+        assert_eq!(
+            err(t.parse_legacy(None, &format!("{uuid} - [t] [a] desc"))),
+            "Taskwarrior no longer supports file format 2, originally used between 1 January 2008 and 12 April 2009."
+        );
+        assert_eq!(
+            err(t.parse_legacy(Some(&mut f.ctx), &format!("{uuid} - [t] [a] [n] desc"))),
+            "Taskwarrior no longer supports file format 3, originally used between 23 March 2009 and 16 May 2009."
+        );
+        assert!(f.ctx.debug_messages.is_empty());
+
+        t.recalc_urgency = false;
+        t.parse_legacy(Some(&mut f.ctx), r#"[description:"x" uuid:"u"]"#).unwrap();
+        assert!(t.recalc_urgency);
+        assert!(t.is_empty());
+
+        assert_eq!(
+            err(t.parse_legacy(Some(&mut f.ctx), "garbage")),
+            "Unrecognized Taskwarrior file format or blank line in data."
+        );
+        assert_eq!(f.ctx.debug_messages, vec!["Invalid fileformat at line 'garbage'".to_string()]);
+        assert_eq!(err(t.parse_legacy(None, "")), "Unrecognized Taskwarrior file format or blank line in data.");
     }
 }
