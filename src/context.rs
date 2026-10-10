@@ -2227,11 +2227,13 @@ mod tests {
         assert_eq!(stdout, "");
         assert_eq!(stderr, "Command 'prepend' is not yet implemented.\n");
 
-        // A default custom report dispatches the same way.
+        // A default custom report (CmdCustom, ported) dispatches to the
+        // report: no tasks, so the `No matches.` footnote and status 1.
         let mut context = Context::new();
-        assert_eq!(init(&mut context, &["task", "next"]).0, 0);
-        let (rc, _, stderr) = run(&mut context);
-        assert_eq!((rc, stderr.as_str()), (2, "Command 'next' is not yet implemented.\n"));
+        assert_eq!(init(&mut context, &["task", "rc.verbose=footnote", "next"]).0, 0);
+        let (rc, stdout, stderr) = run(&mut context);
+        assert_eq!((rc, stdout.as_str()), (1, ""));
+        assert!(stderr.ends_with("No matches.\n"), "{stderr}");
     }
 
     #[test]

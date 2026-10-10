@@ -740,11 +740,11 @@ fn unknown_word_is_a_filter_for_the_default_command() {
     );
     assert_eq!(output.status.code(), Some(2));
 
-    // With the stock default command ('next', not yet ported).
+    // With the stock default command ('next'): the word is a filter term.
     let env = Env::new("");
     let output = env.task(&["nosuchcommand"]);
-    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stderr(&output), env.override_headers() + "No matches.\nRecently upgraded to 3.5.0. Please run 'task news' to read highlights about the new release.\n");
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -784,7 +784,8 @@ fn id_without_command_assumes_information() {
     // C++ defaultCommand only looks for number/uuid lexemes: a range or list
     // (a Lexer 'set') falls through to the default command.
     let output = env.task(&["1-2,4"]);
-    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
+    assert_eq!(stderr(&output), env.override_headers() + "No matches.\nRecently upgraded to 3.5.0. Please run 'task news' to read highlights about the new release.\n");
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -797,10 +798,13 @@ fn command_abbreviation() {
 
     // Below abbreviation.minimum (2) it is not a command: a filter word for
     // the default command.
+    // (`next` with a non-matching filter word: no output, status 1).
     let output = env.task(&["rc.verbose=nothing", "v"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+    assert_eq!(output.status.code(), Some(1));
     let output = env.task(&["rc.verbose=nothing", "rc.abbreviation.minimum=5", "vers"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -887,6 +891,7 @@ fn forced_color_message_colors() {
         "rc.color.header=blue",
         "rc.color.footnote=green",
         "rc.color.error=red",
+        "rc.report.next.labels=X",
         "nosuchcommand",
     ]);
     assert_eq!(
@@ -897,7 +902,8 @@ fn forced_color_message_colors() {
              {ESC}[32mConfiguration override rc.color.header=blue{ESC}[0m\n\
              {ESC}[32mConfiguration override rc.color.footnote=green{ESC}[0m\n\
              {ESC}[32mConfiguration override rc.color.error=red{ESC}[0m\n\
-             {ESC}[31mCommand 'next' is not yet implemented.{ESC}[0m\n",
+             {ESC}[32mConfiguration override rc.report.next.labels=X{ESC}[0m\n\
+             {ESC}[31mThere are different numbers of columns and labels for report 'next'.{ESC}[0m\n",
             env.rc().display(),
             env.data().display()
         )
@@ -915,10 +921,11 @@ fn forced_color_message_colors() {
 
     // An empty rule leaves the text alone; without a TTY or _forcecolor there
     // is no colour at all.
-    let output = env.task(&["rc._forcecolor=on", "rc.color.error=", "rc.verbose=nothing", "nosuchcommand"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
-    let output = env.task(&["rc.color=on", "rc.color.error=red", "rc.verbose=nothing", "nosuchcommand"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    let mismatch = "There are different numbers of columns and labels for report 'next'.\n";
+    let output = env.task(&["rc._forcecolor=on", "rc.color.error=", "rc.verbose=nothing", "rc.report.next.labels=X"]);
+    assert_eq!(stderr(&output), mismatch);
+    let output = env.task(&["rc.color=on", "rc.color.error=red", "rc.verbose=nothing", "rc.report.next.labels=X"]);
+    assert_eq!(stderr(&output), mismatch);
 }
 
 #[test]
@@ -1602,4 +1609,126 @@ fn reports_table_and_count() {
     assert!(out.starts_with("\x1b[1mReport          \x1b[0m"), "{out:?}");
     assert!(out.contains("\x1b[48;5;234mactive          \x1b[0m"), "{out:?}");
     assert!(out.ends_with("\n30 reports\n") && !out.contains("\n\n30"), "{out:?}");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdCustom: report.* reports
+
+/// The `news` nag footnote CmdCustom adds (`news.version=2.6.0` in the rc).
+const NEWS_NAG: &str = "Recently upgraded to 3.5.0. Please run 'task news' to read highlights about the new release.\n";
+
+/// Three tasks with fixed entry dates, for reports run at 2031-06-15 12:00 UTC.
+fn report_env(rc: &str) -> Option<Env> {
+    let env = Env::new(rc);
+    for args in [
+        &["rc.verbose=nothing", "add", "one", "entry:2031-06-01", "project:Home", "+x", "due:2031-06-20"][..],
+        &["rc.verbose=nothing", "add", "two", "entry:2031-06-14", "priority:H"][..],
+        &["rc.verbose=nothing", "add", "three", "entry:2031-06-15T11:00:00"][..],
+    ] {
+        let output = faketime_task(&env, "2031-06-15 12:00:00", args)?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {}", stderr(&output));
+    }
+    Some(env)
+}
+
+#[test]
+fn list_report_end_to_end() {
+    let Some(env) = report_env("") else {
+        return;
+    };
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["list"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "\n\
+         ID Age  P Project Tags Due        Description Urg\n\
+         -- ---- - ------- ---- ---------- ----------- ----\n \
+         1 2w     Home    x    2031-06-20 one         8.62\n \
+         2 1d   H                         two         6.01\n \
+         3 1h                             three          0\n\
+         \n\
+         3 tasks\n"
+    );
+    assert_eq!(stderr(&output), env.override_headers() + NEWS_NAG);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn next_report_limit_and_affected() {
+    let Some(env) = report_env("") else {
+        return;
+    };
+    // limit:N truncates rows; the affected line says how many were shown.
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["rc.verbose=affected,label", "next", "limit:2"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "ID Age  P Project Tag Due  Description Urg\n\
+         -- ---- - ------- --- ---- ----------- ----\n \
+         1 2w     Home    x   4d   one         8.62\n \
+         2 1d   H                  two         6.01\n\
+         3 tasks, 2 shown\n"
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+
+    // No matches: footnote and status 1.
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["next", "nosuchword"]).unwrap();
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), env.override_headers() + "No matches.\n" + NEWS_NAG);
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn custom_report_labels_sort_breaks_and_limit() {
+    let Some(env) = report_env(
+        "verbose=label,affected\n\
+         report.mine.columns=id,project,description\n\
+         report.mine.labels=Num,Proj,What\n\
+         report.mine.sort=project-/,description+\n\
+         report.mine.filter=status:pending\n",
+    ) else {
+        return;
+    };
+    // Custom labels, a descending break column (blank line between groups),
+    // and the report filter.
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["mine"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "Num Proj What\n--- ---- -----\n  1 Home one\n\n  3      three\n  2      two\n3 tasks\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    // limit:N (with the report filter present; a lone `limit:N` term
+    // evaluates false in C++ Filter::subset).
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["mine", "limit:2"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "Num Proj What\n--- ---- -----\n  1 Home one\n\n  3      three\n3 tasks, 2 shown\n"
+    );
+
+    // Forced colour: color.label for headers, color.label.sort for sorted
+    // columns (widths are measured over the shown rows only).
+    let output = faketime_task(
+        &env,
+        "2031-06-15 12:00:00",
+        &["rc._forcecolor=on", "rc.fontunderline=off", "rc.color.label=bold", "rc.color.label.sort=red", "mine", "limit:1"],
+    )
+    .unwrap();
+    assert!(
+        stdout(&output).starts_with(
+            "\x1b[1mNum\x1b[0m \x1b[31mProj\x1b[0m \x1b[31mWhat\x1b[0m\n\x1b[1m---\x1b[0m \x1b[31m----\x1b[0m \x1b[31m----\x1b[0m\n"
+        ),
+        "{:?}",
+        stdout(&output)
+    );
+
+    // Mismatched columns and labels.
+    let output = env.task(&["rc.verbose=nothing", "rc.report.mine.labels=Num", "mine"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "There are different numbers of columns and labels for report 'mine'.\n");
+    assert_eq!(output.status.code(), Some(2));
+
+    // An unknown column.
+    let output = env.task(&["rc.verbose=nothing", "rc.report.mine.columns=id,bogus", "rc.report.mine.labels=", "mine"]);
+    assert_eq!(stderr(&output), "Unrecognized column name 'bogus'.\n");
+    assert_eq!(output.status.code(), Some(2));
 }

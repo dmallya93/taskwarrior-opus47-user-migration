@@ -1151,9 +1151,17 @@ mod tests {
         let mut all = Registry::new();
         factory(&mut all, &default_config()).unwrap();
         let mut context = Context::new();
+        let config = default_config();
         let mut stubs = 0;
+        let mut custom = 0;
         for (keyword, command) in &all {
             if PORTED.contains(&keyword.as_str()) {
+                continue;
+            }
+            // Custom reports (one CmdCustom per `report.<name>.columns`) are
+            // registered dynamically and are all ported.
+            if config.has(&format!("report.{keyword}.columns")) {
+                custom += 1;
                 continue;
             }
             let mut output = String::new();
@@ -1163,7 +1171,8 @@ mod tests {
             assert_eq!(output, "");
             stubs += 1;
         }
-        assert_eq!(stubs, all.len() - PORTED.len());
+        assert!(custom > 0);
+        assert_eq!(stubs, all.len() - PORTED.len() - custom);
     }
 
     #[test]
