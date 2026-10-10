@@ -411,6 +411,12 @@ impl Task {
         ATTRIBUTES.with(|v| *v.borrow_mut() = value);
     }
 
+    /// C++ `Task::attributes[name] = type` (as `Context::staticInitialization`
+    /// does for every column).
+    pub fn insert_attribute(name: &str, type_: &str) {
+        ATTRIBUTES.with(|v| v.borrow_mut().insert(name.to_string(), type_.to_string()));
+    }
+
     /// Runs `f` on `Task::attributes` without copying it (C++
     /// `Task::attributes.find (...)` and friends).
     pub fn with_attributes<R>(f: impl FnOnce(&BTreeMap<String, String>) -> R) -> R {
@@ -1274,22 +1280,16 @@ impl Task {
 ////////////////////////////////////////////////////////////////////////////////
 // Validation and dependencies (the parts of C++ `Task` that need the Context).
 //
-// C++ `Task::validate` calls `context.columns["project"/"due"/"scheduled"]->validate (value)`.
-// The column registry is empty until milestone 6, so those calls go to the
-// private helpers below, which port the `validate` that `ColumnProject`
-// inherits from `ColumnTypeString` and that `ColumnDue` / `ColumnScheduled`
-// inherit from `ColumnTypeDate` (none of the three overrides it).
+// C++ `Task::validate` calls `context.columns["project"/"due"/"scheduled"]->validate (value)`;
+// that is [`column_validate`] over `Context::columns`.
 
-/// C++ `bool ColumnTypeString::validate (const std::string& input) const`
-/// (inherited by `ColumnProject`): any non-empty value.
-fn column_type_string_validate(input: &str) -> bool {
-    !input.is_empty()
-}
-
-/// C++ `bool ColumnTypeDate::validate (const std::string& input) const`
-/// (inherited by `ColumnDue` and `ColumnScheduled`): any non-empty value.
-fn column_type_date_validate(input: &str) -> bool {
-    !input.is_empty()
+/// C++ `Context::getContext ().columns[name]->validate (value)`.
+///
+/// Deviation: C++ `operator[]` yields a null `Column*` for an unregistered
+/// name and the call crashes; here an unregistered column validates nothing
+/// (`false`). `Context::initialize` always registers the built-in columns.
+fn column_validate(ctx: &Context, name: &str, value: &str) -> bool {
+    ctx.columns.get(name).is_some_and(|column| column.validate(value))
 }
 
 impl Task {
@@ -1572,38 +1572,29 @@ impl Task {
         if apply_default && (!self.has("parent") || self.get_ref("parent").is_empty()) {
             // Override with default.project, if not specified.
             let default_project = Task::default_project();
-            if !default_project.is_empty() && !self.has("project") {
-                // C++ context.columns["project"]->validate (ColumnProject).
-                if column_type_string_validate(&default_project) {
-                    self.set("project", &default_project);
-                }
+            if !default_project.is_empty() && !self.has("project") && column_validate(ctx, "project", &default_project) {
+                self.set("project", &default_project);
             }
 
             // Override with default.due, if not specified.
             let default_due = Task::default_due();
-            if !default_due.is_empty() && !self.has("due") {
-                // C++ context.columns["due"]->validate (ColumnDue).
-                if column_type_date_validate(&default_due) {
-                    let dur = crate::shared::duration::Duration::from_string(&default_due);
-                    if dur.to_time_t() != 0 {
-                        self.set_int("due", (Datetime::new() + dur.to_time_t()).to_epoch());
-                    } else {
-                        self.set_int("due", Datetime::from_string(&default_due, "")?.to_epoch());
-                    }
+            if !default_due.is_empty() && !self.has("due") && column_validate(ctx, "due", &default_due) {
+                let dur = crate::shared::duration::Duration::from_string(&default_due);
+                if dur.to_time_t() != 0 {
+                    self.set_int("due", (Datetime::new() + dur.to_time_t()).to_epoch());
+                } else {
+                    self.set_int("due", Datetime::from_string(&default_due, "")?.to_epoch());
                 }
             }
 
             // Override with default.scheduled, if not specified.
             let default_scheduled = Task::default_scheduled();
-            if !default_scheduled.is_empty() && !self.has("scheduled") {
-                // C++ context.columns["scheduled"]->validate (ColumnScheduled).
-                if column_type_date_validate(&default_scheduled) {
-                    let dur = crate::shared::duration::Duration::from_string(&default_scheduled);
-                    if dur.to_time_t() != 0 {
-                        self.set_int("scheduled", (Datetime::new() + dur.to_time_t()).to_epoch());
-                    } else {
-                        self.set_int("scheduled", Datetime::from_string(&default_scheduled, "")?.to_epoch());
-                    }
+            if !default_scheduled.is_empty() && !self.has("scheduled") && column_validate(ctx, "scheduled", &default_scheduled) {
+                let dur = crate::shared::duration::Duration::from_string(&default_scheduled);
+                if dur.to_time_t() != 0 {
+                    self.set_int("scheduled", (Datetime::new() + dur.to_time_t()).to_epoch());
+                } else {
+                    self.set_int("scheduled", Datetime::from_string(&default_scheduled, "")?.to_epoch());
                 }
             }
 
@@ -3589,10 +3580,21 @@ mod tests {
         assert_eq!(err.to_string(), "working set unavailable");
     }
 
-    struct UdaCol(bool);
+    struct UdaCol(crate::columns::column::ColumnBase);
+    impl UdaCol {
+        fn new(uda: bool) -> Self {
+            let mut base = crate::columns::column::ColumnBase::new();
+            base.uda = uda;
+            UdaCol(base)
+        }
+    }
     impl Column for UdaCol {
-        fn is_uda(&self) -> bool {
-            self.0
+        fn base(&self) -> &crate::columns::column::ColumnBase {
+            &self.0
+        }
+
+        fn base_mut(&mut self) -> &mut crate::columns::column::ColumnBase {
+            &mut self.0
         }
     }
 
@@ -3600,8 +3602,8 @@ mod tests {
     fn context_env() {
         let mut ctx = Context::default();
         ctx.config.set("due", "3");
-        ctx.columns.insert("estimate".to_string(), Rc::new(UdaCol(true)));
-        ctx.columns.insert("description".to_string(), Rc::new(UdaCol(false)));
+        ctx.columns.insert("estimate".to_string(), Rc::new(UdaCol::new(true)));
+        ctx.columns.insert("description".to_string(), Rc::new(UdaCol::new(false)));
         assert_eq!(TaskEnv::due_days(&ctx), 3);
         assert!(ctx.has_column("description"));
         assert!(!ctx.has_column("project"));
@@ -3699,6 +3701,8 @@ mod validate_tests {
         // As Context::staticInitialization does.
         Datetime::set_standalone_date_enabled(false);
         crate::shared::duration::Duration::set_standalone_seconds_enabled(false);
+        // As Context::initialize does (Task::validate reads the registry).
+        crate::columns::column::factory_all(&mut ctx.columns, &ctx.config).unwrap();
         ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
         Fixture { ctx, _dir: dir, _defaults: DefaultsGuard, _lock: lock }
     }

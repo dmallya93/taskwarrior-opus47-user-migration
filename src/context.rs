@@ -50,8 +50,8 @@
 //! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the full `CLI2` parser
 //!   ([`crate::cli2::Cli2`] is a bootstrap that only selects the command),
 //!   `prepareFilter`, `dump`.
-//! - **Milestone 6** (reports and columns): `Column::factory`, column
-//!   attribute entities and types, `initializeColorRules` (only its
+//! - **Milestone 6** (reports and columns): column rendering,
+//!   `initializeColorRules` (only its
 //!   `color ()` short-circuit is ported, in [`crate::rules`]).
 //! - **Milestone 7** (mutations, hooks, recurrence, undo, sync):
 //!   `Hooks::initialize` / `onLaunch` / `onExit` ([`crate::hooks::Hooks`]),
@@ -69,12 +69,12 @@
 //! `target/{debug,release}/task` and the test binaries in
 //! `target/debug/deps`); otherwise `<exe dir>/../share/doc/task/rc`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::rc::Rc;
 
 use crate::cli2::{self, Cli2};
-use crate::columns::column::Column;
+use crate::columns::column;
 use crate::commands::command::{self, Registry};
 use crate::error::{Result, TwError};
 use crate::eval::Eval;
@@ -95,7 +95,7 @@ use crate::version::{Version, COMMIT, PACKAGE_STRING};
 use crate::variant::Variant;
 
 /// C++ `std::map<std::string, Column*>` as held by `Context::columns`.
-pub type ColumnRegistry = BTreeMap<String, Rc<dyn Column>>;
+pub use crate::columns::column::ColumnRegistry;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `std::string configurationDefaults`: the compiled-in default
@@ -600,7 +600,7 @@ pub struct Context {
     pub debug_messages: Vec<String>,
     /// C++ `commands`.
     pub commands: Registry,
-    /// C++ `columns` (filled by milestone 6's `Column::factory`).
+    /// C++ `columns` (filled by `Column::factory`, [`column::factory_all`]).
     pub columns: ColumnRegistry,
     /// C++ `terminal_width`.
     pub terminal_width: i32,
@@ -828,7 +828,7 @@ impl Context {
         //
         ////////////////////////////////////////////////////////////////////////
 
-        // Milestone 6 hook: `Column::factory (columns)`.
+        column::factory_all(&mut self.columns, &self.config)?;
         for name in self.columns.keys() {
             self.cli2.entity("attribute", name);
         }
@@ -1444,9 +1444,10 @@ impl Context {
         }
         Task::set_custom_order(custom_order);
 
-        // Milestone 6 hook: `Task::attributes[col] = Lexer::attributes[col] =
-        // column->type ()` for every column (the Column trait has no type ()
-        // yet and the registry is empty).
+        for (name, col) in &self.columns {
+            Task::insert_attribute(name, col.type_());
+            Lexer::insert_attribute(name, col.type_());
+        }
 
         Task::set_urgency_project_coefficient(self.config.get_real("urgency.project.coefficient") as f32);
         Task::set_urgency_active_coefficient(self.config.get_real("urgency.active.coefficient") as f32);
@@ -1697,6 +1698,7 @@ mod tests {
     use super::*;
     use crate::commands::command::{register, Command, CommandMeta};
     use crate::test_util::{env_lock, EnvGuard};
+    use std::collections::BTreeMap;
     use std::sync::MutexGuard;
 
     /// Extracts the C++ `configurationDefaults` literal concatenation from
@@ -2403,6 +2405,8 @@ mod tests {
             Task::set_regex(false);
             Task::set_custom_order(BTreeMap::new());
             Task::set_coefficients(BTreeMap::new());
+            Task::set_attributes(BTreeMap::new());
+            Lexer::set_attributes(BTreeMap::new());
             for set in [
                 Task::set_urgency_project_coefficient,
                 Task::set_urgency_active_coefficient,
@@ -2458,6 +2462,77 @@ mod tests {
         assert_eq!(coefficients["urgency.uda.size.L.coefficient"], 1.5);
         assert_eq!(coefficients["urgency.uda.priority.M.coefficient"], 3.9f32);
         assert!(!coefficients.contains_key("urgency.due.coefficient"));
+    }
+
+    #[test]
+    fn initialize_registers_columns_and_attribute_types() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(
+            &format!("{}/.taskrc", f.home),
+            "uda.size.type=numeric\nuda.size.label=Size\nuda.ref.type=uuid\nuda.est.type=duration\n\
+             uda.when.type=date\nuda.labelonly.label=x\n",
+        );
+        let mut context = context();
+        let (status, _, err) = init(&mut context, &["task", "alpha"]);
+        assert_eq!(status, 0, "{err}");
+
+        // C++ Column::factory (columns): built-ins plus UDAs (priority comes
+        // from the defaults; a UDA without a type has no column).
+        let names = context.get_columns();
+        for name in [
+            "depends", "description", "due", "end", "entry", "id", "imask", "last", "mask", "modified", "parent",
+            "project", "recur", "rtype", "scheduled", "start", "status", "tags", "template", "until", "urgency",
+            "uuid", "wait", "priority", "size", "ref", "est", "when",
+        ] {
+            assert!(names.contains(&name.to_string()), "{name}");
+        }
+        assert!(!names.contains(&"labelonly".to_string()));
+        assert_eq!(names.len(), 28);
+        assert_eq!(context.columns["size"].label(), "Size");
+        assert!(context.columns["size"].is_uda());
+
+        // Every column is an `attribute` entity.
+        assert!(context.cli2.entities.get("attribute").is_some_and(|set| set.iter().any(|e| e == "project")));
+
+        // staticInitialization: Task::attributes and Lexer::attributes.
+        let expected = [
+            ("due", "date"),
+            ("project", "string"),
+            ("id", "numeric"),
+            ("urgency", "numeric"),
+            ("tags", "string"),
+            ("size", "numeric"),
+            ("ref", "uuid"),
+            ("est", "duration"),
+            ("when", "date"),
+            ("priority", "string"),
+        ];
+        for (name, type_) in expected {
+            assert_eq!(Task::attributes().get(name).map(String::as_str), Some(type_), "{name}");
+            assert_eq!(Lexer::attributes().get(name).map(String::as_str), Some(type_), "{name}");
+        }
+        assert_eq!(Task::attributes().len(), 28);
+    }
+
+    #[test]
+    fn initialize_rejects_bad_udas() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(&format!("{}/.taskrc", f.home), "uda.due.type=string\n");
+        let mut ctx = context();
+        let (status, _, err) = init(&mut ctx, &["task", "alpha"]);
+        assert_eq!(status, 2);
+        assert_eq!(err, "The UDA named 'due' is the same as a core attribute, and is not permitted.\n");
+
+        write(&format!("{}/.taskrc", f.home), "uda.x.type=bool\n");
+        let mut ctx = context();
+        let (status, _, err) = init(&mut ctx, &["task", "alpha"]);
+        assert_eq!(status, 2);
+        assert_eq!(
+            err,
+            "User defined attributes may only be of type 'string', 'uuid', 'date', 'duration' or 'numeric'.\n"
+        );
     }
 
     #[test]
