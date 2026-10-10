@@ -1,7 +1,8 @@
 //! Rust translation of `src/columns/ColTypeNumeric.cpp`.
 //!
-//! `ColumnTypeNumeric`: the base of every numeric column. Rendering (none
-//! of its own in C++) arrives with milestone 6.
+//! `ColumnTypeNumeric`: the base of every numeric column. C++ declares no
+//! `measure` / `render` of its own, so it keeps the no-op [`Column`]
+//! defaults (`measure` -> `(0, 0)`, `render` -> no lines).
 
 use crate::columns::column::{column_base, Column, ColumnBase, ModifyEnv, MODIFICATION_LABEL};
 use crate::error::{Result, TwError};

@@ -2,21 +2,53 @@
 //!
 //! Holds the [`Column`] trait (C++ `class Column`), the shared member state
 //! [`ColumnBase`] (the C++ protected members and `Column::Column ()`), the
-//! narrow environment [`ModifyEnv`] that `Column::modify` implementations
-//! use in place of `Context::getContext ()`, and the factories
+//! narrow environments [`ModifyEnv`] (for `Column::modify`) and
+//! [`RenderEnv`] (for `measure` / `render`) that replace
+//! `Context::getContext ()`, the protected `render*` helpers, and the
+//! factories
 //! [`factory`] (`Column::factory (name, report)`), [`factory_all`]
 //! (`Column::factory (std::map&)`), [`uda_all`] (`Column::uda (std::map&)`)
 //! and [`uda`] (`Column::uda (name)`).
 //!
-//! # Not yet ported: rendering (milestone 6)
+//! # Rendering
 //!
-//! The C++ rendering interface is deliberately absent from the trait until
-//! milestone 6 ports reports: `measure (const std::string&, ...)`,
-//! `measure (Task&, ...)`, `renderHeader`, both `render` overloads and the
-//! protected helpers `renderInteger`, `renderDouble`, `renderStringLeft`
-//! and `renderStringRight`. The member state those use (`_report`,
-//! `_hyphenate`, `_indent`, `_dateformat`, ...) is already carried by the
-//! structs so the milestone-6 port only adds methods.
+//! The C++ rendering interface is on the trait with C++ defaults:
+//! [`Column::measure_str`] / [`Column::measure`] (C++ `measure (const
+//! std::string&, ...)` / `measure (Task&, ...)`, no-ops returning `(0, 0)`),
+//! [`Column::render_header`] (C++ `Column::renderHeader`),
+//! [`Column::render_str`] / [`Column::render`] (C++ `render (..., const
+//! std::string&, ...)` / `render (..., Task&, ...)`, no-ops). The C++
+//! protected helpers `renderInteger`, `renderDouble`, `renderStringLeft` and
+//! `renderStringRight` are the free functions [`render_integer`],
+//! [`render_double`], [`render_string_left`] and [`render_string_right`].
+//!
+//! C++ returns the widths through `unsigned int&` out-parameters; here they
+//! are the returned `(minimum, maximum)` pair. ViewTask always passes both
+//! as 0, so "leave untouched" (the C++ no-op default) is `(0, 0)`. Widths are
+//! `usize` (C++ `int`; ViewTask never passes a negative one).
+//!
+//! `measure (Task&)` and `render (Task&)` return `Result` because concrete
+//! overrides can throw: urgency (`urgency.inherit` reads the replica),
+//! `getDependencyTasks` (replica errors) and `getStatus`. The string
+//! overloads and `renderHeader` cannot throw in C++ and return plain values.
+//!
+//! ## `RenderEnv`
+//!
+//! At render time the C++ columns reach `Context::getContext ()` for the
+//! configuration (`dateformat*`, `report.<r>.dateformat`, the
+//! `*.indicator` values, `fontunderline`), `verbose ("label")`, `color ()`,
+//! `task.urgency ()` (needs Context) and `task.getDependencyTasks ()` (needs
+//! `tdb2`). Those are the methods of the narrow [`RenderEnv`] trait, which
+//! [`Context`] implements; unit tests use a fake. "Now" is never part of the
+//! environment: date styles take `Datetime ()` (libc `time`, so faketime
+//! applies) at the point of use, exactly as C++ does.
+//!
+//! ## Type-behaviour composition
+//!
+//! A concrete column delegates to the associated helpers of its C++ base
+//! (`ColumnTypeDate::measure_date (this, ...)` / `render_date`), passing
+//! itself as `this: &dyn Column` so its `name`/`style`/`report` are used,
+//! mirroring how `validate_date` / `modify_date` work.
 //!
 //! # Hierarchy
 //!
@@ -61,8 +93,9 @@ use crate::context::Context;
 use crate::dom;
 use crate::error::{Result, TwError};
 use crate::eval::Eval;
+use crate::shared::color::{Color, ColorId};
 use crate::shared::configuration::Configuration;
-use crate::shared::format::format;
+use crate::shared::format::{format, format_double, left_justify, right_justify, right_justify_int};
 use crate::shared::shared::split;
 use crate::task::Task;
 use crate::variant::Variant;
@@ -221,9 +254,110 @@ impl ModifyEnv for Context {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// C++ `class Column`: column metadata and the non-rendering behaviour
-/// (`validate`, `modify`, `setStyle`/`setLabel`/`setReport`). See the module
-/// documentation for the rendering methods milestone 6 adds.
+/// The parts of `Context::getContext ()` that the C++ `measure`,
+/// `renderHeader` and `render` implementations (every `Col*.cpp`) reach.
+/// [`Context`] implements it; tests use a fake.
+pub trait RenderEnv {
+    /// C++ `Context::getContext ().config`.
+    fn config(&self) -> &Configuration;
+
+    /// C++ `Context::getContext ().verbose (token)`.
+    fn verbose(&mut self, token: &str) -> bool;
+
+    /// C++ `Context::getContext ().color ()`.
+    fn color(&mut self) -> bool;
+
+    /// C++ `task.urgency ()` (ColUrgency): the cached urgency, computed with
+    /// the Context's coefficients (and the replica for `urgency.inherit`).
+    ///
+    /// # Errors
+    /// Those of `Task::urgency`.
+    fn urgency(&mut self, task: &mut Task) -> Result<f32>;
+
+    /// C++ `task.getDependencyTasks ()` (ColDepends): the pending tasks
+    /// `task` depends on, read through `Context::getContext ().tdb2`.
+    ///
+    /// # Errors
+    /// Those of `Task::get_dependency_tasks`.
+    fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>>;
+}
+
+impl RenderEnv for Context {
+    fn config(&self) -> &Configuration {
+        &self.config
+    }
+
+    fn verbose(&mut self, token: &str) -> bool {
+        Context::verbose(self, token)
+    }
+
+    fn color(&mut self) -> bool {
+        Context::color(self)
+    }
+
+    fn urgency(&mut self, task: &mut Task) -> Result<f32> {
+        task.urgency(self)
+    }
+
+    fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>> {
+        task.get_dependency_tasks(&mut self.tdb2)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// C++ `void Column::renderHeader (std::vector<std::string>& lines, int
+/// width, Color& color)`, the default [`Column::render_header`], for a column
+/// labelled `label`: nothing unless `verbose ("label")` and the label is
+/// non-empty; then the left-justified label, underlined when colour and
+/// `fontunderline` are on, otherwise followed by a dashed line.
+pub fn render_header_label(label: &str, lines: &mut Vec<String>, width: usize, color: &Color, env: &mut dyn RenderEnv) {
+    if env.verbose("label") && !label.is_empty() {
+        // Create a basic label.
+        let header = label;
+
+        // Create a fungible copy.
+        let mut c = *color;
+
+        // Now underline the header, or add a dashed line.
+        if env.color() && env.config().get_boolean("fontunderline") {
+            c.blend(&Color::from_ids(ColorId::Nocolor, ColorId::Nocolor, true, false, false));
+            lines.push(c.colorize(&left_justify(header, width as i32)));
+        } else {
+            lines.push(c.colorize(&left_justify(header, width as i32)));
+            lines.push(c.colorize(&"-".repeat(width)));
+        }
+    }
+}
+
+/// C++ `void Column::renderInteger (std::vector<std::string>& lines, int
+/// width, Color& color, int value)`.
+pub fn render_integer(lines: &mut Vec<String>, width: usize, color: &Color, value: i32) {
+    lines.push(color.colorize(&right_justify_int(value, width as i32)));
+}
+
+/// C++ `void Column::renderDouble (std::vector<std::string>& lines, int
+/// width, Color& color, double value)`: `format (value, 4, 3)`,
+/// right-justified.
+pub fn render_double(lines: &mut Vec<String>, width: usize, color: &Color, value: f64) {
+    lines.push(color.colorize(&right_justify(&format_double(value, 4, 3), width as i32)));
+}
+
+/// C++ `void Column::renderStringLeft (std::vector<std::string>& lines, int
+/// width, Color& color, const std::string& value)`.
+pub fn render_string_left(lines: &mut Vec<String>, width: usize, color: &Color, value: &str) {
+    lines.push(color.colorize(&left_justify(value, width as i32)));
+}
+
+/// C++ `void Column::renderStringRight (std::vector<std::string>& lines, int
+/// width, Color& color, const std::string& value)`.
+pub fn render_string_right(lines: &mut Vec<String>, width: usize, color: &Color, value: &str) {
+    lines.push(color.colorize(&right_justify(value, width as i32)));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// C++ `class Column`: column metadata, `validate`, `modify`,
+/// `setStyle`/`setLabel`/`setReport` and the rendering interface (see the
+/// module documentation).
 pub trait Column {
     /// The C++ protected members.
     fn base(&self) -> &ColumnBase;
@@ -303,6 +437,59 @@ pub trait Column {
 
     /// C++ `virtual void modify (Task&, const std::string&) {}`.
     fn modify(&self, _task: &mut Task, _value: &str, _env: &mut dyn ModifyEnv) -> Result<()> {
+        Ok(())
+    }
+
+    /// C++ `virtual void measure (const std::string&, unsigned int& minimum,
+    /// unsigned int& maximum) {}`: `(minimum, maximum)`; the no-op default
+    /// leaves both at 0.
+    fn measure_str(&self, _value: &str, _env: &mut dyn RenderEnv) -> (usize, usize) {
+        (0, 0)
+    }
+
+    /// C++ `virtual void measure (Task&, unsigned int& minimum, unsigned int&
+    /// maximum) {}`: `(minimum, maximum)`; the no-op default leaves both at
+    /// 0.
+    ///
+    /// # Errors
+    /// Whatever the override's C++ throws (urgency, dependency lookups,
+    /// `getStatus`).
+    fn measure(&self, _task: &mut Task, _env: &mut dyn RenderEnv) -> Result<(usize, usize)> {
+        Ok((0, 0))
+    }
+
+    /// C++ `virtual void renderHeader (std::vector<std::string>&, int,
+    /// Color&)`: [`render_header_label`] with this column's label.
+    fn render_header(&self, lines: &mut Vec<String>, width: usize, color: &Color, env: &mut dyn RenderEnv) {
+        render_header_label(self.label(), lines, width, color, env);
+    }
+
+    /// C++ `virtual void render (std::vector<std::string>&, const
+    /// std::string&, int, Color&) {}`.
+    fn render_str(
+        &self,
+        _lines: &mut Vec<String>,
+        _value: &str,
+        _width: usize,
+        _color: &Color,
+        _env: &mut dyn RenderEnv,
+    ) {
+    }
+
+    /// C++ `virtual void render (std::vector<std::string>&, Task&, int,
+    /// Color&) {}`.
+    ///
+    /// # Errors
+    /// Whatever the override's C++ throws (urgency, dependency lookups,
+    /// `getStatus`).
+    fn render(
+        &self,
+        _lines: &mut Vec<String>,
+        _task: &mut Task,
+        _width: usize,
+        _color: &Color,
+        _env: &mut dyn RenderEnv,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -518,6 +705,64 @@ pub fn uda(name: &str, config: &Configuration) -> Result<Option<Box<dyn Column>>
     };
 
     Ok(Some(c))
+}
+
+/// A [`RenderEnv`] fake for column unit tests (shared by every `col_*`
+/// test module): a plain [`Configuration`], fixed `verbose` / `color`
+/// answers (recording each `verbose` token asked), a fixed urgency, and
+/// `dependency_tasks` answered from `tasks` by the task's dependency UUIDs.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct FakeRenderEnv {
+    /// Answers [`RenderEnv::config`].
+    pub config: Configuration,
+    /// Answers every [`RenderEnv::verbose`] call.
+    pub verbose: bool,
+    /// Tokens passed to [`RenderEnv::verbose`], in order.
+    pub verbose_asked: Vec<String>,
+    /// Answers [`RenderEnv::color`].
+    pub color: bool,
+    /// Answers [`RenderEnv::urgency`].
+    pub urgency: f32,
+    /// The tasks [`RenderEnv::dependency_tasks`] selects from.
+    pub tasks: Vec<Task>,
+}
+
+#[cfg(test)]
+impl FakeRenderEnv {
+    /// A fake with `verbose` on and colour off, over `pairs` as the config.
+    pub(crate) fn with_config(pairs: &[(&str, &str)]) -> Self {
+        let mut config = Configuration::new();
+        for (key, value) in pairs {
+            config.set(key, *value);
+        }
+        FakeRenderEnv { config, verbose: true, ..FakeRenderEnv::default() }
+    }
+}
+
+#[cfg(test)]
+impl RenderEnv for FakeRenderEnv {
+    fn config(&self) -> &Configuration {
+        &self.config
+    }
+
+    fn verbose(&mut self, token: &str) -> bool {
+        self.verbose_asked.push(token.to_string());
+        self.verbose
+    }
+
+    fn color(&mut self) -> bool {
+        self.color
+    }
+
+    fn urgency(&mut self, _task: &mut Task) -> Result<f32> {
+        Ok(self.urgency)
+    }
+
+    fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>> {
+        let uuids = task.get_dependency_uuids();
+        Ok(self.tasks.iter().filter(|t| uuids.iter().any(|u| u == t.get_ref("uuid"))).cloned().collect())
+    }
 }
 
 #[cfg(test)]
@@ -1045,5 +1290,129 @@ mod tests {
         let fixed: Vec<&str> =
             all.iter().filter(|(_, c)| !c.modifiable()).map(|(name, _)| name.as_str()).collect();
         assert_eq!(fixed, vec!["id", "imask", "last", "mask", "parent", "rtype", "template", "urgency", "uuid"]);
+    }
+
+    #[test]
+    fn render_helpers_justify_and_colorize() {
+        let plain = Color::new();
+        let mut lines = Vec::new();
+        render_integer(&mut lines, 4, &plain, 42);
+        render_integer(&mut lines, 1, &plain, -123);
+        render_double(&mut lines, 6, &plain, 4.6);
+        render_double(&mut lines, 6, &plain, 12.34567);
+        render_double(&mut lines, 6, &plain, 0.123456);
+        render_string_left(&mut lines, 5, &plain, "ab");
+        render_string_right(&mut lines, 5, &plain, "ab");
+        // Wider values are not truncated; display width counts, not bytes.
+        render_string_left(&mut lines, 2, &plain, "abcd");
+        render_string_right(&mut lines, 4, &plain, "\u{e9}t\u{e9}");
+        assert_eq!(
+            lines,
+            strings(&["  42", "-123", "   4.6", "  12.3", "  0.12", "ab   ", "   ab", "abcd", " \u{e9}t\u{e9}"])
+        );
+
+        let red = Color::parse("red").unwrap();
+        let mut lines = Vec::new();
+        render_string_left(&mut lines, 3, &red, "x");
+        render_integer(&mut lines, 3, &red, 7);
+        assert_eq!(lines, vec![red.colorize("x  "), red.colorize("  7")]);
+        assert_eq!(lines[0], "\x1b[31mx  \x1b[0m");
+    }
+
+    #[test]
+    fn render_header_label_dashes_underline_and_verbosity() {
+        let all = registry(&Configuration::new());
+        let plain = Color::new();
+
+        // verbose label, no colour: label line plus a dashed line.
+        let mut env = FakeRenderEnv::with_config(&[("fontunderline", "on")]);
+        let mut lines = Vec::new();
+        all["due"].render_header(&mut lines, 6, &plain, &mut env);
+        assert_eq!(lines, strings(&["Due   ", "------"]));
+        assert_eq!(env.verbose_asked, strings(&["label"]));
+
+        // Colour and fontunderline: one underlined line, blended into the
+        // given colour.
+        env.color = true;
+        let mut lines = Vec::new();
+        let red = Color::parse("red").unwrap();
+        all["project"].render_header(&mut lines, 8, &red, &mut env);
+        let underline = Color::parse("underline red").unwrap();
+        assert_eq!(lines, vec![underline.colorize("Project ")]);
+        assert_eq!(lines[0], "\x1b[4;31mProject \x1b[0m");
+
+        // Colour without fontunderline: dashes, coloured.
+        env.config.set("fontunderline", "off");
+        let mut lines = Vec::new();
+        all["id"].render_header(&mut lines, 3, &red, &mut env);
+        assert_eq!(lines, vec![red.colorize("ID "), red.colorize("---")]);
+
+        // Width narrower than the label: no truncation, dashes to width.
+        env.color = false;
+        let mut lines = Vec::new();
+        all["description"].render_header(&mut lines, 4, &plain, &mut env);
+        assert_eq!(lines, strings(&["Description", "----"]));
+
+        // Not verbose, or an empty label: nothing.
+        env.verbose = false;
+        let mut lines = Vec::new();
+        all["due"].render_header(&mut lines, 6, &plain, &mut env);
+        assert!(lines.is_empty());
+        env.verbose = true;
+        env.verbose_asked.clear();
+        let rtype = factory("rtype.indicator", "", &Configuration::new()).unwrap();
+        assert_eq!(rtype.label(), "");
+        rtype.render_header(&mut lines, 6, &plain, &mut env);
+        assert!(lines.is_empty());
+        // verbose is consulted first, as C++ `verbose ("label") && _label != ""`.
+        assert_eq!(env.verbose_asked, strings(&["label"]));
+    }
+
+    #[test]
+    fn default_render_interface_is_a_no_op() {
+        // C++ Column / ColumnTypeString / Numeric / Duration declare no
+        // measure or render bodies: nothing is measured or rendered.
+        use crate::columns::col_type_duration::ColumnTypeDuration;
+        use crate::columns::col_type_numeric::ColumnTypeNumeric;
+        use crate::columns::col_type_string::ColumnTypeString;
+        let mut env = FakeRenderEnv::with_config(&[]);
+        let plain = Color::new();
+        let mut task = Task::new();
+        task.set("description", "hello");
+        task.set("size", "5");
+        task.set("est", "P1D");
+
+        let mut s = ColumnTypeString::new();
+        s.base.name = "description".to_string();
+        let mut n = ColumnTypeNumeric::new();
+        n.base.name = "size".to_string();
+        let mut d = ColumnTypeDuration::new();
+        d.base.name = "est".to_string();
+        let columns: [&dyn Column; 3] = [&s, &n, &d];
+        for c in columns {
+            assert_eq!(c.measure(&mut task, &mut env).unwrap(), (0, 0), "{}", c.name());
+            assert_eq!(c.measure_str("hello", &mut env), (0, 0));
+            let mut lines = Vec::new();
+            c.render(&mut lines, &mut task, 10, &plain, &mut env).unwrap();
+            c.render_str(&mut lines, "hello", 10, &plain, &mut env);
+            assert!(lines.is_empty(), "{}", c.name());
+        }
+    }
+
+    #[test]
+    fn fake_render_env_dependency_tasks() {
+        let mut env = FakeRenderEnv::with_config(&[]);
+        let mut a = Task::new();
+        a.set("uuid", "aaaaaaaa-0000-0000-0000-000000000000");
+        let mut b = Task::new();
+        b.set("uuid", "bbbbbbbb-0000-0000-0000-000000000000");
+        env.tasks = vec![a, b];
+        let mut t = Task::new();
+        t.set(&Task::dep2attr("bbbbbbbb-0000-0000-0000-000000000000"), "x");
+        let deps = env.dependency_tasks(&t).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].get("uuid"), "bbbbbbbb-0000-0000-0000-000000000000");
+        env.urgency = 4.5;
+        assert_eq!(env.urgency(&mut t).unwrap(), 4.5);
     }
 }

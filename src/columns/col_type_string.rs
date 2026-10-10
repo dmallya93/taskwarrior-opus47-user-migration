@@ -1,7 +1,8 @@
 //! Rust translation of `src/columns/ColTypeString.cpp`.
 //!
-//! `ColumnTypeString`: the base of every string-typed column. Rendering
-//! (none of its own in C++) arrives with milestone 6.
+//! `ColumnTypeString`: the base of every string-typed column. C++ declares no
+//! `measure` / `render` of its own, so it keeps the no-op [`Column`]
+//! defaults (`measure` -> `(0, 0)`, `render` -> no lines).
 
 use crate::columns::column::{column_base, Column, ColumnBase, ModifyEnv, MODIFICATION_LABEL};
 use crate::error::{Result, TwError};
