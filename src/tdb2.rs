@@ -990,7 +990,7 @@ pub fn add(ctx: &mut Context, task: &mut Task) -> Result<()> {
     // Ensure the task is consistent, and provide defaults if necessary.
     // bool argument to validate() is "applyDefault", to apply default values for
     // properties not otherwise given.
-    // VALIDATE-HOOK (wired by the Task::validate task): task.validate(ctx, true)?;
+    task.validate(ctx, true)?;
 
     let ops = ctx.tdb2.begin_change(task);
     let tcuuid = uuid_from_string(task.get_ref("uuid"))?;
@@ -1008,7 +1008,7 @@ pub fn modify(ctx: &mut Context, task: &mut Task) -> Result<()> {
     // All locally modified tasks are timestamped, implicitly overwriting any
     // changes the user or hooks tried to apply to the "modified" attribute.
     task.set_as_now("modified");
-    // VALIDATE-HOOK (wired by the Task::validate task): task.validate(ctx, false)?;
+    task.validate(ctx, false)?;
     let uuid = task.get("uuid");
 
     let ops = ctx.tdb2.begin_change(task);

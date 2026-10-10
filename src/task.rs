@@ -1262,6 +1262,425 @@ impl Task {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Validation and dependencies (the parts of C++ `Task` that need the Context).
+//
+// C++ `Task::validate` calls `context.columns["project"/"due"/"scheduled"]->validate (value)`.
+// The column registry is empty until milestone 6, so those calls go to the
+// private helpers below, which port the `validate` that `ColumnProject`
+// inherits from `ColumnTypeString` and that `ColumnDue` / `ColumnScheduled`
+// inherit from `ColumnTypeDate` (none of the three overrides it).
+
+/// C++ `bool ColumnTypeString::validate (const std::string& input) const`
+/// (inherited by `ColumnProject`): any non-empty value.
+fn column_type_string_validate(input: &str) -> bool {
+    !input.is_empty()
+}
+
+/// C++ `bool ColumnTypeDate::validate (const std::string& input) const`
+/// (inherited by `ColumnDue` and `ColumnScheduled`): any non-empty value.
+fn column_type_date_validate(input: &str) -> bool {
+    !input.is_empty()
+}
+
+impl Task {
+    ////////////////////////////////////////////////////////////////////////////
+    // Dependencies.
+
+    /// C++ `void Task::addDependency (int depid)`.
+    ///
+    /// # Errors
+    /// `Could not create a dependency on task {1} - not found.` when the ID is
+    /// not in the working set, plus the errors of [`Task::add_dependency`].
+    pub fn add_dependency_id(&mut self, ctx: &mut Context, depid: i32) -> Result<()> {
+        // Check that id is resolvable.
+        let uuid = ctx.tdb2.uuid(depid)?;
+        if uuid.is_empty() {
+            return Err(TwError::Message(format(
+                "Could not create a dependency on task {1} - not found.",
+                &[&depid],
+            )));
+        }
+
+        // the add_dependency(&str) overload will check this, too, but here we
+        // can give an more natural error message containing the id the user
+        // provided.
+        if self.has_dependency(&uuid) {
+            ctx.footnote(&format("Task {1} already depends on task {2}.", &[&self.id, &depid]));
+            return Ok(());
+        }
+
+        self.add_dependency(ctx, &uuid)
+    }
+
+    /// C++ `void Task::addDependency (const std::string& uuid)`.
+    ///
+    /// # Errors
+    /// `A task cannot be dependent on itself.`, or `Circular dependency
+    /// detected and disallowed.` (as in C++, the `dep_` attribute has already
+    /// been stored when that is raised).
+    pub fn add_dependency(&mut self, ctx: &mut Context, uuid: &str) -> Result<()> {
+        if uuid == self.get_ref("uuid") {
+            return Err(TwError::Message("A task cannot be dependent on itself.".to_string()));
+        }
+
+        if self.has_dependency(uuid) {
+            ctx.footnote(&format("Task {1} already depends on task {2}.", &[&self.get("uuid"), &uuid]));
+            return Ok(());
+        }
+
+        // Store the dependency.
+        self.set(&Task::dep2attr(uuid), "x");
+
+        // Prevent circular dependencies.
+        if crate::dependency::dependency_is_circular(&mut ctx.tdb2, self)? {
+            return Err(TwError::Message("Circular dependency detected and disallowed.".to_string()));
+        }
+
+        self.recalc_urgency = true;
+        self.fix_depends_attribute();
+        Ok(())
+    }
+
+    /// C++ `void Task::removeDependency (int id)`.
+    ///
+    /// # Errors
+    /// `Could not delete a dependency on task {1} - not found.` (with the ID).
+    pub fn remove_dependency_id(&mut self, ctx: &mut Context, id: i32) -> Result<()> {
+        let uuid = ctx.tdb2.uuid(id)?;
+
+        // The remove_dependency(&str) method will check this too, but here we
+        // can give a more natural error message containing the id provided by the user
+        if uuid.is_empty() || !self.has(&Task::dep2attr(&uuid)) {
+            return Err(TwError::Message(format(
+                "Could not delete a dependency on task {1} - not found.",
+                &[&id],
+            )));
+        }
+        self.remove_dependency(&uuid)
+    }
+
+    /// C++ `void Task::removeDependency (const std::string& uuid)`.
+    ///
+    /// # Errors
+    /// `Could not delete a dependency on task {1} - not found.` (with the UUID).
+    pub fn remove_dependency(&mut self, uuid: &str) -> Result<()> {
+        let depattr = Task::dep2attr(uuid);
+        if self.has(&depattr) {
+            self.remove(&depattr);
+        } else {
+            return Err(TwError::Message(format(
+                "Could not delete a dependency on task {1} - not found.",
+                &[&uuid],
+            )));
+        }
+
+        self.recalc_urgency = true;
+        self.fix_depends_attribute();
+        Ok(())
+    }
+
+    /// C++ `std::vector<int> Task::getDependencyIDs () const`: the working-set
+    /// ID (0 when not in the working set) of each dependency, in attribute
+    /// order.
+    pub fn get_dependency_ids(&self, tdb2: &mut crate::tdb2::Tdb2) -> Result<Vec<i32>> {
+        let mut ids = Vec::new();
+        for attr in self.data.keys() {
+            if !Task::is_dep_attr(attr) {
+                continue;
+            }
+            let dep = Task::attr2dep(attr);
+            ids.push(tdb2.id(&dep)?);
+        }
+
+        Ok(ids)
+    }
+
+    /// C++ `std::vector<Task> Task::getDependencyTasks () const`: the pending
+    /// tasks (neither completed nor deleted) this task depends on, in
+    /// pending-task order.
+    ///
+    /// # Errors
+    /// Replica errors, or an invalid status on a pending task (C++
+    /// `getStatus` throws).
+    pub fn get_dependency_tasks(&self, tdb2: &mut crate::tdb2::Tdb2) -> Result<Vec<Task>> {
+        let uuids = self.get_dependency_uuids();
+
+        // NOTE: this may seem inefficient, but note that `TDB2::get` performs a
+        // linear search on each invocation, so scanning *once* is quite a bit more
+        // efficient.
+        let mut blocking = Vec::new();
+        if !uuids.is_empty() {
+            for it in tdb2.pending_tasks()? {
+                let status = it.get_status()?;
+                if status != Status::Completed
+                    && status != Status::Deleted
+                    && uuids.iter().any(|u| u == it.get_ref("uuid"))
+                {
+                    blocking.push(it.clone());
+                }
+            }
+        }
+
+        Ok(blocking)
+    }
+
+    /// C++ `std::vector<Task> Task::getBlockedTasks () const`: the pending
+    /// tasks (neither completed nor deleted) that depend on this task.
+    ///
+    /// # Errors
+    /// As [`Task::get_dependency_tasks`].
+    pub fn get_blocked_tasks(&self, tdb2: &mut crate::tdb2::Tdb2) -> Result<Vec<Task>> {
+        let uuid = self.get("uuid");
+
+        let mut blocked = Vec::new();
+        for it in tdb2.pending_tasks()? {
+            let status = it.get_status()?;
+            if status != Status::Completed && status != Status::Deleted && it.has_dependency(&uuid) {
+                blocked.push(it.clone());
+            }
+        }
+
+        Ok(blocked)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Validation.
+
+    /// C++ `void Task::validate_add ()`: validate a task for addition, raising
+    /// user-visible errors for inconsistent or incorrect inputs. This is
+    /// called before [`Task::validate`]. C++ reads nothing from the Context
+    /// here; `ctx` is taken for symmetry with `validate` (M4 API contract).
+    ///
+    /// # Errors
+    /// `A task must have a description.`, `Cannot add a task that is blank.`,
+    /// `A recurring task must also have a 'due' date.`
+    pub fn validate_add(&self, _ctx: &mut Context) -> Result<()> {
+        // There is no fixing a missing description.
+        if !self.has("description") {
+            return Err(TwError::Message("A task must have a description.".to_string()));
+        } else if self.get_ref("description").is_empty() {
+            return Err(TwError::Message("Cannot add a task that is blank.".to_string()));
+        }
+
+        // Cannot have an old-style recur frequency with no due date - when would it recur?
+        if self.has("recur") && (!self.has("due") || self.get_ref("due").is_empty()) {
+            return Err(TwError::Message("A recurring task must also have a 'due' date.".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// C++ `void Task::validate (bool applyDefault = true)`.
+    ///
+    /// The purpose of Task::validate is three-fold:
+    ///   1) To provide missing attributes where possible
+    ///   2) To provide suitable warnings about odd states
+    ///   3) To update status depending on other attributes
+    ///
+    /// As required by TaskChampion, no combination of properties and values is an
+    /// error. This function will try to make sensible defaults and resolve inconsistencies.
+    /// Critically, note that despite the name this is not a read-only function.
+    ///
+    /// # Errors
+    /// `The status '{1}' is not valid.`, `Not a valid UUID '{1}'.`, and the
+    /// `Datetime` parse error for an unparseable `default.due` /
+    /// `default.scheduled` (C++ throws from the `Datetime` constructor).
+    pub fn validate(&mut self, ctx: &mut Context, apply_default: bool) -> Result<()> {
+        let mut status = Status::Pending;
+        if !self.get_ref("status").is_empty() {
+            status = self.get_status()?;
+        }
+
+        // 1) Provide missing attributes where possible
+        // Provide a UUID if necessary. Validate if present.
+        let uid = self.get("uuid");
+        if self.has("uuid") && !uid.is_empty() {
+            let mut lex = crate::lexer::Lexer::new(&uid);
+            let mut token = String::new();
+            let mut type_ = crate::lexer::Type::uuid;
+            // `uuid` is not a property in the TaskChampion model, so an invalid UUID is
+            // actually an error.
+            if !lex.is_uuid(&mut token, &mut type_, true) {
+                return Err(TwError::Message(format("Not a valid UUID '{1}'.", &[&uid])));
+            }
+        } else {
+            self.set("uuid", &crate::util::uuid());
+        }
+
+        // Obsolete (C++ "remove for 3.0.0"), kept as in 3.5.0:
+        // Recurring tasks get a special status.
+        if status == Status::Pending
+            && self.has("due")
+            && self.has("recur")
+            && (!self.has("parent") || self.get_ref("parent").is_empty())
+            && (!self.has("template") || self.get_ref("template").is_empty())
+        {
+            status = Status::Recurring;
+        }
+        // (C++ keeps, commented out, the planned 3.0.0 form of this test, which
+        // drops the `parent` condition.)
+
+        // Tasks with a wait: date get a special status.
+        else if status == Status::Pending && self.has("wait") && !self.get_ref("wait").is_empty() {
+            status = Status::Waiting;
+        }
+        // By default, tasks are pending.
+        else if !self.has("status") || self.get_ref("status").is_empty() {
+            status = Status::Pending;
+        }
+
+        // Default to 'periodic' type recurrence.
+        if status == Status::Recurring && (!self.has("rtype") || self.get_ref("rtype").is_empty()) {
+            self.set("rtype", "periodic");
+        }
+
+        // Store the derived status.
+        self.set_status(status);
+
+        // Provide an entry date unless user already specified one.
+        if !self.has("entry") || self.get_ref("entry").is_empty() {
+            self.set_as_now("entry");
+        }
+
+        // Completed tasks need an end date, so inherit the entry date.
+        if (status == Status::Completed || status == Status::Deleted)
+            && (!self.has("end") || self.get_ref("end").is_empty())
+        {
+            self.set_as_now("end");
+        }
+
+        // Pending tasks cannot have an end date, remove if present
+        if status == Status::Pending && !self.get_ref("end").is_empty() {
+            self.remove("end");
+        }
+
+        // Provide a modified date unless user already specified one.
+        if !self.has("modified") || self.get_ref("modified").is_empty() {
+            self.set_as_now("modified");
+        }
+
+        if apply_default && (!self.has("parent") || self.get_ref("parent").is_empty()) {
+            // Override with default.project, if not specified.
+            let default_project = Task::default_project();
+            if !default_project.is_empty() && !self.has("project") {
+                // C++ context.columns["project"]->validate (ColumnProject).
+                if column_type_string_validate(&default_project) {
+                    self.set("project", &default_project);
+                }
+            }
+
+            // Override with default.due, if not specified.
+            let default_due = Task::default_due();
+            if !default_due.is_empty() && !self.has("due") {
+                // C++ context.columns["due"]->validate (ColumnDue).
+                if column_type_date_validate(&default_due) {
+                    let dur = crate::shared::duration::Duration::from_string(&default_due);
+                    if dur.to_time_t() != 0 {
+                        self.set_int("due", (Datetime::new() + dur.to_time_t()).to_epoch());
+                    } else {
+                        self.set_int("due", Datetime::from_string(&default_due, "")?.to_epoch());
+                    }
+                }
+            }
+
+            // Override with default.scheduled, if not specified.
+            let default_scheduled = Task::default_scheduled();
+            if !default_scheduled.is_empty() && !self.has("scheduled") {
+                // C++ context.columns["scheduled"]->validate (ColumnScheduled).
+                if column_type_date_validate(&default_scheduled) {
+                    let dur = crate::shared::duration::Duration::from_string(&default_scheduled);
+                    if dur.to_time_t() != 0 {
+                        self.set_int("scheduled", (Datetime::new() + dur.to_time_t()).to_epoch());
+                    } else {
+                        self.set_int("scheduled", Datetime::from_string(&default_scheduled, "")?.to_epoch());
+                    }
+                }
+            }
+
+            // If a UDA has a default value in the configuration,
+            // override with uda.(uda).default, if not specified.
+            // Gather a list of all UDAs with a .default value
+            let mut udas: Vec<String> = Vec::new();
+            for key in ctx.config.keys() {
+                if key.starts_with("uda.") && key.contains(".default") {
+                    if let Some(period) = key[4..].find('.') {
+                        udas.push(key[4..4 + period].to_string());
+                    }
+                }
+            }
+
+            if !udas.is_empty() {
+                // For each of those, setup the default value on the task now,
+                // of course only if we don't have one on the command line already
+                for uda in &udas {
+                    let def_val = ctx.config.get(&format!("uda.{uda}.default"));
+
+                    // If the default is empty, or we already have a value, skip it
+                    if !def_val.is_empty() && self.get_ref(uda).is_empty() {
+                        self.set(uda, &def_val);
+                    }
+                }
+            }
+        }
+
+        // 2) To provide suitable warnings about odd states
+
+        // Date relationships.
+        self.validate_before(ctx, "wait", "due");
+        self.validate_before(ctx, "entry", "start");
+        self.validate_before(ctx, "entry", "end");
+        self.validate_before(ctx, "wait", "scheduled");
+        self.validate_before(ctx, "scheduled", "start");
+        self.validate_before(ctx, "scheduled", "due");
+        self.validate_before(ctx, "scheduled", "end");
+
+        if !self.has("description") || self.get_ref("description").is_empty() {
+            ctx.footnote(&format("Warning: task has no description.", &[]));
+        }
+
+        // Cannot have an old-style recur frequency with no due date - when would it recur?
+        if self.has("recur") && (!self.has("due") || self.get_ref("due").is_empty()) {
+            ctx.footnote(&format("Warning: recurring task has no due date.", &[]));
+            self.remove("recur");
+        }
+
+        // Old-style recur durations must be valid.
+        if self.has("recur") {
+            let value = self.get("recur");
+            if !value.is_empty() {
+                let mut p = crate::shared::duration::Duration::new();
+                let mut i = 0usize;
+                if !p.parse(&value, &mut i) {
+                    // (C++: the ideal location to map unsupported old recurrence
+                    // periods to supported values.)
+                    ctx.footnote(&format("Warning: The recurrence value '{1}' is not valid.", &[&value]));
+                    self.remove("recur");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// C++ `void Task::validate_before (const std::string& left, const std::string& right)`:
+    /// footnote when the `left` date is after a non-zero `right` date.
+    fn validate_before(&self, ctx: &mut Context, left: &str, right: &str) {
+        if self.has(left) && self.has(right) {
+            let date_left = Datetime::from_epoch(self.get_date(left));
+            let date_right = Datetime::from_epoch(self.get_date(right));
+
+            // if date is zero, then it is being removed (e.g. "due: wait:1day")
+            if date_left > date_right && date_right.to_epoch() != 0 {
+                ctx.footnote(&format(
+                    "Warning: You have specified that the '{1}' date is after the '{2}' date.",
+                    &[&left, &right],
+                ));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2151,5 +2570,419 @@ mod tests {
         assert!(!u.has("project"));
         assert_eq!(u.id, 9);
         assert_eq!(u.get("description"), "hello");
+    }
+}
+
+/// Tests for validation and dependencies (the Context-bound part of Task)
+/// and `src/dependency.rs`.
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+    use crate::dependency::{
+        dependency_chain_on_complete_to, dependency_chain_on_start_to, dependency_is_circular,
+    };
+    use crate::test_util::env_lock;
+    use crate::tdb2;
+    use tempfile::TempDir;
+
+    /// Restores the `Task::default*`, `Datetime::standaloneDateEnabled` and
+    /// `Duration::standaloneSecondsEnabled` thread-local statics when dropped.
+    struct DefaultsGuard;
+
+    impl Drop for DefaultsGuard {
+        fn drop(&mut self) {
+            Task::set_default_project("");
+            Task::set_default_due("");
+            Task::set_default_scheduled("");
+            Datetime::set_standalone_date_enabled(true);
+            crate::shared::duration::Duration::set_standalone_seconds_enabled(true);
+        }
+    }
+
+    /// A Context whose replica lives in a temporary data directory. The
+    /// TempDir field is declared before the lock guard so it is removed
+    /// before the lock is released.
+    struct Fixture {
+        ctx: Context,
+        _dir: TempDir,
+        _defaults: DefaultsGuard,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn fixture() -> Fixture {
+        // Context::new reads $HOME; serialize with env-mutating tests.
+        let lock = env_lock();
+        let dir = TempDir::new().unwrap();
+        let mut ctx = Context::new();
+        // As Context::staticInitialization does.
+        Datetime::set_standalone_date_enabled(false);
+        crate::shared::duration::Duration::set_standalone_seconds_enabled(false);
+        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        Fixture { ctx, _dir: dir, _defaults: DefaultsGuard, _lock: lock }
+    }
+
+    fn err(r: Result<()>) -> String {
+        r.unwrap_err().to_string()
+    }
+
+    fn described(description: &str) -> Task {
+        let mut t = Task::new();
+        t.set("description", description);
+        t
+    }
+
+    /// Adds a task through `tdb2::add` (validate + hooks + storage).
+    fn add(ctx: &mut Context, description: &str) -> Task {
+        let mut t = described(description);
+        tdb2::add(ctx, &mut t).unwrap();
+        t
+    }
+
+    #[test]
+    fn validate_add_errors() {
+        let mut f = fixture();
+        let t = Task::new();
+        assert_eq!(err(t.validate_add(&mut f.ctx)), "A task must have a description.");
+        let t = described("");
+        assert_eq!(err(t.validate_add(&mut f.ctx)), "Cannot add a task that is blank.");
+        let mut t = described("x");
+        t.set("recur", "weekly");
+        assert_eq!(err(t.validate_add(&mut f.ctx)), "A recurring task must also have a 'due' date.");
+        t.set("due", "");
+        assert_eq!(err(t.validate_add(&mut f.ctx)), "A recurring task must also have a 'due' date.");
+        t.set("due", "1700000000");
+        assert!(t.validate_add(&mut f.ctx).is_ok());
+    }
+
+    #[test]
+    fn validate_status_and_uuid() {
+        let mut f = fixture();
+        let mut t = described("x");
+        t.set("status", "bogus");
+        assert_eq!(err(t.validate(&mut f.ctx, true)), "The status 'bogus' is not valid.");
+
+        let mut t = described("x");
+        t.set("uuid", "not-a-uuid");
+        assert_eq!(err(t.validate(&mut f.ctx, true)), "Not a valid UUID 'not-a-uuid'.");
+
+        // Missing (or empty) uuid is generated; status defaults to pending.
+        let mut t = described("x");
+        t.set("uuid", "");
+        t.validate(&mut f.ctx, true).unwrap();
+        assert_eq!(t.get("uuid").len(), 36);
+        assert_eq!(t.get("status"), "pending");
+        assert!(t.has("entry"));
+        assert!(t.has("modified"));
+        assert!(f.ctx.footnotes.is_empty());
+
+        // A valid uuid is kept, as are given entry / modified dates.
+        let mut t = described("x");
+        t.set("uuid", "00000000-0000-0000-0000-000000000001");
+        t.set("entry", "1700000000");
+        t.set("modified", "1700000001");
+        t.validate(&mut f.ctx, true).unwrap();
+        assert_eq!(t.get("uuid"), "00000000-0000-0000-0000-000000000001");
+        assert_eq!(t.get("entry"), "1700000000");
+        assert_eq!(t.get("modified"), "1700000001");
+    }
+
+    #[test]
+    fn validate_derived_status() {
+        let mut f = fixture();
+
+        // Recurring: due + recur, no parent/template; rtype defaults to periodic.
+        let mut t = described("x");
+        t.set("due", "1700000000");
+        t.set("recur", "weekly");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert_eq!(t.get("status"), "recurring");
+        assert_eq!(t.get("rtype"), "periodic");
+
+        // A given rtype is kept.
+        let mut t = described("x");
+        t.set("due", "1700000000");
+        t.set("recur", "weekly");
+        t.set("rtype", "chained");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert_eq!(t.get("rtype"), "chained");
+
+        // A child (parent set) stays pending.
+        let mut t = described("x");
+        t.set("due", "1700000000");
+        t.set("recur", "weekly");
+        t.set("parent", "00000000-0000-0000-0000-000000000009");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert_eq!(t.get("status"), "pending");
+        assert!(!t.has("rtype"));
+
+        // Waiting is stored as pending.
+        let mut t = described("x");
+        t.set("wait", "4000000000");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert_eq!(t.get("status"), "pending");
+
+        // Completed/deleted tasks get an end date; pending ones lose theirs.
+        for s in ["completed", "deleted"] {
+            let mut t = described("x");
+            t.set("status", s);
+            t.validate(&mut f.ctx, false).unwrap();
+            assert_eq!(t.get("status"), s);
+            assert!(!t.get("end").is_empty());
+        }
+        let mut t = described("x");
+        t.set("status", "pending");
+        t.set("end", "1700000000");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert!(!t.has("end"));
+        let mut t = described("x");
+        t.set("status", "completed");
+        t.set("end", "1700000000");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert_eq!(t.get("end"), "1700000000");
+    }
+
+    #[test]
+    fn validate_defaults() {
+        let mut f = fixture();
+        Task::set_default_project("home");
+        Task::set_default_due("2d");
+        Task::set_default_scheduled("2030-01-01");
+        f.ctx.config.set("uda.size.type", "string");
+        f.ctx.config.set("uda.size.default", "M");
+        f.ctx.config.set("uda.empty.default", "");
+        f.ctx.config.set("uda.prio.default", "H");
+
+        let before = localtime::time_now();
+        let mut t = described("x");
+        t.set("prio", "L");
+        t.validate(&mut f.ctx, true).unwrap();
+        let after = localtime::time_now();
+        assert_eq!(t.get("project"), "home");
+        let due = t.get_date("due");
+        assert!(due >= before + 2 * 86400 && due <= after + 2 * 86400, "{due}");
+        assert_eq!(t.get_date("scheduled"), Datetime::from_string("2030-01-01", "").unwrap().to_epoch());
+        assert_eq!(t.get("size"), "M");
+        assert_eq!(t.get("prio"), "L", "existing value is not overridden");
+        assert!(!t.has("empty"), "empty default is skipped");
+
+        // Given values are kept.
+        let mut t = described("x");
+        t.set("project", "work");
+        t.set("due", "1700000000");
+        t.set("scheduled", "1600000000");
+        t.validate(&mut f.ctx, true).unwrap();
+        assert_eq!(t.get("project"), "work");
+        assert_eq!(t.get("due"), "1700000000");
+        assert_eq!(t.get("scheduled"), "1600000000");
+
+        // No defaults without apply_default, or for a child task.
+        let mut t = described("x");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert!(!t.has("project") && !t.has("due") && !t.has("scheduled") && !t.has("size"));
+        let mut t = described("x");
+        t.set("parent", "00000000-0000-0000-0000-000000000009");
+        t.validate(&mut f.ctx, true).unwrap();
+        assert!(!t.has("project") && !t.has("due") && !t.has("size"));
+
+        // An unparseable default.due raises the Datetime error.
+        Task::set_default_due("notadate");
+        let mut t = described("x");
+        assert!(t.validate(&mut f.ctx, true).is_err());
+    }
+
+    #[test]
+    fn validate_warnings() {
+        let mut f = fixture();
+        let mut t = Task::new();
+        t.set("entry", "1700000000");
+        t.set("wait", "1700000300");
+        t.set("due", "1700000200");
+        t.set("start", "1600000000");
+        t.set("scheduled", "1700000400");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert_eq!(
+            f.ctx.footnotes,
+            vec![
+                "Warning: You have specified that the 'wait' date is after the 'due' date.".to_string(),
+                "Warning: You have specified that the 'entry' date is after the 'start' date.".to_string(),
+                "Warning: You have specified that the 'scheduled' date is after the 'start' date.".to_string(),
+                "Warning: You have specified that the 'scheduled' date is after the 'due' date.".to_string(),
+                "Warning: task has no description.".to_string(),
+            ]
+        );
+
+        // A zero right-hand date is being removed: no warning.
+        f.ctx.footnotes.clear();
+        let mut t = described("x");
+        t.set("wait", "1700000300");
+        t.set("due", "0");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert!(f.ctx.footnotes.is_empty(), "{:?}", f.ctx.footnotes);
+
+        // recur without due is removed.
+        let mut t = described("x");
+        t.set("recur", "weekly");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert!(!t.has("recur"));
+        assert_eq!(f.ctx.footnotes, vec!["Warning: recurring task has no due date.".to_string()]);
+
+        // An invalid recurrence period is removed.
+        f.ctx.footnotes.clear();
+        let mut t = described("x");
+        t.set("due", "1700000000");
+        t.set("recur", "bogus");
+        t.validate(&mut f.ctx, false).unwrap();
+        assert!(!t.has("recur"));
+        assert_eq!(f.ctx.footnotes, vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]);
+    }
+
+    #[test]
+    fn tdb2_add_applies_defaults_and_modify_validates() {
+        let mut f = fixture();
+        Task::set_default_project("home");
+        f.ctx.config.set("uda.size.default", "M");
+        let t = add(&mut f.ctx, "one");
+        assert_eq!(t.id, 1);
+        let stored = f.ctx.tdb2.get_by_id(1).unwrap().unwrap();
+        assert_eq!(stored.get("project"), "home");
+        assert_eq!(stored.get("size"), "M");
+        assert_eq!(stored.get("status"), "pending");
+
+        // modify validates without defaults.
+        Task::set_default_project("other");
+        let mut t = stored;
+        t.remove("project");
+        t.set("end", "1700000000");
+        tdb2::modify(&mut f.ctx, &mut t).unwrap();
+        let stored = f.ctx.tdb2.get_by_id(1).unwrap().unwrap();
+        assert!(!stored.has("project"));
+        assert!(!stored.has("end"));
+
+        // add raises validate errors before touching storage.
+        let mut bad = described("x");
+        bad.set("status", "zzz");
+        assert_eq!(err(tdb2::add(&mut f.ctx, &mut bad)), "The status 'zzz' is not valid.");
+        assert_eq!(f.ctx.tdb2.latest_id().unwrap(), 1);
+    }
+
+    #[test]
+    fn add_remove_dependencies() {
+        let mut f = fixture();
+        let mut t1 = add(&mut f.ctx, "one");
+        let t2 = add(&mut f.ctx, "two");
+        let u2 = t2.get("uuid");
+
+        assert_eq!(
+            err(t1.add_dependency_id(&mut f.ctx, 7)),
+            "Could not create a dependency on task 7 - not found."
+        );
+        let u1 = t1.get("uuid");
+        assert_eq!(err(t1.add_dependency(&mut f.ctx, &u1)), "A task cannot be dependent on itself.");
+
+        t1.recalc_urgency = false;
+        t1.add_dependency_id(&mut f.ctx, 2).unwrap();
+        assert!(t1.has_dependency(&u2));
+        assert_eq!(t1.get("depends"), u2);
+        assert!(t1.recalc_urgency);
+
+        t1.add_dependency_id(&mut f.ctx, 2).unwrap();
+        assert_eq!(f.ctx.footnotes, vec!["Task 1 already depends on task 2.".to_string()]);
+        t1.add_dependency(&mut f.ctx, &u2).unwrap();
+        assert_eq!(f.ctx.footnotes[1], format!("Task {u1} already depends on task {u2}."));
+
+        assert_eq!(t1.get_dependency_ids(&mut f.ctx.tdb2).unwrap(), vec![2]);
+        tdb2::modify(&mut f.ctx, &mut t1).unwrap();
+
+        // Blocking / blocked lookups.
+        let deps = t1.get_dependency_tasks(&mut f.ctx.tdb2).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].get("uuid"), u2);
+        let blocked = t2.get_blocked_tasks(&mut f.ctx.tdb2).unwrap();
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].get("uuid"), u1);
+        assert!(t2.get_dependency_tasks(&mut f.ctx.tdb2).unwrap().is_empty());
+        assert!(t1.get_blocked_tasks(&mut f.ctx.tdb2).unwrap().is_empty());
+
+        // Circular dependency: 2 -> 1 while 1 -> 2 is stored.
+        let mut t2 = f.ctx.tdb2.get_by_id(2).unwrap().unwrap();
+        assert_eq!(
+            err(t2.add_dependency_id(&mut f.ctx, 1)),
+            "Circular dependency detected and disallowed."
+        );
+        assert!(dependency_is_circular(&mut f.ctx.tdb2, &t2).unwrap());
+        let fresh = Task::new();
+        assert!(!dependency_is_circular(&mut f.ctx.tdb2, &fresh).unwrap());
+
+        // Removal.
+        assert_eq!(
+            err(t1.remove_dependency_id(&mut f.ctx, 9)),
+            "Could not delete a dependency on task 9 - not found."
+        );
+        assert_eq!(
+            err(t1.remove_dependency_id(&mut f.ctx, 1)),
+            "Could not delete a dependency on task 1 - not found."
+        );
+        t1.remove_dependency_id(&mut f.ctx, 2).unwrap();
+        assert!(!t1.has_dependency(&u2));
+        assert!(!t1.has("depends"));
+        assert_eq!(
+            err(t1.remove_dependency(&u2)),
+            format!("Could not delete a dependency on task {u2} - not found.")
+        );
+    }
+
+    #[test]
+    fn circular_through_chain() {
+        let mut f = fixture();
+        let mut t1 = add(&mut f.ctx, "one");
+        let mut t2 = add(&mut f.ctx, "two");
+        let mut t3 = add(&mut f.ctx, "three");
+        t1.add_dependency_id(&mut f.ctx, 2).unwrap();
+        tdb2::modify(&mut f.ctx, &mut t1).unwrap();
+        t2.add_dependency_id(&mut f.ctx, 3).unwrap();
+        tdb2::modify(&mut f.ctx, &mut t2).unwrap();
+        assert_eq!(
+            err(t3.add_dependency_id(&mut f.ctx, 1)),
+            "Circular dependency detected and disallowed."
+        );
+    }
+
+    #[test]
+    fn chain_on_start_and_complete() {
+        let mut f = fixture();
+        let mut t1 = add(&mut f.ctx, "one");
+        let mut t2 = add(&mut f.ctx, "two");
+        let t3 = add(&mut f.ctx, "three");
+        let u3 = t3.get("uuid");
+        t1.add_dependency_id(&mut f.ctx, 2).unwrap();
+        tdb2::modify(&mut f.ctx, &mut t1).unwrap();
+        t2.add_dependency_id(&mut f.ctx, 3).unwrap();
+        tdb2::modify(&mut f.ctx, &mut t2).unwrap();
+
+        // Without dependency.reminder nothing is printed.
+        let mut out = Vec::new();
+        dependency_chain_on_start_to(&mut f.ctx, &t2, &mut out).unwrap();
+        assert!(out.is_empty());
+
+        f.ctx.config.set("dependency.reminder", "on");
+        dependency_chain_on_start_to(&mut f.ctx, &t2, &mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "Task 2 is blocked by:\n  3 three\n");
+
+        // Completing 2 breaks the chain 1 -> 2 -> 3; repaired to 1 -> 3.
+        f.ctx.config.set("dependency.confirmation", "off");
+        let mut out = Vec::new();
+        dependency_chain_on_complete_to(&mut f.ctx, &t2, &mut out).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Task 2 is blocked by:\n  3 three\nand is blocking:\n  1 one\n"
+        );
+        let t1 = f.ctx.tdb2.get_by_id(1).unwrap().unwrap();
+        assert_eq!(t1.get_dependency_uuids(), vec![u3.clone()]);
+        assert_eq!(t1.get("depends"), u3);
+
+        // The tail of a chain prints nothing.
+        let mut out = Vec::new();
+        dependency_chain_on_complete_to(&mut f.ctx, &t3, &mut out).unwrap();
+        assert!(out.is_empty());
     }
 }
