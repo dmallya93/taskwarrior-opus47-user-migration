@@ -1515,6 +1515,15 @@ impl Cli2 {
                     } else {
                         LexerType::string
                     };
+                    // C++ `A2 rhs ("", Lexer::Type::tag)` decomposes the empty
+                    // raw value, and `raw.substr (1)` throws
+                    // `std::out_of_range`, which only `catch (...)` handles
+                    // ("Unknown error. Please report."). This happens when an
+                    // eval-supporting attribute's value lexes to a tag first,
+                    // e.g. `due:+foo`.
+                    if rhs_type == LexerType::tag {
+                        return Err(TwError::Runtime("basic_string::substr".to_string()));
+                    }
                     let mut rhs = A2::new("", rhs_type);
                     rhs.tag("FILTER");
 
@@ -2787,5 +2796,394 @@ mod tests {
         parse(&mut ctx, &["task", "+a", "export"]).unwrap();
         with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
         assert_eq!(ctx.footnotes, ["Filter: ( tags _hastag_ a )"]);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // prepareFilter passes (CLI2 part B).
+
+    /// [`context`] plus the configuration defaults (`rc.sugar=1`, ...), the
+    /// full column registry and an `attribute` entity per column, as
+    /// `Context::initialize` sets them up.
+    fn filter_context() -> Context {
+        let mut ctx = context();
+        ctx.config
+            .parse(crate::context::CONFIGURATION_DEFAULTS, 1, &[crate::context::task_rcdir()], "")
+            .unwrap();
+        crate::columns::column::factory_all(&mut ctx.columns, &ctx.config).unwrap();
+        let names: Vec<String> = ctx.columns.keys().cloned().collect();
+        for name in names {
+            ctx.cli2.entity("attribute", &name);
+        }
+        ctx
+    }
+
+    /// Analyses `list`, runs `prepareFilter` and returns the raw text of the
+    /// FILTER arguments.
+    fn prepared(ctx: &mut Context, list: &[&str]) -> Vec<String> {
+        parse(ctx, list).unwrap();
+        with_cli2(ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
+        filter_raws(ctx)
+    }
+
+    fn filter_raws(ctx: &Context) -> Vec<String> {
+        ctx.cli2
+            .args
+            .iter()
+            .filter(|a| a.has_tag("FILTER"))
+            .map(|a| a.attribute("raw"))
+            .collect()
+    }
+
+    fn filter_types(ctx: &Context) -> Vec<LexerType> {
+        ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).map(|a| a.lextype).collect()
+    }
+
+    fn words(text: &str) -> Vec<String> {
+        text.split(' ').map(str::to_string).collect()
+    }
+
+    #[test]
+    fn id_sequences() {
+        let mut ctx = filter_context();
+        // A set with a range and a single ID.
+        assert_eq!(
+            prepared(&mut ctx, &["task", "1-3,5", "count"]),
+            words("( ( ( id >= 1 and id <= 3 ) or ( id == 5 ) ) )")
+        );
+        assert_eq!(ctx.cli2.id_ranges, [("1".into(), "3".into()), ("5".into(), "5".into())]);
+        assert!(ctx.cli2.uuid_list.is_empty());
+        let id = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "id").unwrap();
+        assert_eq!(id.lextype, LexerType::dom);
+        let five = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "5").unwrap();
+        assert_eq!(five.lextype, LexerType::number);
+
+        // A descending range is normalised; separate IDs: the first is
+        // replaced, the others are eaten.
+        assert_eq!(
+            prepared(&mut ctx, &["task", "5-3", "7", "count"]),
+            words("( ( ( id >= 3 and id <= 5 ) or ( id == 7 ) ) )")
+        );
+        assert_eq!(ctx.cli2.id_ranges, [("5".into(), "3".into()), ("7".into(), "7".into())]);
+
+        // A number preceded by an operator other than '(' / ')' is not an ID.
+        assert_eq!(prepared(&mut ctx, &["task", "urgency", ">", "5", "count"]), words("( urgency > 5 )"));
+        assert!(ctx.cli2.id_ranges.is_empty());
+
+        // With no filter at all, integer MODIFICATION numbers/sets are IDs ...
+        assert_eq!(prepared(&mut ctx, &["task", "modify", "3"]), words("( ( id == 3 ) )"));
+        assert_eq!(prepared(&mut ctx, &["task", "modify", "2,4"]), words("( ( id == 2 ) or ( id == 4 ) )"));
+        // ... unless signed or floating point, or the command is add/log.
+        assert!(prepared(&mut ctx, &["task", "modify", "3.5"]).is_empty());
+        assert!(ctx.cli2.id_ranges.is_empty());
+        assert!(prepared(&mut ctx, &["task", "add", "3"]).is_empty());
+        assert!(ctx.cli2.id_ranges.is_empty());
+        assert!(find(&ctx, "3").has_tag("MODIFICATION"));
+
+        // Sugar-free: a FILTER number becomes the pair id:<n>, then 'id = n'.
+        ctx.config.set("sugar", "0");
+        assert_eq!(prepared(&mut ctx, &["task", "3", "count"]), words("( id = 3 )"));
+        assert!(ctx.cli2.id_ranges.is_empty());
+        let id = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "id").unwrap();
+        assert_eq!(id.attribute("canonical"), "id");
+    }
+
+    #[test]
+    fn uuids_full_and_partial() {
+        let mut ctx = filter_context();
+        let full = "a3e5c7f0-1234-4abc-8def-0123456789ab";
+        assert_eq!(
+            prepared(&mut ctx, &["task", full, "count"]),
+            words(&format!("( ( ( uuid = {full} ) ) )"))
+        );
+        assert_eq!(ctx.cli2.uuid_list, [full]);
+        let value = ctx.cli2.args.iter().find(|a| a.attribute("raw") == full).unwrap();
+        assert_eq!(value.lextype, LexerType::string);
+
+        // Partial UUID, combined with IDs (IDs first, then 'or', then UUIDs).
+        assert_eq!(
+            prepared(&mut ctx, &["task", "abcdef01", "2", "abcdef02", "count"]),
+            words("( ( ( id == 2 ) or ( uuid = abcdef01 ) or ( uuid = abcdef02 ) ) )")
+        );
+        assert_eq!(ctx.cli2.uuid_list, ["abcdef01", "abcdef02"]);
+
+        // A MODIFICATION UUID is promoted when there is no FILTER UUID.
+        assert_eq!(prepared(&mut ctx, &["task", "modify", "abcdef01"]), words("( ( uuid = abcdef01 ) )"));
+
+        // Sugar-free: uuid:<uuid>, then 'uuid = <uuid>'.
+        ctx.config.set("sugar", "0");
+        assert_eq!(prepared(&mut ctx, &["task", "abcdef01", "count"]), words("( uuid = abcdef01 )"));
+        assert!(ctx.cli2.uuid_list.is_empty());
+    }
+
+    #[test]
+    fn tags_desugar() {
+        let mut ctx = filter_context();
+        assert_eq!(
+            prepared(&mut ctx, &["task", "+home", "-work", "count"]),
+            words("( tags _hastag_ home and tags _notag_ work )")
+        );
+        assert_eq!(
+            filter_types(&ctx),
+            [
+                LexerType::op,
+                LexerType::dom,
+                LexerType::op,
+                LexerType::string,
+                LexerType::op,
+                LexerType::dom,
+                LexerType::op,
+                LexerType::string,
+                LexerType::op,
+            ]
+        );
+    }
+
+    #[test]
+    fn attribute_modifiers() {
+        let mut ctx = filter_context();
+        // project is a string column: the value is not evaluated.
+        let cases = [
+            ("project:x", "project = x"),
+            ("project.before:x", "project < x"),
+            ("project.under:x", "project < x"),
+            ("project.below:x", "project < x"),
+            ("project.after:x", "project > x"),
+            ("project.over:x", "project > x"),
+            ("project.above:x", "project > x"),
+            ("project.by:x", "project <= x"),
+            ("project.none:", "project == ''"),
+            ("project.any:", "project !== ''"),
+            ("project.is:x", "project == x"),
+            ("project.equals:x", "project == x"),
+            ("project.not:x", "project != x"),
+            ("project.isnt:x", "project !== x"),
+            ("project.has:x", "project ~ x"),
+            ("project.contains:x", "project ~ x"),
+            ("project.hasnt:x", "project !~ x"),
+            ("project.startswith:x", "project ~ ^x"),
+            ("project.left:x", "project ~ ^x"),
+            ("project.endswith:x", "project ~ x$"),
+            ("project.right:x", "project ~ x$"),
+            ("project.word:x", "project ~ \\bx\\b"),
+            ("project.noword:x", "project !~ \\bx\\b"),
+            // An empty value is "''".
+            ("project:", "project = ''"),
+            // A multi-token value of a string attribute stays one string.
+            ("project:a+b", "project = a+b"),
+        ];
+        for (arg, expected) in cases {
+            let raws = prepared(&mut ctx, &["task", arg, "count"]);
+            assert_eq!(raws, words(&format!("( {expected} )")), "{arg}");
+            let types = filter_types(&ctx);
+            assert_eq!(types[1..4], [LexerType::dom, LexerType::op, LexerType::string], "{arg}");
+            let lhs = &ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).nth(1).unwrap();
+            assert_eq!(lhs.attribute("canonical"), "project", "{arg}");
+        }
+
+        // Abbreviated names keep the raw name, with the canonical name for
+        // the token Eval sees.
+        prepared(&mut ctx, &["task", "pro.has:x", "count"]);
+        let lhs = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "pro").unwrap();
+        assert_eq!((lhs.attribute("canonical").as_str(), lhs.get_token().as_str()), ("project", "project"));
+        assert_eq!(lhs.attribute("modifier"), "has");
+
+        // A string attribute whose value is a DOM reference compares to it.
+        assert_eq!(prepared(&mut ctx, &["task", "project:rc.x", "count"]), words("( project = rc.x )"));
+        assert_eq!(filter_types(&ctx)[3], LexerType::dom);
+
+        // Date attributes evaluate their value: a single token keeps its type,
+        // multiple tokens are parenthesized.
+        assert_eq!(prepared(&mut ctx, &["task", "due.before:eom", "count"]), words("( due < eom )"));
+        assert_ne!(filter_types(&ctx)[3], LexerType::string);
+        assert_eq!(
+            prepared(&mut ctx, &["task", "due.after:now+1d", "count"]),
+            words("( due > ( now + 1d ) )")
+        );
+        assert_eq!(prepared(&mut ctx, &["task", "due.none:", "count"]), words("( due == '' )"));
+        // Numeric and duration attributes also evaluate.
+        assert_eq!(prepared(&mut ctx, &["task", "urgency.over:2", "count"]), words("( urgency > 2 )"));
+        assert_eq!(filter_types(&ctx)[3], LexerType::number);
+        // recur is a string column (C++ ColumnRecur : ColumnTypeString).
+        assert_eq!(prepared(&mut ctx, &["task", "recur:1w+1d", "count"]), words("( recur = 1w+1d )"));
+        {
+            let mut ctx = context();
+            ctx.config
+                .parse(crate::context::CONFIGURATION_DEFAULTS, 1, &[crate::context::task_rcdir()], "")
+                .unwrap();
+            ctx.config.set("uda.est.type", "duration");
+            crate::columns::column::factory_all(&mut ctx.columns, &ctx.config).unwrap();
+            ctx.cli2.entity("attribute", "est");
+            assert_eq!(ctx.columns.get("est").unwrap().type_(), "duration");
+            assert_eq!(prepared(&mut ctx, &["task", "est.over:1w+1d", "count"]), words("( est > ( 1w + 1d ) )"));
+            assert_eq!(filter_types(&ctx)[3..6], [LexerType::op, LexerType::duration, LexerType::op]);
+        }
+
+        // A name that is not an attribute is downgraded to a word.
+        assert_eq!(prepared(&mut ctx, &["task", "foo:bar", "count"]), words("( foo:bar )"));
+        assert_eq!(filter_types(&ctx)[1], LexerType::word);
+
+        // Unknown modifier.
+        parse(&mut ctx, &["task", "project.bogus:x", "count"]).unwrap();
+        let err = with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap_err();
+        assert_eq!(err.to_string(), "Error: unrecognized attribute modifier 'bogus'.");
+
+        // C++ std::out_of_range from A2 ("", Lexer::Type::tag).
+        parse(&mut ctx, &["task", "due:+foo", "count"]).unwrap();
+        let err = with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap_err();
+        assert!(matches!(err, TwError::Runtime(_)), "{err:?}");
+    }
+
+    #[test]
+    fn patterns_and_plain_args() {
+        let mut ctx = filter_context();
+        assert_eq!(prepared(&mut ctx, &["task", "/foo/", "count"]), words("( description ~ foo )"));
+        let rhs = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "foo").unwrap();
+        assert_eq!(rhs.lextype, LexerType::string);
+        assert!(rhs.attributes.contains_key("flags"));
+
+        // Plain words are description searches, dequoted, tagged PLAIN.
+        // ("bar baz" is one multi-token argv: a word, re-lexed by lexFilterArgs.)
+        assert_eq!(
+            prepared(&mut ctx, &["task", "foo", "bar baz", "count"]),
+            words("( description ~ foo and description ~ bar and description ~ baz )")
+        );
+        let plain: Vec<&A2> = ctx.cli2.args.iter().filter(|a| a.has_tag("PLAIN")).collect();
+        assert_eq!(plain.len(), 9);
+        assert_eq!(plain[0].attribute("canonical"), "description");
+
+        // A quoted single token is a string, not a plain-arg candidate.
+        assert_eq!(prepared(&mut ctx, &["task", "foo", "'bar baz'", "count"]), [
+            "(", "description", "~", "foo", "and", "'bar baz'", ")"
+        ]);
+
+        // A word that is part of an expression is not plain.
+        assert_eq!(prepared(&mut ctx, &["task", "description", "~", "x", "count"]), words("( description ~ x )"));
+        assert!(!ctx.cli2.args.iter().any(|a| a.has_tag("PLAIN")));
+
+        // A FILTER word containing an expression is lexed into tokens.
+        assert_eq!(prepared(&mut ctx, &["task", "urgency>5", "count"]), words("( urgency > 5 )"));
+    }
+
+    #[test]
+    fn junctions_and_empty_parens() {
+        let mut ctx = filter_context();
+        // ) (  -->  ) and (
+        assert_eq!(
+            prepared(&mut ctx, &["task", "(", "+a", ")", "(", "+b", ")", "count"]),
+            words("( ( tags _hastag_ a ) and ( tags _hastag_ b ) )")
+        );
+        // ) <non-op>  and  <non-op> (
+        assert_eq!(
+            prepared(&mut ctx, &["task", "(", "+a", ")", "+b", "(", "+c", ")", "count"]),
+            words("( ( tags _hastag_ a ) and tags _hastag_ b and ( tags _hastag_ c ) )")
+        );
+        // Explicit operators get no junction.
+        assert_eq!(
+            prepared(&mut ctx, &["task", "+a", "or", "+b", "count"]),
+            words("( tags _hastag_ a or tags _hastag_ b )")
+        );
+        // Empty paren expressions get no junction either side.
+        assert_eq!(
+            prepared(&mut ctx, &["task", "+a", "(", ")", "count"]),
+            words("( tags _hastag_ a ( ) )")
+        );
+        assert_eq!(
+            prepared(&mut ctx, &["task", "(", ")", "+a", "count"]),
+            words("( ( ) tags _hastag_ a )")
+        );
+        assert_eq!(
+            prepared(&mut ctx, &["task", "(", "+a", ")", "(", ")", "count"]),
+            words("( ( tags _hastag_ a ) ( ) )")
+        );
+    }
+
+    #[test]
+    fn is_empty_paren_expression_scans() {
+        let mut cli2 = Cli2::new();
+        let set = |cli2: &mut Cli2, list: &[&str]| {
+            cli2.args = list.iter().map(|r| A2::new(r, LexerType::op)).collect();
+        };
+        set(&mut cli2, &["task", "(", "(", ")", ")", "x"]);
+        assert!(cli2.is_empty_paren_expression(1, true));
+        assert!(cli2.is_empty_paren_expression(4, false));
+        set(&mut cli2, &["task", "(", "x", ")"]);
+        assert!(!cli2.is_empty_paren_expression(1, true));
+        assert!(!cli2.is_empty_paren_expression(3, false));
+        // Unbalanced to the end.
+        set(&mut cli2, &["task", "(", "("]);
+        assert!(!cli2.is_empty_paren_expression(1, true));
+        // As in C++, the backward scan never examines args[0].
+        set(&mut cli2, &["(", ")"]);
+        assert!(!cli2.is_empty_paren_expression(1, false));
+    }
+
+    #[test]
+    fn stray_modifications_for_add() {
+        // findUUIDs promotes a MODIFICATION UUID even for 'add'; the stray
+        // FILTER args are then turned back into MODIFICATIONs.
+        let mut ctx = filter_context();
+        ctx.config.set("debug.parser", "2");
+        assert!(prepared(&mut ctx, &["task", "add", "abcdef01"]).is_empty());
+        let mods: Vec<String> = ctx
+            .cli2
+            .args
+            .iter()
+            .filter(|a| a.has_tag("MODIFICATION"))
+            .map(|a| a.attribute("raw"))
+            .collect();
+        assert_eq!(mods, words("( ( uuid = abcdef01 ) )"));
+        assert!(ctx
+            .debug_messages
+            .iter()
+            .any(|m| m.contains("CLI2::prepareFilter findStrayModifications")));
+
+        // 'log' too; other commands keep their FILTER.
+        assert!(prepared(&mut ctx, &["task", "log", "abcdef01"]).is_empty());
+        assert!(!prepared(&mut ctx, &["task", "modify", "abcdef01"]).is_empty());
+    }
+
+    #[test]
+    fn prepare_filter_debug_dumps() {
+        let mut ctx = filter_context();
+        ctx.config.set("debug.parser", "2");
+        parse(&mut ctx, &["task", "1-3", "+home", "project:x", "due.before:eom", "/foo/", "bar", "count"]).unwrap();
+        ctx.debug_messages.clear();
+        with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
+        let titles: Vec<&str> = ctx
+            .debug_messages
+            .iter()
+            .filter_map(|m| m.strip_prefix("\x1b[1m"))
+            .map(|m| m.split('\x1b').next().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "CLI2::prepareFilter findIDs",
+                "CLI2::prepareFilter insertIDExpr",
+                "CLI2::prepareFilter desugarFilterPlainArgs",
+                "CLI2::prepareFilter desugarFilterTags",
+                "CLI2::prepareFilter desugarFilterAttributes",
+                "CLI2::prepareFilter desugarFilterPatterns",
+                "CLI2::prepareFilter insertJunctions",
+            ]
+        );
+        // lexExpression output for each attribute.
+        let i = ctx.debug_messages.iter().position(|m| m == "CLI2::lexExpression project:x").unwrap();
+        assert!(ctx.debug_messages[i + 1].starts_with("  "));
+        assert_eq!(ctx.debug_messages[i + 2], " ");
+        assert!(ctx.debug_messages.iter().any(|m| m == "CLI2::lexExpression due:eom"));
+        assert_eq!(
+            filter_raws(&ctx),
+            words(
+                "( ( ( id >= 1 and id <= 3 ) ) and tags _hastag_ home and project = x and due < eom \
+                 and description ~ foo and description ~ bar )"
+            )
+        );
+
+        // A word FILTER arg triggers lexFilterArgs.
+        parse(&mut ctx, &["task", "urgency>5", "count"]).unwrap();
+        ctx.debug_messages.clear();
+        with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
+        assert!(ctx.debug_messages[0].contains("CLI2::prepareFilter lexFilterArgs"));
     }
 }
