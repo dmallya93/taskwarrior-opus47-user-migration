@@ -4694,22 +4694,6 @@ mod json_tests {
     }
 
     #[test]
-    fn t_test_compose_set_remove() {
-        let _statics = StaticsGuard;
-        Task::set_attributes(BTreeMap::new());
-        let mut task = Task::new();
-        task.set("name", "value");
-        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value"}"#);
-        task.set_int("one", 1);
-        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value","one":"1"}"#);
-        task.set("two", "4294967295");
-        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value","one":"1","two":"4294967295"}"#);
-        task.remove("one");
-        task.remove("two");
-        assert_eq!(task.compose_json_plain().unwrap(), r#"{"name":"value"}"#);
-    }
-
-    #[test]
     fn t_test_parse_and_tags() {
         let mut f = fixture(COLUMNS);
         assert!(Task::from_input(&mut f.ctx, "{}").is_ok());
@@ -5042,3 +5026,9 @@ mod json_tests {
         assert_eq!(err(t.parse_legacy(None, "")), "Unrecognized Taskwarrior file format or blank line in data.");
     }
 }
+
+// Faithful, assertion-count-checked ports of test/t_test.cpp and
+// test/tw_2689_test.cpp.
+#[cfg(test)]
+#[path = "task_tests.rs"]
+mod upstream_tests;

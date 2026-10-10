@@ -1449,3 +1449,9 @@ mod tests {
         assert_eq!(status_from_string("x").unwrap_err().to_string(), "Unknown task status value 'x'.");
     }
 }
+
+// Faithful, assertion-count-checked ports of test/tdb2_test.cpp and the
+// native-replica adaptation of test/tc_cpp_test.cpp.
+#[cfg(test)]
+#[path = "tdb2_tests.rs"]
+mod upstream_tests;
