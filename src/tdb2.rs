@@ -27,6 +27,13 @@ impl Tdb2 {
         Ok(())
     }
 
+    /// C++ `int TDB2::latest_id ()`: the highest ID in the working set.
+    /// Milestone 4 hook (the TDB2 port replaces it): 0, as for an empty
+    /// working set.
+    pub fn latest_id(&mut self) -> Result<i32> {
+        Ok(0)
+    }
+
     /// C++ `TDB2::gc`. Milestone 4 hook: no-op.
     pub fn gc(&mut self) -> Result<()> {
         Ok(())
