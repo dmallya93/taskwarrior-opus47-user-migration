@@ -48,17 +48,54 @@
 //! not landed return [`TwError::NotImplemented`] from `execute` (foundation
 //! DD4), and each stub's doc comment names the milestone that ports it.
 //!
-//! # Still to come
+//! # `uses_context` overrides
 //!
-//! - `CmdCustom` and `CmdTimesheet` override the C++ virtual `uses_context`
-//!   with a `report.<name>.context` lookup, which is why
-//!   [`Command::uses_context`] takes the configuration.
-//! - Nothing else in `Command.cpp` depends on Task/TDB2: `permission` is
-//!   ported as [`Command::permission`].
+//! `CmdCustom` and `CmdTimesheet` override the C++ virtual `uses_context`
+//! with a `report.<name>.context` lookup, which is why
+//! [`Command::uses_context`] takes the configuration. `CLI2::categorizeArgs`
+//! (which in C++ `dynamic_cast`s to those two classes) simply calls the trait
+//! method.
+//!
+//! # What else of `Command.cpp` / `Command.h` exists, and where
+//!
+//! `Command.cpp` holds only the constructor defaults ([`CommandMeta`]'s
+//! `Default`), the accessors, [`factory`], `categoryNames` and
+//! [`Command::permission`]. There is no `Command::filter`, `projectSync` or
+//! `Command::confirm` in Taskwarrior 3.5.0: commands build a `Filter` and
+//! call `Filter::subset` themselves ([`crate::filter::Filter`]); `confirm`
+//! / `confirm4` are the free functions [`crate::shared::shared::confirm`] and
+//! [`crate::util::confirm4`]; project-change feedback is
+//! [`crate::feedback::on_project_change`]. The metadata checks are performed
+//! where C++ performs them:
+//!
+//! - `accepts_filter` / `accepts_modifications` / `accepts_miscellaneous`:
+//!   `CLI2::categorizeArgs` (`The '<cmd>' command does not allow '<arg>'.`,
+//!   and "Unknown error. Please report." for the inconsistent
+//!   modifications+miscellaneous combinations), and `Context::dispatch`
+//!   (`prepareFilter` for commands accepting modifications but no filter).
+//! - `uses_context`: `CLI2::categorizeArgs` → `addContext`; also tagged
+//!   `USESCONTEXT` by `CLI2::findCommand` with the other DNA tags.
+//! - `needs_gc` / `needs_recur_update` / `read_only`: `Context::initialize`
+//!   (replica opened read-write) and `Context::dispatch` (gc, then
+//!   `handleUntil` / `handleRecurrence`).
+//! - `needs_confirm`: only [`Command::permission`].
+//!
+//! # Permission state (`_permission_quit`, `_permission_all`, `_first_iteration`)
+//!
+//! C++ keeps these on the `Command` object, which is created once per
+//! process by `Command::factory`; one process executes one command, so the
+//! state lives for exactly one command execution, and nothing resets it.
+//! Here the registry is built by [`factory`] once per `Context`
+//! (`Context::initialize`), and the state is held in [`Cell`]s inside that
+//! command's [`CommandMeta`] (commands are shared as `Rc<dyn Command>` and
+//! executed through `&self`). So the state is per Context, i.e. per command
+//! execution, as in C++: a second `Context` gets fresh state, and a command
+//! looping over tasks sees `all` / `quit` answers from earlier iterations.
+//! Commands read the C++ `_permission_quit` (to `break` their loop) as
+//! `self.meta().permission_quit.get()`.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::rc::Rc;
 
 use super::cmd_add::CmdAdd;
@@ -116,7 +153,7 @@ use crate::context::Context;
 use crate::error::{Result, TwError};
 use crate::shared::configuration::Configuration;
 use crate::shared::format::format;
-use crate::shared::shared::confirm;
+use crate::shared::shared::{confirm, with_console};
 use crate::util::confirm4;
 
 /// C++ `std::map<std::string, Command*>` as held by `Context::commands`.
@@ -380,9 +417,10 @@ pub trait Command {
         }
 
         if context.verbose("blank") && !meta.first_iteration.get() {
-            let mut stdout = std::io::stdout();
-            let _ = stdout.write_all(b"\n");
-            let _ = stdout.flush();
+            with_console(|_, stdout| {
+                let _ = stdout.write_all(b"\n");
+                let _ = stdout.flush();
+            });
         }
         let answer = confirm4(context, question);
         meta.first_iteration.set(false);
@@ -649,6 +687,126 @@ mod tests {
         };
         context.config.set("confirmation", "on");
         assert!(no_confirm.permission(&mut context, "q?", 2));
+    }
+
+    fn write_probe(needs_confirm: bool) -> Probe {
+        Probe {
+            meta: CommandMeta {
+                keyword: "probe".into(),
+                read_only: false,
+                needs_confirm,
+                ..CommandMeta::default()
+            },
+        }
+    }
+
+    /// `permission` with a scripted console: (answer, stdout).
+    fn ask(probe: &Probe, context: &mut Context, input: &str, quantity: u32) -> (bool, String) {
+        crate::shared::shared::begin_console_override(input);
+        let answer = probe.permission(context, "Change it?", quantity);
+        (answer, crate::shared::shared::end_console_override())
+    }
+
+    fn confirming_context() -> Context {
+        let mut context = Context::new();
+        context.config.set("confirmation", "on");
+        context.config.set("bulk", 3);
+        context.config.set("verbose", "blank");
+        context
+    }
+
+    #[test]
+    fn permission_single_task_asks_yes_no() {
+        let mut context = confirming_context();
+        let probe = write_probe(true);
+        assert_eq!(ask(&probe, &mut context, "yes\n", 1), (true, "Change it? (yes/no) ".to_string()));
+        assert_eq!(ask(&probe, &mut context, "  NO \n", 1), (false, "Change it? (yes/no) ".to_string()));
+        // End of input means no; 'all' is not an option for a single task.
+        assert_eq!(ask(&probe, &mut context, "", 1), (false, "Change it? (yes/no) ".to_string()));
+        assert_eq!(
+            ask(&probe, &mut context, "all\ny\n", 1),
+            (true, "Change it? (yes/no) Change it? (yes/no) ".to_string())
+        );
+        // (y/n) style never touches the 'all'/'quit' state or first iteration.
+        assert!(!probe.meta.permission_all.get() && !probe.meta.permission_quit.get());
+        assert!(probe.meta.first_iteration.get());
+
+        // Without rc.confirmation (or without needs_confirm) a single task proceeds.
+        context.config.set("confirmation", "off");
+        assert_eq!(ask(&probe, &mut context, "no\n", 1), (true, String::new()));
+        context.config.set("confirmation", "on");
+        assert_eq!(ask(&write_probe(false), &mut context, "no\n", 1), (true, String::new()));
+    }
+
+    #[test]
+    fn permission_bulk_asks_yes_no_all_quit() {
+        let mut context = confirming_context();
+        let probe = write_probe(false);
+
+        // Below bulk without needs_confirm: no prompt.
+        assert_eq!(ask(&probe, &mut context, "no\n", 2), (true, String::new()));
+
+        // At bulk the (yes/no/all/quit) prompt appears even without needs_confirm.
+        let prompt = "Change it? (yes/no/all/quit) ";
+        assert_eq!(ask(&probe, &mut context, "y\n", 3), (true, prompt.to_string()));
+        assert!(!probe.meta.first_iteration.get());
+        // Later prompts are preceded by a blank line (verbose=blank); unknown
+        // and ambiguous-free retries re-ask; 'Yes' lower-cases to 'yes'.
+        assert_eq!(
+            ask(&probe, &mut context, "maybe\n\nYes\n", 3),
+            (true, format!("\n{prompt}{prompt}{prompt}"))
+        );
+        assert_eq!(ask(&probe, &mut context, "n\n", 3), (false, format!("\n{prompt}")));
+        assert!(!probe.meta.permission_all.get() && !probe.meta.permission_quit.get());
+
+        // 'all': granted now and for every later call, without asking.
+        assert_eq!(ask(&probe, &mut context, "a\n", 3), (true, format!("\n{prompt}")));
+        assert!(probe.meta.permission_all.get());
+        assert_eq!(ask(&probe, &mut context, "no\n", 5), (true, String::new()));
+        assert_eq!(ask(&probe, &mut context, "no\n", 1), (true, String::new()));
+
+        // The raw answers are recorded as debug messages.
+        assert!(context.debug_messages.iter().any(|m| m == "STDIN 'maybe'"));
+        assert!(context.debug_messages.iter().any(|m| m == "STDIN ''"));
+        assert!(context.debug_messages.iter().any(|m| m == "STDIN 'Yes'"));
+    }
+
+    #[test]
+    fn permission_quit_and_end_of_input() {
+        let mut context = confirming_context();
+        context.config.set("verbose", "nothing");
+        let probe = write_probe(true);
+        let prompt = "Change it? (yes/no/all/quit) ";
+
+        // needs_confirm + confirmation: even 1 < quantity < bulk asks.
+        assert_eq!(ask(&probe, &mut context, "quit\n", 2), (false, prompt.to_string()));
+        assert!(probe.meta.permission_quit.get());
+        // 'quit' refuses every later call without asking.
+        assert_eq!(ask(&probe, &mut context, "yes\n", 2), (false, String::new()));
+        assert_eq!(ask(&probe, &mut context, "yes\n", 1), (false, String::new()));
+
+        // End of input means 'quit'; no blank line without verbose=blank.
+        let fresh = write_probe(true);
+        assert_eq!(ask(&fresh, &mut context, "y\n", 4), (true, prompt.to_string()));
+        assert_eq!(ask(&fresh, &mut context, "", 4), (false, prompt.to_string()));
+        assert!(fresh.meta.permission_quit.get());
+    }
+
+    #[test]
+    fn permission_state_is_per_registry() {
+        // Each Context builds its own registry, so the C++ per-object (per
+        // execution) permission state never leaks between executions.
+        let config = default_config();
+        let mut first = Registry::new();
+        let mut second = Registry::new();
+        factory(&mut first, &config).unwrap();
+        factory(&mut second, &config).unwrap();
+        let delete = &first["delete"];
+        delete.meta().permission_quit.set(true);
+        delete.meta().permission_all.set(true);
+        delete.meta().first_iteration.set(false);
+        let other = second["delete"].meta();
+        assert!(!other.permission_quit.get() && !other.permission_all.get() && other.first_iteration.get());
     }
 
     #[test]
