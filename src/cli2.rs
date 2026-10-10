@@ -32,9 +32,8 @@
 //! [`get_data_location`], [`apply_overrides`]) scan argv before full parsing
 //! and only look at arguments before the first `--`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::context::{strtol, Context};
 use crate::error::{Result, TwError};
@@ -46,18 +45,22 @@ use crate::shared::fs::{File, Path};
 use crate::shared::shared::{auto_complete, split};
 use crate::shared::utf8::{utf8_character, utf8_next_char};
 
-/// C++ `int CLI2::minimumMatchLength = 3;` (set from `abbreviation.minimum`
-/// by `Context::staticInitialization`).
-static MINIMUM_MATCH_LENGTH: AtomicI32 = AtomicI32::new(3);
+thread_local! {
+    /// C++ `int CLI2::minimumMatchLength = 3;` (set from `abbreviation.minimum`
+    /// by `Context::staticInitialization`). Thread-local, like the Lexer and
+    /// Datetime statics, so parallel unit tests cannot observe each other's
+    /// values.
+    static MINIMUM_MATCH_LENGTH: Cell<i32> = const { Cell::new(3) };
+}
 
 /// Reads C++ `CLI2::minimumMatchLength`.
 pub fn minimum_match_length() -> i32 {
-    MINIMUM_MATCH_LENGTH.load(Ordering::Relaxed)
+    MINIMUM_MATCH_LENGTH.with(Cell::get)
 }
 
 /// Writes C++ `CLI2::minimumMatchLength`.
 pub fn set_minimum_match_length(length: i32) {
-    MINIMUM_MATCH_LENGTH.store(length, Ordering::Relaxed);
+    MINIMUM_MATCH_LENGTH.with(|c| c.set(length));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
