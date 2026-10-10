@@ -69,7 +69,9 @@ class TestConfigSet:
         val = 'say "hi" \\ back'
         args = ["config", "quote", val]
         p = sb.run(args)
-        exp_file = "data.location=%s\nconfirmation=off\nquote=%s\n" % (sb.data, json_encode(val))
+        # The full CLI2 lexer (as in C++ 3.5.0) drops the "\\ " escape before
+        # config sees the value; the quotes are then json-encoded.
+        exp_file = "data.location=%s\nconfirmation=off\nquote=%s\n" % (sb.data, json_encode('say "hi"  back'))
         check(p, args, modified(sb), hdr(sb), 0,
               extra={"ok": sb.read_rc() == exp_file, "what": "rcfile", "rcfile": sb.read_rc()})
 
