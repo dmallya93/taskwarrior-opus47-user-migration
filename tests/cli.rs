@@ -3,7 +3,8 @@
 //! `include`), `main.cpp`'s exit statuses, and `Context` dispatch through the
 //! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
 //! `information`, abbreviations, `--`, argument checks, message colours),
-//! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`.
+//! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
+//! `ids`/`uuids` family.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1209,4 +1210,99 @@ fn export_report_filter_and_sort() {
         quiet(&env, &["export", "count"]),
         (String::new(), "Unable to find report that matches 'count'.\n".into(), 2)
     );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdIDs.cpp
+
+/// Pending `one` (1), `two +t` (2), `a:b` (3), completed `done` (no ID),
+/// waiting `w` (4), pending `five +t` (5); returns the env.
+fn ids_env() -> Env {
+    let env = Env::new("");
+    for args in [
+        &["add", "one"][..],
+        &["add", "two", "+t"],
+        &["add", "a:b"],
+        &["log", "done"],
+        &["add", "w", "wait:2099-01-01"],
+        &["add", "five", "+t"],
+    ] {
+        assert_eq!(quiet(&env, args).2, 0, "{args:?}");
+    }
+    env
+}
+
+#[test]
+fn ids_compress_ranges_and_skip_id_zero() {
+    let env = ids_env();
+    assert_eq!(quiet(&env, &["ids"]), ("1-5\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["+t", "ids"]).0, "2 5\n");
+    assert_eq!(quiet(&env, &["1", "3-5", "ids"]).0, "1 3-5\n");
+    assert_eq!(quiet(&env, &["1,2,4", "ids"]).0, "1-2 4\n");
+    // Completed tasks have ID 0 and are skipped.
+    assert_eq!(quiet(&env, &["status:completed", "ids"]).0, "\n");
+    // Headers (here the TASKRC/TASKDATA overrides) are cleared.
+    let output = env.task(&["ids"]);
+    assert_eq!((stdout(&output), stderr(&output)), ("1-5\n".into(), String::new()));
+}
+
+#[test]
+fn completion_ids_list_and_zsh_format() {
+    let env = ids_env();
+    assert_eq!(quiet(&env, &["_ids"]), ("1\n2\n3\n4\n5\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["+t", "_ids"]).0, "2\n5\n");
+    // Completed tasks are excluded; an empty list still ends in a newline.
+    assert_eq!(quiet(&env, &["status:completed", "_ids"]).0, "\n");
+    // id:description, with ':' in descriptions replaced by ','.  The order
+    // is the filter's (taskchampion `pending_task_data`, hash order in C++
+    // too), so compare sorted lines.
+    let sorted_lines = |text: &str| {
+        assert!(text.is_empty() || text.ends_with('\n'), "{text:?}");
+        let mut lines: Vec<String> = text.lines().map(String::from).collect();
+        lines.sort();
+        lines
+    };
+    let (out, err, code) = quiet(&env, &["_zshids"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    assert_eq!(sorted_lines(&out), ["1:one", "2:two", "3:a,b", "4:w", "5:five"]);
+    assert_eq!(quiet(&env, &["status:completed", "_zshids"]).0, "");
+    let output = env.task(&["_zshids", "+t"]);
+    assert_eq!(stderr(&output), "");
+    assert_eq!(sorted_lines(&stdout(&output)), ["2:two", "5:five"]);
+}
+
+#[test]
+fn uuids_sorted_and_zsh_format() {
+    let env = ids_env();
+    let tasks = export(&env, &[]);
+    let field = |t: &serde_json::Value, f: &str| t[f].as_str().unwrap().to_string();
+    let mut uuids: Vec<String> = tasks.iter().map(|t| field(t, "uuid")).collect();
+    assert!(uuids.iter().all(|u| is_uuid(u)));
+    uuids.sort();
+    assert_eq!(uuids.len(), 6);
+
+    // All statuses, sorted.
+    assert_eq!(quiet(&env, &["uuids"]), (uuids.join(" ") + "\n", String::new(), 0));
+    assert_eq!(quiet(&env, &["_uuids"]), (uuids.join("\n") + "\n", String::new(), 0));
+    let done = tasks.iter().find(|t| field(t, "description") == "done").unwrap();
+    assert_eq!(quiet(&env, &["status:completed", "uuids"]).0, field(done, "uuid") + "\n");
+    assert_eq!(quiet(&env, &["/nomatch/", "uuids"]).0, "\n");
+    assert_eq!(quiet(&env, &["/nomatch/", "_uuids"]).0, "\n");
+    assert_eq!(quiet(&env, &["/nomatch/", "_zshuuids"]).0, "");
+
+    // uuid:description for every matching task (completed included).
+    let mut expected: Vec<String> = tasks
+        .iter()
+        .map(|t| format!("{}:{}", field(t, "uuid"), field(t, "description").replace(':', ",")))
+        .collect();
+    expected.sort();
+    let (out, err, code) = quiet(&env, &["_zshuuids"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    assert!(out.ends_with('\n'));
+    let mut lines: Vec<String> = out.lines().map(String::from).collect();
+    lines.sort();
+    assert_eq!(lines, expected);
+
+    let output = env.task(&["uuids"]);
+    assert_eq!(stderr(&output), "");
 }

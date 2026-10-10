@@ -951,8 +951,9 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 11] = [
-        "_config", "_get", "_show", "_version", "add", "calc", "config", "count", "export", "log", "version",
+    const PORTED: [&str; 17] = [
+        "_config", "_get", "_ids", "_show", "_uuids", "_version", "_zshids", "_zshuuids", "add", "calc", "config",
+        "count", "export", "ids", "log", "uuids", "version",
     ];
 
     fn default_config() -> Configuration {
@@ -1177,7 +1178,10 @@ mod tests {
                 assert_eq!(output, "");
                 continue;
             }
-            if keyword == "count" || keyword == "export" {
+            if matches!(
+                keyword,
+                "count" | "export" | "ids" | "_ids" | "_zshids" | "uuids" | "_uuids" | "_zshuuids"
+            ) {
                 // These read the replica; covered end to end in tests/cli.rs.
                 continue;
             }
