@@ -3,7 +3,7 @@
 //! `include`), `main.cpp`'s exit statuses, and `Context` dispatch through the
 //! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
 //! `information`, abbreviations, `--`, argument checks, message colours),
-//! and the milestone 5 commands `add`, `log`, `count`, `export`.
+//! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -889,7 +889,7 @@ fn bad_color_rule_is_reported() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// CmdAdd.cpp, CmdLog.cpp, CmdCount.cpp, CmdExport.cpp
+// CmdAdd.cpp, CmdLog.cpp, CmdCount.cpp, CmdGet.cpp, CmdExport.cpp
 
 /// `task rc.verbose=nothing <args>`: stdout, stderr and exit status.
 fn quiet(env: &Env, args: &[&str]) -> (String, String, i32) {
@@ -1083,6 +1083,37 @@ fn count_skips_recurring_templates() {
     assert_eq!(quiet(&env, &["status:pending", "count"]).0, "2\n");
     assert_eq!(quiet(&env, &["status:recurring", "count"]).0, "0\n");
     assert_eq!(quiet(&env, &["/o/", "count"]).0, "2\n");
+}
+
+#[test]
+fn get_dom_references() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "one", "due:2030-02-03", "+a"]).2, 0);
+    assert_eq!(
+        quiet(
+            &env,
+            &["_get", "1.description", "1.due.year", "rc.verbose", "system.version"]
+        ),
+        ("one 2030 nothing 3.5.0\n".into(), String::new(), 0)
+    );
+    // An unresolvable reference is an empty string.
+    assert_eq!(quiet(&env, &["_get", "2.description"]), ("\n".into(), String::new(), 0));
+    assert_eq!(
+        quiet(&env, &["_get", "1.description", "2.description", "1.description"]),
+        ("one  one\n".into(), String::new(), 0)
+    );
+    assert_eq!(
+        quiet(&env, &["_get"]),
+        (String::new(), "No DOM reference specified.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["_get", "foo"]),
+        (String::new(), "'foo' is not a DOM reference.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["_get", "1.description", "foo"]),
+        (String::new(), "'foo' is not a DOM reference.\n".into(), 2)
+    );
 }
 
 #[test]
