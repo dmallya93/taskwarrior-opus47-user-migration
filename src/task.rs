@@ -10,9 +10,9 @@
 //! [`Task::parse_json`], [`Task::parse_json_object`], [`Task::parse_legacy`],
 //! [`Task::determine_version`]) and [`Task::compose_json`], urgency ([`Task::urgency`], every coefficient
 //! term, the user tag/project/keyword/UDA coefficients and
-//! `urgency.inherit`, in C++ `float`/`double` evaluation order), and the
-//! later-milestone stubs [`Task::modify`] / [`Task::substitute`] (milestone
-//! 5) and [`Task::diff`] (milestone 7).
+//! `urgency.inherit`, in C++ `float`/`double` evaluation order), the
+//! command-line modification [`Task::modify`] / [`Task::substitute`], and
+//! the later-milestone stub [`Task::diff`] (milestone 7).
 //!
 //! API mapping:
 //! * C++ statics are thread-local getter/setter pairs on [`Task`]
@@ -43,14 +43,18 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::ffi::CString;
+use std::rc::Rc;
 
+use crate::columns::column::MODIFICATION_LABEL;
 use crate::context::Context;
+use crate::feedback::{feedback_reserved_tags, feedback_special_tags};
 use crate::shared::datetime::Datetime;
 use crate::shared::format::{format, stream_double};
 use crate::shared::json::{self, JType, JsonValue};
-use crate::lexer::Lexer;
+use crate::lexer::{Lexer, Type as LexerType};
+use crate::shared::rx::RX;
 use crate::shared::localtime;
-use crate::shared::shared::{join, split, str_replace};
+use crate::shared::shared::{find_bytes_from, join, split, str_replace};
 use crate::variant::VariantTask;
 use crate::{Result, TwError};
 
@@ -345,6 +349,42 @@ fn named_date(name: &str) -> Datetime {
 fn substr_prefix(text: &str, n: usize) -> String {
     let bytes = text.as_bytes();
     String::from_utf8_lossy(&bytes[..n.min(bytes.len())]).into_owned()
+}
+
+/// C++ `#define APPROACHING_INFINITY 1000  // Close enough.  This isn't rocket surgery.`
+const APPROACHING_INFINITY: i32 = 1000;
+
+/// The `Task::substitute` infinite-loop guard message.
+fn infinite_loop_error() -> TwError {
+    TwError::Message(format(
+        "Terminated substitution because more than {1} changes were made - infinite loop protection.",
+        &[&APPROACHING_INFINITY],
+    ))
+}
+
+/// C++ `std::string::replace (pos, n, str)` on bytes: `pos` (a `size_type`;
+/// a negative value is the wrapped-around huge one) past `size ()` throws
+/// `std::out_of_range`, which no Taskwarrior handler names (`catch (...)`,
+/// [`TwError::Runtime`] carrying the libstdc++ `what ()`); `n` is clamped to
+/// the remaining length.
+fn cpp_string_replace(s: &mut Vec<u8>, pos: i64, n: i64, to: &[u8]) -> Result<()> {
+    let size = s.len();
+    let pos = pos as u64;
+    if pos > size as u64 {
+        return Err(TwError::Runtime(format!(
+            "basic_string::replace: __pos (which is {pos}) > this->size() (which is {size})"
+        )));
+    }
+    let pos = pos as usize;
+    let n = (n.max(0) as usize).min(size - pos);
+    s.splice(pos..pos + n, to.iter().copied());
+    Ok(())
+}
+
+/// A C++ `std::string` (bytes) stored back into a Rust `String`: lossless
+/// unless a byte-offset replacement split a UTF-8 sequence.
+fn bytes_to_string(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 impl Task {
@@ -2055,32 +2095,374 @@ impl Task {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // Later-milestone stubs.
+    // Command-line modification (C++ `#ifdef PRODUCT_TASKWARRIOR` section).
 
     /// C++ `void Task::modify (modType type, bool text_required = false)`:
-    /// applies the command-line modifications in the parse tree to this task.
+    /// reads the parse tree (`ctx.cli2.args`) and applies every argument
+    /// tagged `MODIFICATION` to this task, in order: `name:value` pairs (an
+    /// empty value removes the attribute, otherwise the column's `modify`),
+    /// `/from/to/flags` substitutions, `+tag` / `-tag`, and every other
+    /// argument accumulated as description text, which `mod_type` then
+    /// applies (replace, prepend, append or annotate).
     ///
-    /// Restored by milestone 5 (needs Eval, DOM and CLI2). Nothing calls it
-    /// yet.
+    /// C++ `Context::getContext ().withCurrentTask (this)` makes this task
+    /// the DOM context while the parse tree is read. `current_task` is an
+    /// `Rc` snapshot rather than a live pointer, so it is refreshed from
+    /// `self` before every column `modify` (the only DOM consumer here),
+    /// which is when C++ would read through the pointer; the previous value
+    /// is restored on every exit path, as the C++ RAII guard does.
+    ///
+    /// The C++ `Context::getContext ().columns[name]` lookup is
+    /// `std::map::operator[]`, which inserts a null entry for an unknown
+    /// name before the throw; that entry is unobservable (the command fails
+    /// with the error below) and is not reproduced.
     ///
     /// # Errors
-    /// Always `TwError::NotImplemented("Task::modify")` until milestone 5.
-    pub fn modify(&mut self, _ctx: &mut Context, _mod_type: ModType, _text_required: bool) -> Result<()> {
-        Err(TwError::NotImplemented("Task::modify".into()))
+    /// * `The '{1}' attribute does not allow a value of '{2}'.` for an
+    ///   unknown or non-modifiable column.
+    /// * `Unrecognized column type '{1}' for column '{2}'`.
+    /// * `Additional text must be provided.` when `text_required` and no
+    ///   modification was made.
+    /// * Whatever the column `modify`, `feedback_reserved_tags`,
+    ///   `removeDependency`, [`Task::substitute`] or `getStatus` throw.
+    pub fn modify(&mut self, ctx: &mut Context, mod_type: ModType, text_required: bool) -> Result<()> {
+        // while reading the parse tree, consider DOM references in the context of
+        // this task
+        let previous = ctx.current_task.replace(Rc::new(self.clone()));
+        let result = self.modify_in_context(ctx, mod_type, text_required);
+        ctx.current_task = previous;
+        result
+    }
+
+    /// The body of [`Task::modify`], run with `ctx.current_task` bound.
+    fn modify_in_context(&mut self, ctx: &mut Context, mod_type: ModType, text_required: bool) -> Result<()> {
+        let label = MODIFICATION_LABEL;
+
+        // Need this for later comparison.
+        let original_status = self.get_status()?;
+
+        let mut text = String::new();
+        let mut mods = false;
+        let args = ctx.cli2.args.clone();
+        for a in &args {
+            if a.has_tag("MODIFICATION") {
+                if a.lextype == LexerType::pair {
+                    // 'canonical' is the canonical name. Needs to be said.
+                    // 'value' requires eval.
+                    let name = a.attribute("canonical");
+                    let mut value = a.attribute("value");
+                    if value.is_empty() || value == "''" || value == "\"\"" {
+                        // Special case: Handle bulk removal of 'tags' and 'depends" virtual
+                        // attributes
+                        if name == "depends" {
+                            for dep in self.get_dependency_uuids() {
+                                self.remove_dependency(&dep)?;
+                            }
+                        } else if name == "tags" {
+                            for tag in self.get_tags() {
+                                self.remove_tag(&tag);
+                            }
+                        }
+
+                        // ::composeF4 will skip if the value is blank, but the presence of
+                        // the attribute will prevent ::validate from applying defaults.
+                        if (self.has(&name) && !self.get(&name).is_empty())
+                            || (name == "due" && ctx.config.has("default.due"))
+                            || (name == "scheduled" && ctx.config.has("default.scheduled"))
+                            || (name == "project" && ctx.config.has("default.project"))
+                        {
+                            mods = true;
+                            self.set(&name, "");
+                        }
+
+                        ctx.debug(&format!("{label}{name} <-- ''"));
+                    } else {
+                        Lexer::dequote(&mut value);
+
+                        // Get the column info. Some columns are not modifiable.
+                        let column = match ctx.columns.get(&name).cloned() {
+                            Some(column) if column.modifiable() => column,
+                            _ => {
+                                return Err(TwError::Message(format(
+                                    "The '{1}' attribute does not allow a value of '{2}'.",
+                                    &[&name, &value],
+                                )))
+                            }
+                        };
+
+                        // Delegate modification to the column object or their base classes.
+                        let column_type = column.type_().to_string();
+                        if name == "depends"
+                            || name == "tags"
+                            || name == "recur"
+                            || column_type == "date"
+                            || column_type == "duration"
+                            || column_type == "numeric"
+                            || column_type == "string"
+                            || column_type == "uuid"
+                        {
+                            // The live `this` C++ `currentTask` points at.
+                            ctx.current_task = Some(Rc::new(self.clone()));
+                            column.modify(self, &value, ctx)?;
+                            mods = true;
+                        } else {
+                            return Err(TwError::Message(format(
+                                "Unrecognized column type '{1}' for column '{2}'",
+                                &[&column_type, &name],
+                            )));
+                        }
+                    }
+                }
+                // Perform description/annotation substitution.
+                else if a.lextype == LexerType::substitution {
+                    ctx.debug(&format!("{label}substitute {}", a.attribute("raw")));
+                    self.substitute(&a.attribute("from"), &a.attribute("to"), &a.attribute("flags"))?;
+                    mods = true;
+                }
+                // Tags need special handling because they are essentially a vector stored
+                // in a single string, therefore Task::{add,remove}Tag must be called as
+                // appropriate.
+                else if a.lextype == LexerType::tag {
+                    let tag = a.attribute("name");
+                    feedback_reserved_tags(&tag)?;
+
+                    if a.attribute("sign") == "+" {
+                        ctx.debug(&format!("{label}tags <-- add '{tag}'"));
+                        self.add_tag(&tag);
+                        feedback_special_tags(ctx, self, &tag);
+                    } else {
+                        ctx.debug(&format!("{label}tags <-- remove '{tag}'"));
+                        self.remove_tag(&tag);
+                    }
+
+                    mods = true;
+                }
+                // Unknown args are accumulated as though they were WORDs.
+                else {
+                    if !text.is_empty() {
+                        text.push(' ');
+                    }
+                    text.push_str(&a.attribute("raw"));
+                }
+            }
+        }
+
+        // Task::modType determines what happens to the WORD arguments, if there are
+        //  any.
+        if !text.is_empty() {
+            Lexer::dequote(&mut text);
+
+            match mod_type {
+                ModType::Replace => {
+                    ctx.debug(&format!("{label}description <-- '{text}'"));
+                    self.set("description", &text);
+                }
+                ModType::Prepend => {
+                    ctx.debug(&format!("{label}description <-- '{text}' + description"));
+                    let description = format!("{text} {}", self.get("description"));
+                    self.set("description", &description);
+                }
+                ModType::Append => {
+                    ctx.debug(&format!("{label}description <-- description + '{text}'"));
+                    let description = format!("{} {text}", self.get("description"));
+                    self.set("description", &description);
+                }
+                ModType::Annotate => {
+                    ctx.debug(&format!("{label}new annotation <-- '{text}'"));
+                    self.add_annotation(&text);
+                }
+            }
+        } else if !mods && text_required {
+            return Err(TwError::Message("Additional text must be provided.".into()));
+        }
+
+        // Modifying completed/deleted tasks generates a message, if the modification
+        // does not change status.
+        let status = self.get_status()?;
+        if (status == Status::Completed || status == Status::Deleted) && status == original_status {
+            let uuid = substr_prefix(&self.get("uuid"), 8);
+            ctx.footnote(&format(
+                "Note: Modified task {1} is {2}. You may wish to make this task pending with: task {3} modify status:pending",
+                &[&uuid, &self.get("status"), &uuid],
+            ));
+        }
+
+        Ok(())
     }
 
     /// C++ `void Task::substitute (const std::string& from, const std::string&
     /// to, const std::string& flags)`: applies a `/from/to/flags`
-    /// substitution to the description and annotations.
+    /// substitution to the description and then (unless a non-global
+    /// substitution already happened) the annotations. With `rc.regex`
+    /// (`Task::regex`) `from` is a regex (`RX (from,
+    /// Task::searchCaseSensitive)`), otherwise a literal searched with
+    /// `::find (..., Task::searchCaseSensitive)`. Flag `g` replaces every
+    /// match; otherwise only the first one, in the description or else in
+    /// the first annotation that matches.
     ///
-    /// Restored by milestone 5 (needs Eval, DOM and CLI2). Nothing calls it
-    /// yet.
+    /// The C++ offset arithmetic is reproduced byte for byte, including its
+    /// quirks: the literal branch searches the already-modified text but
+    /// replaces at `pos + skew`, and the regex annotation branch indexes
+    /// `start[i + skew]`. Every `std::string::replace` goes through
+    /// [`cpp_string_replace`], so a position past the end throws
+    /// `std::out_of_range` exactly where C++ does (reaching `catch (...)`,
+    /// [`TwError::Runtime`]). A `start[i + skew]` index outside the vector
+    /// is undefined behaviour in C++ (no bounds check); here it is reported
+    /// as [`TwError::Runtime`] too.
+    ///
+    /// The text is edited as bytes (C++ `std::string`); if a replacement at a
+    /// byte offset splits a UTF-8 sequence the stored value is converted
+    /// lossily.
     ///
     /// # Errors
-    /// Always `TwError::NotImplemented("Task::substitute")` until milestone 5.
-    pub fn substitute(&mut self, _from: &str, _to: &str, _flags: &str) -> Result<()> {
-        Err(TwError::NotImplemented("Task::substitute".into()))
+    /// * `Terminated substitution because more than {1} changes were made -
+    ///   infinite loop protection.` (literal branch, more than
+    ///   `APPROACHING_INFINITY` = 1000 changes).
+    /// * [`TwError::Runtime`] for an invalid regex (`RX` rethrowing
+    ///   `std::regex_error`), or an out-of-range replace as described above.
+    pub fn substitute(&mut self, from: &str, to: &str, flags: &str) -> Result<()> {
+        let global = flags.contains('g');
+        let sensitive = Task::search_case_sensitive();
+        let to_b = to.as_bytes();
+        let from_b = from.as_bytes();
+
+        // Get the data to modify.
+        let mut description = self.get("description").into_bytes();
+        let annotations = self.get_annotations();
+        let mut anno_bytes: Vec<(String, Vec<u8>)> =
+            annotations.into_iter().map(|(k, v)| (k, v.into_bytes())).collect();
+
+        // Count the changes, so we know whether to proceed to annotations, after
+        // modifying description.
+        let mut changes = 0;
+        let mut done = false;
+
+        // Regex support is optional.
+        if Task::regex() {
+            // Create the regex.
+            let rx = RX::new(from, sensitive);
+            let mut start: Vec<i32> = Vec::new();
+            let mut end: Vec<i32> = Vec::new();
+
+            // Perform all subs on description.
+            let subject = String::from_utf8_lossy(&description).into_owned();
+            if rx.matches_offsets(&mut start, &mut end, &subject)? {
+                let mut skew: i64 = 0;
+                let mut i = 0;
+                while i < start.len() && !done {
+                    let n = (end[i] - start[i]) as i64;
+                    cpp_string_replace(&mut description, start[i] as i64 + skew, n, to_b)?;
+                    skew += to_b.len() as i64 - n;
+                    changes += 1;
+
+                    if !global {
+                        done = true;
+                    }
+                    i += 1;
+                }
+            }
+
+            if !done {
+                // Perform all subs on annotations.
+                for (_, value) in anno_bytes.iter_mut() {
+                    start.clear();
+                    end.clear();
+                    let subject = String::from_utf8_lossy(value).into_owned();
+                    if rx.matches_offsets(&mut start, &mut end, &subject)? {
+                        let mut skew: i64 = 0;
+                        let mut i = 0;
+                        while i < start.len() && !done {
+                            // C++ `start[i + skew]`: unsigned int index.
+                            let index = (i as i64 + skew) as u32 as usize;
+                            let Some(&at) = start.get(index) else {
+                                return Err(TwError::Runtime(format!(
+                                    "Task::substitute: start[{index}] out of range (size {})",
+                                    start.len()
+                                )));
+                            };
+                            let n = (end[i] - start[i]) as i64;
+                            cpp_string_replace(value, at as i64, n, to_b)?;
+                            skew += to_b.len() as i64 - n;
+                            changes += 1;
+
+                            if !global {
+                                done = true;
+                            }
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Perform all subs on description.
+            let mut counter = 0;
+            let mut pos: usize = 0;
+            let mut skew: i64 = 0;
+
+            while !done {
+                let Some(found) = find_bytes_from(&description, from_b, pos, sensitive) else {
+                    break;
+                };
+                pos = found;
+                cpp_string_replace(&mut description, pos as i64 + skew, from_b.len() as i64, to_b)?;
+                skew += to_b.len() as i64 - from_b.len() as i64;
+
+                pos += to_b.len();
+                changes += 1;
+
+                if !global {
+                    done = true;
+                }
+
+                counter += 1;
+                if counter > APPROACHING_INFINITY {
+                    return Err(infinite_loop_error());
+                }
+            }
+
+            if !done {
+                // Perform all subs on annotations.
+                counter = 0;
+                for (_, value) in anno_bytes.iter_mut() {
+                    pos = 0;
+                    skew = 0;
+                    while !done {
+                        let Some(found) = find_bytes_from(value, from_b, pos, sensitive) else {
+                            break;
+                        };
+                        pos = found;
+                        cpp_string_replace(value, pos as i64 + skew, from_b.len() as i64, to_b)?;
+                        skew += to_b.len() as i64 - from_b.len() as i64;
+
+                        pos += to_b.len();
+                        changes += 1;
+
+                        if !global {
+                            done = true;
+                        }
+
+                        counter += 1;
+                        if counter > APPROACHING_INFINITY {
+                            return Err(infinite_loop_error());
+                        }
+                    }
+                }
+            }
+        }
+
+        if changes != 0 {
+            self.set("description", &bytes_to_string(description));
+            let annotations: BTreeMap<String, String> =
+                anno_bytes.into_iter().map(|(k, v)| (k, bytes_to_string(v))).collect();
+            self.set_annotations(&annotations);
+            self.recalc_urgency = true;
+        }
+
+        Ok(())
     }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Later-milestone stubs.
 
     /// C++ `std::string Task::diff (const Task& after) const`: summarizes the
     /// differences to `after` for display, in the future tense.
@@ -4733,16 +5115,7 @@ mod urgency_tests {
 
     #[test]
     fn later_milestone_stubs() {
-        let mut f = fixture();
-        let mut t = Task::new();
-        assert!(matches!(
-            t.modify(&mut f.ctx, ModType::Replace, false),
-            Err(TwError::NotImplemented(ref s)) if s == "Task::modify"
-        ));
-        assert!(matches!(
-            t.substitute("a", "b", "g"),
-            Err(TwError::NotImplemented(ref s)) if s == "Task::substitute"
-        ));
+        let t = Task::new();
         assert!(matches!(t.diff(&Task::new()), Err(TwError::NotImplemented(ref s)) if s == "Task::diff"));
     }
 }

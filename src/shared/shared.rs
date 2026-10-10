@@ -437,8 +437,13 @@ pub fn find(text: &str, pattern: &str, sensitive: bool) -> Option<usize> {
 /// Note the C++ quirk preserved here: a case-insensitive search for an empty
 /// pattern returns 0 regardless of `begin`.
 pub fn find_from(text: &str, pattern: &str, begin: usize, sensitive: bool) -> Option<usize> {
-    let text = text.as_bytes();
-    let p = pattern.as_bytes();
+    find_bytes_from(text.as_bytes(), pattern.as_bytes(), begin, sensitive)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// [`find_from`] over raw bytes, for callers (C++ `Task::substitute`) whose
+/// `std::string` may hold a byte sequence that is not valid UTF-8 mid-way.
+pub fn find_bytes_from(text: &[u8], p: &[u8], begin: usize, sensitive: bool) -> Option<usize> {
 
     // Implement a sensitive find, which is really just a loop withing a loop,
     // comparing lower-case versions of each character in turn.
