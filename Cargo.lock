@@ -2499,6 +2499,7 @@ version = "3.5.0"
 dependencies = [
  "libc",
  "regex",
+ "serde_json",
  "taskchampion",
  "tempfile",
  "tokio",

@@ -437,8 +437,13 @@ pub fn find(text: &str, pattern: &str, sensitive: bool) -> Option<usize> {
 /// Note the C++ quirk preserved here: a case-insensitive search for an empty
 /// pattern returns 0 regardless of `begin`.
 pub fn find_from(text: &str, pattern: &str, begin: usize, sensitive: bool) -> Option<usize> {
-    let text = text.as_bytes();
-    let p = pattern.as_bytes();
+    find_bytes_from(text.as_bytes(), pattern.as_bytes(), begin, sensitive)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// [`find_from`] over raw bytes, for callers (C++ `Task::substitute`) whose
+/// `std::string` may hold a byte sequence that is not valid UTF-8 mid-way.
+pub fn find_bytes_from(text: &[u8], p: &[u8], begin: usize, sensitive: bool) -> Option<usize> {
 
     // Implement a sensitive find, which is really just a loop withing a loop,
     // comparing lower-case versions of each character in turn.
@@ -563,6 +568,51 @@ extern "C" fn confirm_signal_handler(s: libc::c_int) {
     }
 }
 
+/// Test-only console: scripted stdin bytes and captured stdout bytes.
+#[cfg(test)]
+type ScriptedConsole = (std::io::Cursor<Vec<u8>>, Vec<u8>);
+
+#[cfg(test)]
+thread_local! {
+    static CONSOLE_OVERRIDE: std::cell::RefCell<Option<ScriptedConsole>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only: make [`with_console`] (and so `confirm`, `confirm4` and
+/// `Command::permission`) read `input` instead of stdin and capture what
+/// they write to stdout, on this thread, until [`end_console_override`].
+#[cfg(test)]
+pub(crate) fn begin_console_override(input: &str) {
+    CONSOLE_OVERRIDE.with(|c| *c.borrow_mut() = Some((std::io::Cursor::new(input.as_bytes().to_vec()), Vec::new())));
+}
+
+/// Test-only: ends [`begin_console_override`], returning the captured stdout.
+#[cfg(test)]
+pub(crate) fn end_console_override() -> String {
+    CONSOLE_OVERRIDE
+        .with(|c| c.borrow_mut().take())
+        .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
+        .unwrap_or_default()
+}
+
+/// Runs `f` with the interactive console: C++ `std::cin` / `std::cout`
+/// (locked stdin, stdout). Unit tests may substitute a scripted console with
+/// [`begin_console_override`]; the binary always uses the real streams.
+pub fn with_console<R>(f: impl FnOnce(&mut dyn BufRead, &mut dyn Write) -> R) -> R {
+    #[cfg(test)]
+    {
+        if let Some((mut input, mut output)) = CONSOLE_OVERRIDE.with(|c| c.borrow_mut().take()) {
+            let result = f(&mut input, &mut output);
+            CONSOLE_OVERRIDE.with(|c| *c.borrow_mut() = Some((input, output)));
+            return result;
+        }
+    }
+    let stdin = std::io::stdin();
+    let mut stdin = stdin.lock();
+    let mut stdout = std::io::stdout();
+    f(&mut stdin, &mut stdout)
+}
+
 /// C++ `confirm`: asks `question` with a ` (yes/no) ` suffix until the answer
 /// autocompletes to exactly one of `yes`/`no`. End of input counts as `no`.
 /// SIGINT while waiting prints `Interrupted: No changes made.` and exits 1.
@@ -571,7 +621,6 @@ extern "C" fn confirm_signal_handler(s: libc::c_int) {
 /// be re-written (the C++ `std::getline` rationale).
 pub fn confirm(question: &str) -> bool {
     let options = ["yes", "no"];
-    let mut matches;
 
     let handler: extern "C" fn(libc::c_int) = confirm_signal_handler;
     // SAFETY: installing a handler that only calls async-signal-safe functions.
@@ -579,36 +628,37 @@ pub fn confirm(question: &str) -> bool {
         libc::signal(libc::SIGINT, handler as libc::sighandler_t);
     }
 
-    let stdin = std::io::stdin();
-    let mut stdin = stdin.lock();
-    let mut eof = false;
-    loop {
-        let mut stdout = std::io::stdout();
-        let _ = write!(stdout, "{question} (yes/no) ");
-        let _ = stdout.flush();
+    let matches = with_console(|stdin, stdout| {
+        let mut matches;
+        let mut eof = false;
+        loop {
+            let _ = write!(stdout, "{question} (yes/no) ");
+            let _ = stdout.flush();
 
-        // std::getline: reads up to '\n' (discarded); hitting end of input
-        // first sets eof.
-        let mut buffer = Vec::new();
-        match stdin.read_until(b'\n', &mut buffer) {
-            Ok(_) if buffer.last() == Some(&b'\n') => {
-                buffer.pop();
+            // std::getline: reads up to '\n' (discarded); hitting end of input
+            // first sets eof.
+            let mut buffer = Vec::new();
+            match stdin.read_until(b'\n', &mut buffer) {
+                Ok(_) if buffer.last() == Some(&b'\n') => {
+                    buffer.pop();
+                }
+                _ => eof = true,
             }
-            _ => eof = true,
+
+            let answer = if eof {
+                "no".to_string()
+            } else {
+                lower_case(&trim(&String::from_utf8_lossy(&buffer)))
+            };
+
+            matches = auto_complete(&answer, &options, 1); // Hard-coded 1.
+
+            if eof || matches.len() == 1 {
+                break;
+            }
         }
-
-        let answer = if eof {
-            "no".to_string()
-        } else {
-            lower_case(&trim(&String::from_utf8_lossy(&buffer)))
-        };
-
-        matches = auto_complete(&answer, &options, 1); // Hard-coded 1.
-
-        if eof || matches.len() == 1 {
-            break;
-        }
-    }
+        matches
+    });
 
     // SAFETY: restoring the default disposition.
     unsafe {

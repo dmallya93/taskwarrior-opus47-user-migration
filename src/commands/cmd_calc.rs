@@ -5,9 +5,9 @@
 
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
+use crate::dom::ContextResolver;
 use crate::error::Result;
-use crate::eval::{DomResolver, Eval};
-use crate::variant::{Variant, VariantTask};
+use crate::eval::Eval;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdCalc` (`calc`).
@@ -44,35 +44,6 @@ impl Default for CmdCalc {
     }
 }
 
-/// The resolver for `e.addSource (domSource)`: `Context::getContext
-/// ().currentTask` is null for `calc` (nothing sets it), and Eval's debug
-/// output goes to the Context debug sink (C++ `Context::getContext ().debug`).
-struct CalcResolver<'c> {
-    context: &'c mut Context,
-}
-
-impl DomResolver for CalcResolver<'_> {
-    /// C++ `domSource`, i.e. `getDOM (identifier, nullptr, value)`.
-    ///
-    /// Deviation: `getDOM` (`src/DOM.cpp`, Rust `dom.rs`) is ported by
-    /// milestone 5; until it lands no DOM reference (`rc.*`, `tw.*`,
-    /// `system.*`, `context.*`, `<id>.<attribute>`) resolves, so such an
-    /// identifier is left to Eval exactly as C++ treats an unknown name.
-    /// Milestone 5 replaces this body with `dom_source (name, |n| get_dom
-    /// (n, ...))`.
-    fn resolve(&mut self, _name: &str) -> Option<Variant> {
-        None
-    }
-
-    fn current_task(&self) -> Option<&dyn VariantTask> {
-        None
-    }
-
-    fn debug(&mut self, message: &str) {
-        self.context.debug(message);
-    }
-}
-
 impl Command for CmdCalc {
     fn meta(&self) -> &CommandMeta {
         &self.meta
@@ -97,8 +68,10 @@ impl Command for CmdCalc {
             expression.push(' ');
         }
 
-        // Evaluate according to preference.
-        let mut resolver = CalcResolver { context };
+        // Evaluate according to preference. The resolver is C++ `domSource`:
+        // `getDOM (identifier, Context::getContext ().currentTask, value)`,
+        // with Eval's debug output going to `Context::debug`.
+        let mut resolver = ContextResolver::new(context);
         let result = if infix {
             e.evaluate_infix_expression(&expression, &mut resolver)?
         } else {
@@ -128,11 +101,12 @@ mod tests {
         for (name, value) in config {
             context.config.set(name, *value);
         }
+        crate::commands::command::register(&mut context.commands, std::rc::Rc::new(CmdCalc::new()));
         context.cli2.entity("cmd", "calc");
         for a in args {
             context.cli2.add(a);
         }
-        context.cli2.analyze(&context.config, &mut context.debug_messages).unwrap();
+        crate::cli2::with_cli2(&mut context, |cli2, ctx| cli2.analyze(ctx)).unwrap();
         context
     }
 
@@ -173,5 +147,25 @@ mod tests {
         let (rc, out, _) = run(&["task", "calc", "1 +"], &[]);
         assert!(rc.is_err());
         assert_eq!(out, "");
+    }
+
+    #[test]
+    fn dom_references_resolve() {
+        // C++ `domSource` with a null currentTask: context-free references.
+        let (rc, out, _) = run(&["task", "calc", "rc.foo"], &[("foo", "bar")]);
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(out, "bar\n");
+
+        // rc values are strings: string * integer repeats (C++ Variant).
+        let (rc, out, _) = run(&["task", "calc", "rc.width", "*", "2"], &[("width", "40")]);
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(out, "4040\n");
+
+        let (_, out, _) = run(&["task", "calc", "system.version"], &[]);
+        assert_eq!(out, format!("{}\n", crate::version::VERSION));
+
+        // An unknown reference is a string, as in C++.
+        let (_, out, _) = run(&["task", "calc", "rc.missing"], &[]);
+        assert_eq!(out, "rc.missing\n");
     }
 }

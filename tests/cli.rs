@@ -1,6 +1,10 @@
 //! End-to-end tests of the `task` binary: the `version` family and
 //! configuration loading (`TASKRC`, `rc:`, `rc.x=y` / `rc.x:y` overrides,
-//! `include`), plus `main.cpp`'s exit statuses.
+//! `include`), `main.cpp`'s exit statuses, and `Context` dispatch through the
+//! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
+//! `information`, abbreviations, `--`, argument checks, message colours),
+//! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
+//! `ids`/`uuids` family, `_unique` and `_zshattributes`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -174,11 +178,11 @@ fn no_command_with_empty_default_command() {
 #[test]
 fn stub_command_is_not_implemented() {
     let env = Env::new("");
-    let output = env.task(&["add", "x"]);
+    let output = env.task(&["prepend", "x"]);
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        env.override_headers() + "Command 'add' is not yet implemented.\n"
+        env.override_headers() + "Command 'prepend' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -187,8 +191,8 @@ fn stub_command_is_not_implemented() {
 fn no_override_headers_without_taskrc_taskdata() {
     let env = Env::new("");
     std::fs::copy(env.rc(), env.home().join(".taskrc")).unwrap();
-    let output = env.command(&["add", "x"]).output().unwrap();
-    assert_eq!(stderr(&output), "Command 'add' is not yet implemented.\n");
+    let output = env.command(&["prepend", "x"]).output().unwrap();
+    assert_eq!(stderr(&output), "Command 'prepend' is not yet implemented.\n");
     assert_eq!(output.status.code(), Some(2));
 }
 
@@ -649,4 +653,772 @@ fn calc_binary() {
     let output = calc(&[]);
     assert_eq!((stdout(&output).as_str(), stderr(&output).as_str()), ("", "No expression to evaluate.\n"));
     assert_eq!(output.status.code(), Some(255));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Context::initialize / run / dispatch with the full CLI2 parser
+
+/// The C++ title contains U+0456 (Cyrillic i) in "specifіc".
+const FINAL_PARSE_TREE: &str = "Parse Tree (before command-specif\u{456}c processing)";
+
+const ESC: &str = "\x1b";
+
+#[test]
+fn debug_parser_1_dumps_the_final_parse_tree() {
+    let env = Env::new("");
+    let output = env.task(&["rc.debug.parser=1", "calc", "1", "+", "2"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), "3\n");
+    let err = stderr(&output);
+    // rc.debug.parser=1 implies rc.debug (propagateDebug): timer, the one
+    // final tree dump, Eval tracing and the Perf line.
+    assert!(err.starts_with(&format!("Timer Config::load ({}) ", env.rc().display())), "{err}");
+    assert_eq!(err.matches(FINAL_PARSE_TREE).count(), 1, "{err}");
+    assert!(err.contains(&format!("{ESC}[1m{FINAL_PARSE_TREE}{ESC}[0m\n  _original_args\n")), "{err}");
+    assert!(err.contains("MISCELLANEOUS"), "{err}");
+    assert!(err.contains("\nPerf task 3.5.0 "), "{err}");
+    // No intermediate pass dumps at level 1.
+    assert!(!err.contains("CLI2::analyze"), "{err}");
+    assert!(err.ends_with(&(env.override_headers() + "Configuration override rc.debug.parser=1\n")), "{err}");
+}
+
+#[test]
+fn debug_parser_2_dumps_every_pass_but_no_final_tree() {
+    let env = Env::new("");
+    let output = env.task(&["rc.debug.parser=2", "calc", "1"]);
+    assert_eq!(output.status.code(), Some(0));
+    let err = stderr(&output);
+    for title in ["CLI2::analyze", "CLI2::analyze lexArguments", "CLI2::analyze findCommand", "CLI2::analyze categorizeArgs"] {
+        assert!(err.contains(&format!("{ESC}[1m{title}{ESC}[0m\n")), "{title}: {err}");
+    }
+    assert!(!err.contains(FINAL_PARSE_TREE), "{err}");
+}
+
+#[test]
+fn debug_without_parser_level_has_no_tree() {
+    let env = Env::new("");
+    let output = env.task(&["rc.debug=on", "rc.debug.parser=0", "_version"]);
+    assert_eq!(output.status.code(), Some(0));
+    let err = stderr(&output);
+    assert!(err.starts_with("Timer Config::load ("), "{err}");
+    assert!(err.contains("\nPerf task 3.5.0 "), "{err}");
+    assert!(!err.contains(FINAL_PARSE_TREE), "{err}");
+
+    // Without any debug setting there is no debug output at all.
+    let output = env.task(&["_version"]);
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn default_command_without_arguments() {
+    let env = Env::new("default.command=version\n");
+    let output = env.task(&["rc.verbose=default"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).contains("task 3.5.0 built for "));
+    // 'default' verbosity implies 'header': the recomposed command line.
+    assert_eq!(
+        stderr(&output),
+        format!("[{} version rc.verbose=default]\n", env!("CARGO_BIN_EXE_task"))
+    );
+
+    // Not shown without the 'default' token (the stock verbosity lacks it).
+    let output = env.task(&[]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stderr(&output), env.override_headers());
+}
+
+#[test]
+fn unknown_word_is_a_filter_for_the_default_command() {
+    // The default command is used, and categorizeArgs rejects the word for a
+    // command that accepts no arguments.
+    let env = Env::new("default.command=version\n");
+    let output = env.task(&["nosuchcommand"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "The 'version' command does not allow 'nosuchcommand'.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    // With the stock default command ('next', not yet ported).
+    let env = Env::new("");
+    let output = env.task(&["nosuchcommand"]);
+    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn command_that_allows_nothing_rejects_arguments() {
+    let env = Env::new("");
+    for args in [&["version", "foo"][..], &["version", "--", "foo"][..], &["_version", "+tag"][..]] {
+        let output = env.task(args);
+        let word = args.last().unwrap();
+        let command = args[0];
+        let expected = format!("The '{command}' command does not allow '{word}'.\n");
+        assert!(stderr(&output).ends_with(&expected), "{args:?}: {}", stderr(&output));
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert_eq!(stdout(&output), "", "{args:?}");
+    }
+}
+
+#[test]
+fn id_without_command_assumes_information() {
+    let env = Env::new("");
+    let output = env.task(&["rc.verbose=default", "1"]);
+    assert_eq!(
+        stderr(&output),
+        "No command specified - assuming 'information'.\nCommand 'information' is not yet implemented.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    // The header needs the 'default' verbosity token; a UUID also counts.
+    for args in [&["1", "3"][..], &["a1b2c3d4-0000-4000-8000-000000000000"][..]] {
+        let output = env.task(args);
+        assert_eq!(
+            stderr(&output),
+            env.override_headers() + "Command 'information' is not yet implemented.\n",
+            "{args:?}"
+        );
+    }
+
+    // C++ defaultCommand only looks for number/uuid lexemes: a range or list
+    // (a Lexer 'set') falls through to the default command.
+    let output = env.task(&["1-2,4"]);
+    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
+}
+
+#[test]
+fn command_abbreviation() {
+    let env = Env::new("");
+    let output = env.task(&["rc.verbose=nothing", "vers"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).contains("task 3.5.0 built for "));
+    assert_eq!(stderr(&output), "");
+
+    // Below abbreviation.minimum (2) it is not a command: a filter word for
+    // the default command.
+    let output = env.task(&["rc.verbose=nothing", "v"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    let output = env.task(&["rc.verbose=nothing", "rc.abbreviation.minimum=5", "vers"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+}
+
+#[test]
+fn attribute_abbreviation_end_to_end() {
+    // abbreviation.test.py with count/_get in place of 'list'.
+    let env = Env::new("verbose=nothing\nabbreviation.minimum=1\n");
+    env.task(&["add", "project:home", "priority:H", "hasattributes"]);
+    env.task(&["add", "noattributes"]);
+    for arg in ["project:home", "projec:home", "proje:home", "proj:home", "pro:home"] {
+        assert_eq!(stdout(&env.task(&[arg, "_ids"])), "1\n", "{arg}");
+    }
+    for arg in ["priority:H", "priorit:H", "priori:H", "prior:H", "prio:H", "pri:H"] {
+        assert_eq!(stdout(&env.task(&[arg, "_ids"])), "1\n", "{arg}");
+    }
+    // Ambiguous (project/priority): a plain word, matching nothing.
+    assert_eq!(stdout(&env.task(&["pr:home", "count"])), "0\n");
+    // Abbreviated attribute names also apply to modifications.
+    env.task(&["add", "pro:work", "pri:L", "third"]);
+    assert_eq!(stdout(&env.task(&["_get", "3.project", "3.priority"])), "work L\n");
+    // ...but an ambiguous one is part of the description.
+    env.task(&["add", "pr:x", "fourth"]);
+    assert_eq!(stdout(&env.task(&["_get", "4.description", "4.project"])), "pr:x fourth \n");
+    // Below abbreviation.minimum the name is not recognized.
+    assert_eq!(stdout(&env.task(&["rc.abbreviation.minimum=4", "pro:home", "count"])), "0\n");
+    assert_eq!(stdout(&env.task(&["rc.abbreviation.minimum=4", "proj:home", "count"])), "1\n");
+}
+
+#[test]
+fn alias_expansion_end_to_end() {
+    // alias.test.py (bug 1031 and filter aliases) with count/_get.
+    let env = Env::new("verbose=nothing\nalias.from=to\nalias.cnt=count\nalias.hometoday=count project:home or +today\n");
+    env.task(&["add", "from"]);
+    env.task(&["add", "from", "--", "to"]);
+    env.task(&["add", "to", "--", "from"]);
+    assert_eq!(stdout(&env.task(&["_get", "1.description"])), "to\n");
+    assert_eq!(stdout(&env.task(&["_get", "2.description"])), "to to\n");
+    assert_eq!(stdout(&env.task(&["_get", "3.description"])), "to from\n");
+    env.task(&["add", "a", "project:home"]);
+    env.task(&["add", "b", "+today"]);
+    assert_eq!(stdout(&env.task(&["cnt"])), "5\n");
+    assert_eq!(stdout(&env.task(&["hometoday"])), "2\n");
+    // An alias from an rc override is loaded too.
+    assert_eq!(stdout(&env.task(&["rc.alias.zz=_ids", "zz", "+today"])), "5\n");
+}
+
+#[test]
+fn terminator_handling() {
+    let env = Env::new("");
+
+    // Arguments after '--' are passed through as words.
+    let output = env.task(&["rc.verbose=nothing", "calc", "1", "--", "+", "2"]);
+    assert_eq!(stdout(&output), "3\n");
+    assert_eq!(output.status.code(), Some(0));
+
+    // Before '--' an rc.x=y argument is a configuration override (and not a
+    // word); after it, it is just a word and is not applied.
+    let output = env.task(&["calc", "rc.x=1", "2"]);
+    assert_eq!(stdout(&output), "2\n");
+    assert_eq!(stderr(&output), env.override_headers() + "Configuration override rc.x=1\n");
+    let output = env.task(&["calc", "--", "rc.verbose=nothing", "2"]);
+    assert!(stderr(&output).starts_with(&env.override_headers()), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("Configuration override"), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn forced_color_message_colors() {
+    let env = Env::new("");
+    // Errors from initialize are coloured as footnotes (a C++ quirk)...
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.verbose=nothing",
+        "rc.color.footnote=green",
+        "rc.color.error=red",
+        "version",
+        "foo",
+    ]);
+    assert_eq!(stderr(&output), format!("{ESC}[32mThe 'version' command does not allow 'foo'.{ESC}[0m\n"));
+    assert_eq!(output.status.code(), Some(2));
+
+    // ...errors from run as errors; headers and footnotes in their colours.
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.color.header=blue",
+        "rc.color.footnote=green",
+        "rc.color.error=red",
+        "nosuchcommand",
+    ]);
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{ESC}[34mTASKRC override: {}{ESC}[0m\n{ESC}[34mTASKDATA override: {}{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc._forcecolor=on{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc.color.header=blue{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc.color.footnote=green{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc.color.error=red{ESC}[0m\n\
+             {ESC}[31mCommand 'next' is not yet implemented.{ESC}[0m\n",
+            env.rc().display(),
+            env.data().display()
+        )
+    );
+
+    // Debug messages in color.debug.
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.color.debug=blue",
+        "rc.debug=on",
+        "rc.debug.parser=0",
+        "_version",
+    ]);
+    assert!(stderr(&output).starts_with(&format!("{ESC}[34mTimer Config::load (")), "{}", stderr(&output));
+
+    // An empty rule leaves the text alone; without a TTY or _forcecolor there
+    // is no colour at all.
+    let output = env.task(&["rc._forcecolor=on", "rc.color.error=", "rc.verbose=nothing", "nosuchcommand"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    let output = env.task(&["rc.color=on", "rc.color.error=red", "rc.verbose=nothing", "nosuchcommand"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+}
+
+#[test]
+fn bad_color_rule_is_reported() {
+    let env = Env::new("");
+    let output = env.task(&["rc._forcecolor=on", "rc.color.error=chartreuse", "rc.verbose=nothing", "_version"]);
+    // initializeColorRules queues the error and initialization continues; the
+    // error is printed by run.
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).starts_with("3.5.0"), "{}", stdout(&output));
+    assert_eq!(stderr(&output), "The color 'chartreuse' is not recognized.\n");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdAdd.cpp, CmdLog.cpp, CmdCount.cpp, CmdGet.cpp, CmdExport.cpp
+
+/// `task rc.verbose=nothing <args>`: stdout, stderr and exit status.
+fn quiet(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let mut all = vec!["rc.verbose=nothing"];
+    all.extend_from_slice(args);
+    let output = env.task(&all);
+    (stdout(&output), stderr(&output), output.status.code().unwrap())
+}
+
+/// The exported tasks (`task <filter> export`), one JSON object per element.
+fn export(env: &Env, args: &[&str]) -> Vec<serde_json::Value> {
+    export_report(env, args, None)
+}
+
+/// `task <filter> export [<report>]` as parsed JSON.
+fn export_report(env: &Env, args: &[&str], report: Option<&str>) -> Vec<serde_json::Value> {
+    let mut all = args.to_vec();
+    all.push("export");
+    all.extend(report);
+    let (out, err, code) = quiet(env, &all);
+    assert_eq!((err.as_str(), code), ("", 0), "{out}");
+    match serde_json::from_str(&out).unwrap() {
+        serde_json::Value::Array(tasks) => tasks,
+        other => panic!("not an array: {other}"),
+    }
+}
+
+fn is_uuid(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(i, c)| {
+            if [8, 13, 18, 23].contains(&i) {
+                c == '-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
+}
+
+#[test]
+fn add_reports_new_id_and_project_footnote() {
+    let env = Env::new("");
+    let output = env.task(&["add", "one", "project:home"]);
+    assert_eq!(stdout(&output), "Created task 1.\n");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "The project 'home' has changed.  Project 'home' is 0% complete (1 task remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["rc.verbose=new-id", "add", "two", "project:home"]);
+    assert_eq!(stdout(&output), "Created task 2.\n");
+    assert_eq!(stderr(&output), "");
+
+    let output = env.task(&["rc.verbose=project", "add", "three", "project:home"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "The project 'home' has changed.  Project 'home' is 0% complete (3 of 3 tasks remaining).\n"
+    );
+
+    // No project, no footnote.
+    assert_eq!(quiet(&env, &["add", "four"]), (String::new(), String::new(), 0));
+    let tasks = export(&env, &[]);
+    let descriptions: Vec<&str> = tasks.iter().map(|t| t["description"].as_str().unwrap()).collect();
+    assert_eq!(descriptions, ["one", "two", "three", "four"]);
+    assert_eq!(tasks[0]["project"], "home");
+    assert_eq!(tasks[0]["status"], "pending");
+}
+
+#[test]
+fn add_new_uuid_and_status_variants() {
+    let env = Env::new("");
+
+    // new-uuid wins over new-id.
+    let output = env.task(&["rc.verbose=new-id,new-uuid", "add", "one"]);
+    let out = stdout(&output);
+    let uuid = out.strip_prefix("Created task ").unwrap().strip_suffix(".\n").unwrap();
+    assert!(is_uuid(uuid), "{out}");
+    assert_eq!(export(&env, &[])[0]["uuid"], uuid);
+
+    // A completed task has no ID, so new-id shows the UUID.
+    let output = env.task(&["rc.verbose=new-id", "add", "done", "status:completed"]);
+    let out = stdout(&output);
+    let uuid = out.strip_prefix("Created task ").unwrap().strip_suffix(".\n").unwrap();
+    assert!(is_uuid(uuid), "{out}");
+
+    // Recurrence templates.
+    let output = env.task(&["rc.verbose=new-id", "add", "rec", "recur:weekly", "due:tomorrow"]);
+    assert_eq!(stdout(&output), "Created task 2 (recurrence template).\n");
+    let output = env.task(&["rc.verbose=new-uuid", "add", "rec", "recur:weekly", "due:tomorrow"]);
+    let out = stdout(&output);
+    let uuid = out
+        .strip_prefix("Created task ")
+        .unwrap()
+        .strip_suffix(" (recurrence template).\n")
+        .unwrap();
+    assert!(is_uuid(uuid), "{out}");
+
+    // A waiting task still gets an ID.
+    let output = env.task(&["rc.verbose=new-id", "add", "later", "wait:tomorrow"]);
+    assert_eq!(stdout(&output), "Created task 4.\n");
+}
+
+#[test]
+fn add_errors() {
+    let env = Env::new("");
+    assert_eq!(
+        quiet(&env, &["add"]),
+        (String::new(), "Additional text must be provided.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["add", "rec", "recur:weekly"]),
+        (
+            String::new(),
+            "A recurring task must also have a 'due' date.\n".into(),
+            2
+        )
+    );
+    assert_eq!(quiet(&env, &["count"]).0, "0\n");
+}
+
+#[test]
+fn add_dom_refers_to_earlier_modifications() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "x", "due:2030-01-01", "scheduled:due"]).2, 0);
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks[0]["scheduled"], tasks[0]["due"]);
+}
+
+#[test]
+fn log_adds_completed_task() {
+    let env = Env::new("");
+    let output = env.task(&["log", "one", "project:home"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers()
+            + "The project 'home' has changed.  Project 'home' is 100% complete (0 of 1 tasks remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["rc.verbose=new-uuid", "log", "two"]);
+    let out = stdout(&output);
+    let uuid = out.strip_prefix("Logged task ").unwrap().strip_suffix(".\n").unwrap();
+    assert!(is_uuid(uuid), "{out}");
+
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks.len(), 2);
+    for task in &tasks {
+        assert_eq!(task["status"], "completed");
+        assert_eq!(task["id"], 0);
+        assert!(task["end"].is_string(), "{task}");
+    }
+    // Both have ID 0, so `id,uuid` orders them by UUID.
+    assert!(tasks.iter().any(|t| t["uuid"] == uuid));
+    assert!(tasks[0]["uuid"].as_str().unwrap() < tasks[1]["uuid"].as_str().unwrap());
+}
+
+#[test]
+fn log_errors() {
+    let env = Env::new("");
+    assert_eq!(
+        quiet(&env, &["log", "rec", "recur:weekly", "due:tomorrow"]),
+        (String::new(), "You cannot log recurring tasks.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["log", "w", "wait:tomorrow"]),
+        (String::new(), "You cannot log waiting tasks.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["log"]),
+        (String::new(), "Additional text must be provided.\n".into(), 2)
+    );
+    assert_eq!(quiet(&env, &["count"]).0, "0\n");
+}
+
+#[test]
+fn count_skips_recurring_templates() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["count"]), ("0\n".into(), String::new(), 0));
+    for args in [
+        &["add", "one", "+tag"][..],
+        &["add", "two"],
+        &["log", "three"],
+        &["add", "rec", "recur:weekly", "due:tomorrow"],
+    ] {
+        assert_eq!(quiet(&env, args).2, 0);
+    }
+    assert_eq!(quiet(&env, &["count"]).0, "3\n");
+    assert_eq!(quiet(&env, &["+tag", "count"]).0, "1\n");
+    assert_eq!(quiet(&env, &["status:pending", "count"]).0, "2\n");
+    assert_eq!(quiet(&env, &["status:recurring", "count"]).0, "0\n");
+    assert_eq!(quiet(&env, &["/o/", "count"]).0, "2\n");
+}
+
+#[test]
+fn get_dom_references() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "one", "due:2030-02-03", "+a"]).2, 0);
+    assert_eq!(
+        quiet(
+            &env,
+            &["_get", "1.description", "1.due.year", "rc.verbose", "system.version"]
+        ),
+        ("one 2030 nothing 3.5.0\n".into(), String::new(), 0)
+    );
+    // An unresolvable reference is an empty string.
+    assert_eq!(quiet(&env, &["_get", "2.description"]), ("\n".into(), String::new(), 0));
+    assert_eq!(
+        quiet(&env, &["_get", "1.description", "2.description", "1.description"]),
+        ("one  one\n".into(), String::new(), 0)
+    );
+    assert_eq!(
+        quiet(&env, &["_get"]),
+        (String::new(), "No DOM reference specified.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["_get", "foo"]),
+        (String::new(), "'foo' is not a DOM reference.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["_get", "1.description", "foo"]),
+        (String::new(), "'foo' is not a DOM reference.\n".into(), 2)
+    );
+}
+
+#[test]
+fn export_json_array_and_decoration() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["export"]), ("[\n]\n".into(), String::new(), 0));
+    assert_eq!(
+        quiet(&env, &["rc.json.array=off", "export"]),
+        (String::new(), String::new(), 0)
+    );
+
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+    let (out, err, code) = quiet(&env, &["export"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    let lines: Vec<&str> = out.split('\n').collect();
+    assert_eq!(lines.len(), 5, "{out}");
+    assert_eq!(lines[0], "[");
+    assert!(lines[1].starts_with("{\"id\":1,\"description\":\"one\",") && lines[1].ends_with("\"urgency\":0},"));
+    assert!(lines[2].starts_with("{\"id\":2,\"description\":\"two\",") && lines[2].ends_with("\"urgency\":0}"));
+    assert_eq!(&lines[3..], ["]", ""]);
+
+    let (out, _, _) = quiet(&env, &["rc.json.array=off", "export"]);
+    let lines: Vec<&str> = out.split('\n').collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(lines[0].ends_with('}') && lines[1].ends_with('}') && lines[2].is_empty());
+
+    // limit:N, with a filter (a lone pseudo arg leaves a string result,
+    // which C++ `get_bool` treats as false).
+    let tasks = export(&env, &["/o/", "limit:1"]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["description"], "one");
+}
+
+#[test]
+fn export_depends_array() {
+    let env = Env::new("");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two", "depends:1"]);
+    let uuid = export(&env, &["1"])[0]["uuid"].as_str().unwrap().to_string();
+    let task = &export(&env, &["2"])[0];
+    assert_eq!(task["depends"], serde_json::json!([uuid]));
+    // Taskwarrior 3.5.0 has no `json.depends.array` setting: composeJSON
+    // always emits an array.
+    let task = &export(&env, &["rc.json.depends.array=off", "2"])[0];
+    assert_eq!(task["depends"], serde_json::json!([uuid]));
+}
+
+#[test]
+fn export_report_filter_and_sort() {
+    let env = Env::new(
+        "report.byrev.columns=id\nreport.byrev.sort=description-\nreport.byrev.filter=+x\n\
+         report.asgiven.columns=id\nreport.asgiven.sort=none\n",
+    );
+    quiet(&env, &["add", "a", "+x"]);
+    quiet(&env, &["add", "b"]);
+    quiet(&env, &["add", "c", "+x"]);
+    let descriptions = |tasks: Vec<serde_json::Value>| -> Vec<String> {
+        tasks
+            .iter()
+            .map(|t| t["description"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Report filter added to the command-line filter, report sort applied;
+    // report names are matched by closeEnough.
+    assert_eq!(descriptions(export_report(&env, &[], Some("byrev"))), ["c", "a"]);
+    assert_eq!(descriptions(export_report(&env, &[], Some("byr"))), ["c", "a"]);
+    assert_eq!(descriptions(export_report(&env, &["/a/"], Some("byrev"))), ["a"]);
+    // Without a report: `id,uuid`.
+    assert_eq!(descriptions(export(&env, &[])), ["a", "b", "c"]);
+
+    // sort=none: the command line's UUID order.
+    let uuids: Vec<String> = export(&env, &[])
+        .iter()
+        .map(|t| t["uuid"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        descriptions(export_report(&env, &[&uuids[2], &uuids[0], &uuids[1]], Some("asgiven"))),
+        ["c", "a", "b"]
+    );
+
+    assert_eq!(
+        quiet(&env, &["export", "nosuchreport"]),
+        (
+            String::new(),
+            "Unable to find report that matches 'nosuchreport'.\n".into(),
+            2
+        )
+    );
+    // Non-report commands do not match.
+    assert_eq!(
+        quiet(&env, &["export", "count"]),
+        (String::new(), "Unable to find report that matches 'count'.\n".into(), 2)
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdIDs.cpp
+
+/// Pending `one` (1), `two +t` (2), `a:b` (3), completed `done` (no ID),
+/// waiting `w` (4), pending `five +t` (5); returns the env.
+fn ids_env() -> Env {
+    let env = Env::new("");
+    for args in [
+        &["add", "one"][..],
+        &["add", "two", "+t"],
+        &["add", "a:b"],
+        &["log", "done"],
+        &["add", "w", "wait:2099-01-01"],
+        &["add", "five", "+t"],
+    ] {
+        assert_eq!(quiet(&env, args).2, 0, "{args:?}");
+    }
+    env
+}
+
+#[test]
+fn ids_compress_ranges_and_skip_id_zero() {
+    let env = ids_env();
+    assert_eq!(quiet(&env, &["ids"]), ("1-5\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["+t", "ids"]).0, "2 5\n");
+    assert_eq!(quiet(&env, &["1", "3-5", "ids"]).0, "1 3-5\n");
+    assert_eq!(quiet(&env, &["1,2,4", "ids"]).0, "1-2 4\n");
+    // Completed tasks have ID 0 and are skipped.
+    assert_eq!(quiet(&env, &["status:completed", "ids"]).0, "\n");
+    // Headers (here the TASKRC/TASKDATA overrides) are cleared.
+    let output = env.task(&["ids"]);
+    assert_eq!((stdout(&output), stderr(&output)), ("1-5\n".into(), String::new()));
+}
+
+#[test]
+fn completion_ids_list_and_zsh_format() {
+    let env = ids_env();
+    assert_eq!(quiet(&env, &["_ids"]), ("1\n2\n3\n4\n5\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["+t", "_ids"]).0, "2\n5\n");
+    // Completed tasks are excluded; an empty list still ends in a newline.
+    assert_eq!(quiet(&env, &["status:completed", "_ids"]).0, "\n");
+    // id:description, with ':' in descriptions replaced by ','.  The order
+    // is the filter's (taskchampion `pending_task_data`, hash order in C++
+    // too), so compare sorted lines.
+    let sorted_lines = |text: &str| {
+        assert!(text.is_empty() || text.ends_with('\n'), "{text:?}");
+        let mut lines: Vec<String> = text.lines().map(String::from).collect();
+        lines.sort();
+        lines
+    };
+    let (out, err, code) = quiet(&env, &["_zshids"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    assert_eq!(sorted_lines(&out), ["1:one", "2:two", "3:a,b", "4:w", "5:five"]);
+    assert_eq!(quiet(&env, &["status:completed", "_zshids"]).0, "");
+    let output = env.task(&["_zshids", "+t"]);
+    assert_eq!(stderr(&output), "");
+    assert_eq!(sorted_lines(&stdout(&output)), ["2:two", "5:five"]);
+}
+
+#[test]
+fn uuids_sorted_and_zsh_format() {
+    let env = ids_env();
+    let tasks = export(&env, &[]);
+    let field = |t: &serde_json::Value, f: &str| t[f].as_str().unwrap().to_string();
+    let mut uuids: Vec<String> = tasks.iter().map(|t| field(t, "uuid")).collect();
+    assert!(uuids.iter().all(|u| is_uuid(u)));
+    uuids.sort();
+    assert_eq!(uuids.len(), 6);
+
+    // All statuses, sorted.
+    assert_eq!(quiet(&env, &["uuids"]), (uuids.join(" ") + "\n", String::new(), 0));
+    assert_eq!(quiet(&env, &["_uuids"]), (uuids.join("\n") + "\n", String::new(), 0));
+    let done = tasks.iter().find(|t| field(t, "description") == "done").unwrap();
+    assert_eq!(quiet(&env, &["status:completed", "uuids"]).0, field(done, "uuid") + "\n");
+    assert_eq!(quiet(&env, &["/nomatch/", "uuids"]).0, "\n");
+    assert_eq!(quiet(&env, &["/nomatch/", "_uuids"]).0, "\n");
+    assert_eq!(quiet(&env, &["/nomatch/", "_zshuuids"]).0, "");
+
+    // uuid:description for every matching task (completed included).
+    let mut expected: Vec<String> = tasks
+        .iter()
+        .map(|t| format!("{}:{}", field(t, "uuid"), field(t, "description").replace(':', ",")))
+        .collect();
+    expected.sort();
+    let (out, err, code) = quiet(&env, &["_zshuuids"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    assert!(out.ends_with('\n'));
+    let mut lines: Vec<String> = out.lines().map(String::from).collect();
+    lines.sort();
+    assert_eq!(lines, expected);
+
+    let output = env.task(&["uuids"]);
+    assert_eq!(stderr(&output), "");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdUnique.cpp
+
+#[test]
+fn unique_attribute_values() {
+    let env = Env::new("uda.size.type=string\n");
+    for args in [
+        &["add", "one", "project:A", "+x"][..],
+        &["add", "two", "project:A", "size:big"],
+        &["add", "three", "project:B", "+x", "+y"],
+        &["log", "five", "project:D", "size:small"],
+    ] {
+        assert_eq!(quiet(&env, args).2, 0, "{args:?}");
+    }
+    // Sorted and distinct; completed tasks included.
+    assert_eq!(quiet(&env, &["_unique", "project"]), ("A\nB\nD\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["status:pending", "_unique", "project"]).0, "A\nB\n");
+    assert_eq!(quiet(&env, &["_unique", "status"]).0, "completed\npending\n");
+    // Abbreviations and UDAs are canonicalized.
+    assert_eq!(quiet(&env, &["_unique", "proj"]).0, "A\nB\nD\n");
+    assert_eq!(quiet(&env, &["_unique", "size"]).0, "big\nsmall\n");
+    // Tags as stored (comma-separated).
+    assert_eq!(quiet(&env, &["_unique", "tags"]).0, "x\nx,y\n");
+    // `id` is synthesized for non-completed tasks only.
+    assert_eq!(quiet(&env, &["_unique", "id"]).0, "1\n2\n3\n");
+    // No match: empty output.
+    assert_eq!(quiet(&env, &["/nomatch/", "_unique", "project"]), (String::new(), String::new(), 0));
+    // Headers are cleared.
+    let output = env.task(&["_unique", "project"]);
+    assert_eq!((stdout(&output), stderr(&output)), ("A\nB\nD\n".into(), String::new()));
+
+    assert_eq!(
+        quiet(&env, &["_unique"]),
+        (
+            String::new(),
+            "An attribute must be specified.  See 'task _columns'.\n".into(),
+            2
+        )
+    );
+    assert_eq!(
+        quiet(&env, &["_unique", "nosuchattr"]),
+        (String::new(), "You must specify an attribute or UDA.\n".into(), 2)
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdAttributes.cpp
+
+#[test]
+fn zsh_attributes_lists_sorted_columns() {
+    let builtin = [
+        "depends", "description", "due", "end", "entry", "id", "imask", "last", "mask", "modified", "parent",
+        // `priority` is a UDA in the compiled-in defaults.
+        "priority", "project", "recur", "rtype", "scheduled", "start", "status", "tags", "template", "until", "urgency",
+        "uuid", "wait",
+    ];
+    let lines = |names: &[&str]| names.iter().map(|n| format!("{n}:{n}\n")).collect::<String>();
+
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["_zshattributes"]), (lines(&builtin), String::new(), 0));
+
+    // UDAs are columns too, sorted in with the built-ins.
+    let env = Env::new("uda.size.type=string\nuda.aaa.type=numeric\n");
+    let mut all = builtin.to_vec();
+    all.extend(["size", "aaa"]);
+    all.sort();
+    let output = env.task(&["_zshattributes"]);
+    // Helper (`_`) commands run with verbosity `nothing`: no override headers.
+    assert_eq!((stdout(&output), stderr(&output)), (lines(&all), String::new()));
+    // Accepts no filter.
+    assert_eq!(quiet(&env, &["1", "_zshattributes"]).2, 2);
 }

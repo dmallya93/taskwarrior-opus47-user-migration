@@ -21,41 +21,47 @@
 //! them; [`Context::initialize_with`] / [`Context::run_with`] take the two
 //! streams explicitly (used by the unit tests).
 //!
-//! # Hook points for later milestones
+//! # Completeness, and the remaining hook points
 //!
-//! Everything in `Context.cpp` is ported, but parts call into modules that do
-//! not exist yet. Those calls are explicit hook points (no-ops, or bootstrap
-//! approximations), each documented where it occurs:
+//! Every function of `Context.cpp` is ported, in the C++ order:
 //!
-//! - **Milestone 2** (Datetime/Duration/JSON/Lexer): done.
-//!   `staticInitialization` sets `Lexer::minimumMatchLength`,
-//!   `Lexer::dateFormat`, `Datetime::weekstart` / `isoEnabled` /
-//!   `standalone*Enabled` and `Duration::standaloneSecondsEnabled`
-//!   ([`Lexer`], [`Datetime`], [`Duration`]; thread-local statics, which is
-//!   equivalent to the C++ statics for the single-threaded binary), and all
-//!   date formatting goes through [`Datetime`].
-//! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics
-//!   (including the `Variant::dateFormat` half of `Lexer::dateFormat =
-//!   Variant::dateFormat`),
-//!   `Eval::getOperators` / `getBinaryOperators` entities (done, via
-//!   [`Eval::get_operators`] / [`Eval::get_binary_operators`]), and the
-//!   `colorize*` functions (identity until the colour rules exist; libshared
-//!   `Color` and `Table` themselves are already ported).
-//! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
-//!   coefficients. `TDB2::open_replica` and `TDB2::gc`
-//!   ([`crate::tdb2::Tdb2`]) are ported: the replica is opened for every
-//!   registered command (as in C++) and `gc` time is added to
-//!   `time_gc_us`; task loading time accumulates in `Tdb2::time_load_us`
-//!   and is folded into `time_load_us` for the Perf line.
-//! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the full `CLI2` parser
-//!   ([`crate::cli2::Cli2`] is a bootstrap that only selects the command),
-//!   `prepareFilter`, `dump`.
-//! - **Milestone 6** (reports and columns): `Column::factory`, column
-//!   attribute entities and types, `initializeColorRules` (only its
-//!   `color ()` short-circuit is ported, in [`crate::rules`]).
-//! - **Milestone 7** (mutations, hooks, recurrence, undo, sync):
-//!   `Hooks::initialize` / `onLaunch` / `onExit` ([`crate::hooks::Hooks`]),
-//!   `handleUntil` / `handleRecurrence` ([`crate::recur`]).
+//! - `initialize`: rc file resolution and load, `rc.` overrides
+//!   ([`cli2::apply_overrides`]), data location, `createDefaultConfig`,
+//!   `Command::factory` / `Column::factory` entities, modifier and operator
+//!   entities, `initializeColorRules` ([`rules::initialize_color_rules`],
+//!   which makes the `color ()` / `_forcecolor` decision and loads the
+//!   `color.*` rules), `staticInitialization` (CLI2 / Lexer / Task / Variant
+//!   / Datetime / Duration / TDB2 statics, thread-local here), `propagateDebug`,
+//!   `loadAliases`, the full [`Cli2`] parse (`analyze`, run detached via
+//!   [`cli2::with_cli2`]), the `[<default command>]` and "assuming
+//!   'information'" headers, `TDB2::open_replica` and `Hooks::initialize`.
+//! - `run`: `Hooks::onLaunch`, `dispatch`, `Hooks::onExit`, the Perf debug
+//!   line, then debug messages, headers, output, footnotes and errors, each
+//!   coloured with the `rules.cpp` `colorize*` functions when `color ()`.
+//! - `dispatch`: `updateXtermTitle`, `updateVerbosity`, `TDB2::gc` for
+//!   `needs_gc` commands, `prepareFilter` for commands accepting
+//!   modifications but no filter, the `rc.debug.parser=1` parse-tree dump,
+//!   `handleUntil` / `handleRecurrence` for `needs_recur_update` commands
+//!   with `rc.gc`, then the command (or `help` when there is none).
+//! - `getWidth` / `getHeight` (`ioctl (TIOCGWINSZ)`), `getTaskContext`,
+//!   `color`, `verbose`, `getColumns`, `getLimits`, `decomposeSortField`,
+//!   `debugTiming`, `withCurrentTask`, `header` / `footnote` / `error` /
+//!   `debug`.
+//!
+//! DOM lookups (`getDOM`, Eval's `domSource`) are [`crate::dom`] functions
+//! taking `&mut Context`, with the contextual task passed separately
+//! (`current_task` is an `Rc`, cloned first).
+//!
+//! The call sites for subsystems owned by later milestones exist and are
+//! called at the C++ places; their bodies are documented no-ops (milestone 5
+//! Design Decision 3, option 1):
+//!
+//! - **Milestone 7**: `Hooks::initialize` / `onLaunch` / `onExit`
+//!   ([`crate::hooks::Hooks`]), `handleUntil` / `handleRecurrence`
+//!   ([`crate::recur`]).
+//! - **Milestone 6**: the per-task colour rules of `rules.cpp`
+//!   (`autoColorize`) are not called by Context; only report rendering uses
+//!   them.
 //!
 //! # `TASK_RCDIR`
 //!
@@ -69,19 +75,19 @@
 //! `target/{debug,release}/task` and the test binaries in
 //! `target/debug/deps`); otherwise `<exe dir>/../share/doc/task/rc`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::rc::Rc;
 
 use crate::cli2::{self, Cli2};
-use crate::columns::column::Column;
+use crate::columns::column;
 use crate::commands::command::{self, Registry};
 use crate::error::{Result, TwError};
 use crate::eval::Eval;
 use crate::hooks::Hooks;
 use crate::lexer::Lexer;
 use crate::recur;
-use crate::rules;
+use crate::rules::{self, colorize_debug, colorize_error, colorize_footnote, colorize_header};
 use crate::shared::configuration::Configuration;
 use crate::shared::datetime::Datetime;
 use crate::shared::duration::Duration;
@@ -95,7 +101,7 @@ use crate::version::{Version, COMMIT, PACKAGE_STRING};
 use crate::variant::Variant;
 
 /// C++ `std::map<std::string, Column*>` as held by `Context::columns`.
-pub type ColumnRegistry = BTreeMap<String, Rc<dyn Column>>;
+pub use crate::columns::column::ColumnRegistry;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `std::string configurationDefaults`: the compiled-in default
@@ -530,7 +536,7 @@ pub fn stdout_is_tty() -> bool {
 
 /// C++ `(int) strtol (text, nullptr, 10)`: optional leading whitespace and
 /// sign, then the leading decimal digits; 0 if none.
-fn strtol(text: &str) -> i32 {
+pub(crate) fn strtol(text: &str) -> i32 {
     let text = text.trim_start_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
     let (negative, digits) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),
@@ -543,22 +549,6 @@ fn strtol(text: &str) -> i32 {
     }
     let value = if negative { -value } else { value };
     value as i32
-}
-
-// Milestone 3 (Color) / 6 (rules.cpp) hooks: C++ `colorizeHeader`,
-// `colorizeFootnote`, `colorizeError`, `colorizeDebug` colour the text with
-// `color.header` etc. once colour rules exist. Until then they are identity.
-fn colorize_header(input: &str) -> String {
-    input.to_string()
-}
-fn colorize_footnote(input: &str) -> String {
-    input.to_string()
-}
-fn colorize_error(input: &str) -> String {
-    input.to_string()
-}
-fn colorize_debug(input: &str) -> String {
-    input.to_string()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -600,7 +590,7 @@ pub struct Context {
     pub debug_messages: Vec<String>,
     /// C++ `commands`.
     pub commands: Registry,
-    /// C++ `columns` (filled by milestone 6's `Column::factory`).
+    /// C++ `columns` (filled by `Column::factory`, [`column::factory_all`]).
     pub columns: ColumnRegistry,
     /// C++ `terminal_width`.
     pub terminal_width: i32,
@@ -828,7 +818,7 @@ impl Context {
         //
         ////////////////////////////////////////////////////////////////////////
 
-        // Milestone 6 hook: `Column::factory (columns)`.
+        column::factory_all(&mut self.columns, &self.config)?;
         for name in self.columns.keys() {
             self.cli2.entity("attribute", name);
         }
@@ -859,8 +849,7 @@ impl Context {
         //
         ////////////////////////////////////////////////////////////////////////
 
-        // Milestone 6 hook: only the `color ()` short-circuit is ported.
-        rules::initialize_color_rules(self);
+        rules::initialize_color_rules(self)?;
         self.static_initialization()?;
         self.propagate_debug();
         self.load_aliases();
@@ -875,8 +864,7 @@ impl Context {
             self.cli2.add(arg);
         }
 
-        // Milestone 5 hook: the bootstrap analysis only selects the command.
-        self.cli2.analyze(&self.config, &mut self.debug_messages)?;
+        cli2::with_cli2(self, |cli2, ctx| cli2.analyze(ctx))?;
 
         // Extract a recomposed command line.
         let mut found_default = false;
@@ -1116,8 +1104,7 @@ impl Context {
             // This is something that is only needed for write commands with no other
             // filter processing.
             if c.accepts_modifications() && !c.accepts_filter() {
-                // Milestone 5 hook: no-op for now.
-                self.cli2.prepare_filter();
+                cli2::with_cli2(self, |cli2, ctx| cli2.prepare_filter(ctx))?;
             }
 
             // With rc.debug.parser == 2, there are more tree dumps than you might want,
@@ -1444,9 +1431,10 @@ impl Context {
         }
         Task::set_custom_order(custom_order);
 
-        // Milestone 6 hook: `Task::attributes[col] = Lexer::attributes[col] =
-        // column->type ()` for every column (the Column trait has no type ()
-        // yet and the registry is empty).
+        for (name, col) in &self.columns {
+            Task::insert_attribute(name, col.type_());
+            Lexer::insert_attribute(name, col.type_());
+        }
 
         Task::set_urgency_project_coefficient(self.config.get_real("urgency.project.coefficient") as f32);
         Task::set_urgency_active_coefficient(self.config.get_real("urgency.active.coefficient") as f32);
@@ -1697,6 +1685,7 @@ mod tests {
     use super::*;
     use crate::commands::command::{register, Command, CommandMeta};
     use crate::test_util::{env_lock, EnvGuard};
+    use std::collections::BTreeMap;
     use std::sync::MutexGuard;
 
     /// Extracts the C++ `configurationDefaults` literal concatenation from
@@ -1874,8 +1863,11 @@ mod tests {
         register(
             &mut context.commands,
             Rc::new(TestCmd {
+                // Accepts miscellaneous arguments, so `categorizeArgs`
+                // allows extra words on the test command lines.
                 meta: CommandMeta {
                     keyword: keyword.to_string(),
+                    accepts_miscellaneous: true,
                     ..CommandMeta::default()
                 },
                 behaviour,
@@ -2221,19 +2213,19 @@ mod tests {
 
     #[test]
     fn stub_command_dispatch_reports_not_implemented() {
-        // The real registry (Command::factory), no test commands: `add` is a
-        // stub, so run takes the `throw std::string` path: message on
+        // The real registry (Command::factory), no test commands: `prepend`
+        // is a stub, so run takes the `throw std::string` path: message on
         // stderr, exit status 2.
         let f = fixture();
         write(&format!("{}/.taskrc", f.home), "");
         let mut context = Context::new();
-        let (status, _, stderr) = init(&mut context, &["task", "add", "foo"]);
+        let (status, _, stderr) = init(&mut context, &["task", "prepend", "foo"]);
         assert_eq!(status, 0, "{stderr}");
-        assert_eq!(context.cli2.get_command(), "add");
+        assert_eq!(context.cli2.get_command(), "prepend");
         let (rc, stdout, stderr) = run(&mut context);
         assert_eq!(rc, 2);
         assert_eq!(stdout, "");
-        assert_eq!(stderr, "Command 'add' is not yet implemented.\n");
+        assert_eq!(stderr, "Command 'prepend' is not yet implemented.\n");
 
         // A default custom report dispatches the same way.
         let mut context = Context::new();
@@ -2403,6 +2395,8 @@ mod tests {
             Task::set_regex(false);
             Task::set_custom_order(BTreeMap::new());
             Task::set_coefficients(BTreeMap::new());
+            Task::set_attributes(BTreeMap::new());
+            Lexer::set_attributes(BTreeMap::new());
             for set in [
                 Task::set_urgency_project_coefficient,
                 Task::set_urgency_active_coefficient,
@@ -2458,6 +2452,77 @@ mod tests {
         assert_eq!(coefficients["urgency.uda.size.L.coefficient"], 1.5);
         assert_eq!(coefficients["urgency.uda.priority.M.coefficient"], 3.9f32);
         assert!(!coefficients.contains_key("urgency.due.coefficient"));
+    }
+
+    #[test]
+    fn initialize_registers_columns_and_attribute_types() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(
+            &format!("{}/.taskrc", f.home),
+            "uda.size.type=numeric\nuda.size.label=Size\nuda.ref.type=uuid\nuda.est.type=duration\n\
+             uda.when.type=date\nuda.labelonly.label=x\n",
+        );
+        let mut context = context();
+        let (status, _, err) = init(&mut context, &["task", "alpha"]);
+        assert_eq!(status, 0, "{err}");
+
+        // C++ Column::factory (columns): built-ins plus UDAs (priority comes
+        // from the defaults; a UDA without a type has no column).
+        let names = context.get_columns();
+        for name in [
+            "depends", "description", "due", "end", "entry", "id", "imask", "last", "mask", "modified", "parent",
+            "project", "recur", "rtype", "scheduled", "start", "status", "tags", "template", "until", "urgency",
+            "uuid", "wait", "priority", "size", "ref", "est", "when",
+        ] {
+            assert!(names.contains(&name.to_string()), "{name}");
+        }
+        assert!(!names.contains(&"labelonly".to_string()));
+        assert_eq!(names.len(), 28);
+        assert_eq!(context.columns["size"].label(), "Size");
+        assert!(context.columns["size"].is_uda());
+
+        // Every column is an `attribute` entity.
+        assert!(context.cli2.entities.get("attribute").is_some_and(|set| set.iter().any(|e| e == "project")));
+
+        // staticInitialization: Task::attributes and Lexer::attributes.
+        let expected = [
+            ("due", "date"),
+            ("project", "string"),
+            ("id", "numeric"),
+            ("urgency", "numeric"),
+            ("tags", "string"),
+            ("size", "numeric"),
+            ("ref", "uuid"),
+            ("est", "duration"),
+            ("when", "date"),
+            ("priority", "string"),
+        ];
+        for (name, type_) in expected {
+            assert_eq!(Task::attributes().get(name).map(String::as_str), Some(type_), "{name}");
+            assert_eq!(Lexer::attributes().get(name).map(String::as_str), Some(type_), "{name}");
+        }
+        assert_eq!(Task::attributes().len(), 28);
+    }
+
+    #[test]
+    fn initialize_rejects_bad_udas() {
+        let f = fixture();
+        let _statics = StaticsGuard;
+        write(&format!("{}/.taskrc", f.home), "uda.due.type=string\n");
+        let mut ctx = context();
+        let (status, _, err) = init(&mut ctx, &["task", "alpha"]);
+        assert_eq!(status, 2);
+        assert_eq!(err, "The UDA named 'due' is the same as a core attribute, and is not permitted.\n");
+
+        write(&format!("{}/.taskrc", f.home), "uda.x.type=bool\n");
+        let mut ctx = context();
+        let (status, _, err) = init(&mut ctx, &["task", "alpha"]);
+        assert_eq!(status, 2);
+        assert_eq!(
+            err,
+            "User defined attributes may only be of type 'string', 'uuid', 'date', 'duration' or 'numeric'.\n"
+        );
     }
 
     #[test]

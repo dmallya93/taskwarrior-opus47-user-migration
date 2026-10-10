@@ -1,14 +1,15 @@
 //! Rust translation of `src/commands/CmdCount.cpp`.
 //!
-//! Not yet ported: this module is filled in by milestone 5 (CLI2/Filter/DOM/dispatch).
-//!
-//! Each struct below is one C++ class from `CmdCount.cpp`, carrying the exact
-//! metadata of its C++ constructor; `execute` is a stub returning
-//! [`TwError::NotImplemented`] until the port lands (foundation DD4).
+//! `task <filter> count`: the number of tasks matching the filter
+//! (`Filter::subset`, pending-only optimisation included), skipping recurring
+//! parent tasks, followed by a newline.
 
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
-use crate::error::{Result, TwError};
+use crate::error::Result;
+use crate::filter::Filter;
+use crate::shared::format::format;
+use crate::task::{Status, Task};
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdCount` (`count`).
@@ -50,9 +51,25 @@ impl Command for CmdCount {
         &self.meta
     }
 
-    /// C++ `CmdCount::execute`: not yet implemented; ported by milestone 5
-    /// (CLI2/Filter/DOM/dispatch).
-    fn execute(&self, _context: &mut Context, _output: &mut String) -> Result<i32> {
-        Err(TwError::NotImplemented(self.meta.keyword.clone()))
+    /// C++ `CmdCount::execute`.
+    ///
+    /// # Errors
+    /// Those of `Filter::subset`, and an invalid stored status (C++
+    /// `getStatus` throws out of the `count_if` predicate).
+    fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
+        // Apply filter.
+        let mut filter = Filter::new();
+        let mut filtered: Vec<Task> = Vec::new();
+        filter.subset(context, &mut filtered)?;
+
+        // Find number of matching tasks.  Skip recurring parent tasks.
+        let mut count: i32 = 0;
+        for task in &filtered {
+            if task.get_status()? != Status::Recurring {
+                count += 1;
+            }
+        }
+        *output = format("{1}", &[&count]) + "\n";
+        Ok(0)
     }
 }

@@ -26,10 +26,8 @@ class TestAliases:
 class TestStubs:
     STUBS = [
         (["list"], "list"),
-        (["add", "foo"], "add"),
         (["diag"], "diagnostics"),
         (["show"], "show"),
-        (["export"], "export"),
         ([], "next"),
     ]
 

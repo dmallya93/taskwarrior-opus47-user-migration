@@ -7,13 +7,12 @@
 //! which is always lowercase.
 
 use std::ffi::CString;
-use std::io::{BufRead, Write};
 
 use crate::context::Context;
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::shared::format::format;
-use crate::shared::shared::{auto_complete, lower_case, trim_with};
+use crate::shared::shared::{auto_complete, lower_case, trim_with, with_console};
 use crate::shared::table::Table;
 use crate::shared::unicode::unicode_whitespace;
 use crate::shared::utf8::utf8_next_char;
@@ -60,7 +59,6 @@ pub fn confirm4(context: &mut Context, question: &str) -> i32 {
         STRING_UTIL_CONFIRM_ALL,
         STRING_UTIL_CONFIRM_QUIT,
     ];
-    let mut matches;
 
     let handler: extern "C" fn(libc::c_int) = signal_handler;
     // SAFETY: installing a handler that only calls async-signal-safe functions.
@@ -68,10 +66,7 @@ pub fn confirm4(context: &mut Context, question: &str) -> i32 {
         libc::signal(libc::SIGINT, handler as libc::sighandler_t);
     }
 
-    let stdin = std::io::stdin();
-    let mut stdin = stdin.lock();
-    loop {
-        let mut stdout = std::io::stdout();
+    let matches = with_console(|stdin, stdout| loop {
         let _ = write!(
             stdout,
             "{question} ({}/{}/{}/{}) ",
@@ -98,12 +93,12 @@ pub fn confirm4(context: &mut Context, question: &str) -> i32 {
             // Lexer::lowerCase (Lexer::trim (answer)): Lexer::trim trims spaces.
             lower_case(&trim_with(&answer, " "))
         };
-        matches = auto_complete(&answer, &options, 1); // Hard-coded 1.
+        let matches = auto_complete(&answer, &options, 1); // Hard-coded 1.
 
         if eof || matches.len() == 1 {
-            break;
+            break matches;
         }
-    }
+    });
 
     // SAFETY: restoring the default disposition.
     unsafe {
