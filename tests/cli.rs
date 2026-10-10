@@ -2,7 +2,8 @@
 //! configuration loading (`TASKRC`, `rc:`, `rc.x=y` / `rc.x:y` overrides,
 //! `include`), `main.cpp`'s exit statuses, and `Context` dispatch through the
 //! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
-//! `information`, abbreviations, `--`, argument checks, message colours).
+//! `information`, abbreviations, `--`, argument checks, message colours),
+//! and the milestone 5 commands `add`, `log`, `count`, `export`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -887,3 +888,294 @@ fn bad_color_rule_is_reported() {
     assert_eq!(stderr(&output), "The color 'chartreuse' is not recognized.\n");
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// CmdAdd.cpp, CmdLog.cpp, CmdCount.cpp, CmdExport.cpp
+
+/// `task rc.verbose=nothing <args>`: stdout, stderr and exit status.
+fn quiet(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let mut all = vec!["rc.verbose=nothing"];
+    all.extend_from_slice(args);
+    let output = env.task(&all);
+    (stdout(&output), stderr(&output), output.status.code().unwrap())
+}
+
+/// The exported tasks (`task <filter> export`), one JSON object per element.
+fn export(env: &Env, args: &[&str]) -> Vec<serde_json::Value> {
+    export_report(env, args, None)
+}
+
+/// `task <filter> export [<report>]` as parsed JSON.
+fn export_report(env: &Env, args: &[&str], report: Option<&str>) -> Vec<serde_json::Value> {
+    let mut all = args.to_vec();
+    all.push("export");
+    all.extend(report);
+    let (out, err, code) = quiet(env, &all);
+    assert_eq!((err.as_str(), code), ("", 0), "{out}");
+    match serde_json::from_str(&out).unwrap() {
+        serde_json::Value::Array(tasks) => tasks,
+        other => panic!("not an array: {other}"),
+    }
+}
+
+fn is_uuid(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(i, c)| {
+            if [8, 13, 18, 23].contains(&i) {
+                c == '-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        })
+}
+
+#[test]
+fn add_reports_new_id_and_project_footnote() {
+    let env = Env::new("");
+    let output = env.task(&["add", "one", "project:home"]);
+    assert_eq!(stdout(&output), "Created task 1.\n");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "The project 'home' has changed.  Project 'home' is 0% complete (1 task remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["rc.verbose=new-id", "add", "two", "project:home"]);
+    assert_eq!(stdout(&output), "Created task 2.\n");
+    assert_eq!(stderr(&output), "");
+
+    let output = env.task(&["rc.verbose=project", "add", "three", "project:home"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "The project 'home' has changed.  Project 'home' is 0% complete (3 of 3 tasks remaining).\n"
+    );
+
+    // No project, no footnote.
+    assert_eq!(quiet(&env, &["add", "four"]), (String::new(), String::new(), 0));
+    let tasks = export(&env, &[]);
+    let descriptions: Vec<&str> = tasks.iter().map(|t| t["description"].as_str().unwrap()).collect();
+    assert_eq!(descriptions, ["one", "two", "three", "four"]);
+    assert_eq!(tasks[0]["project"], "home");
+    assert_eq!(tasks[0]["status"], "pending");
+}
+
+#[test]
+fn add_new_uuid_and_status_variants() {
+    let env = Env::new("");
+
+    // new-uuid wins over new-id.
+    let output = env.task(&["rc.verbose=new-id,new-uuid", "add", "one"]);
+    let out = stdout(&output);
+    let uuid = out.strip_prefix("Created task ").unwrap().strip_suffix(".\n").unwrap();
+    assert!(is_uuid(uuid), "{out}");
+    assert_eq!(export(&env, &[])[0]["uuid"], uuid);
+
+    // A completed task has no ID, so new-id shows the UUID.
+    let output = env.task(&["rc.verbose=new-id", "add", "done", "status:completed"]);
+    let out = stdout(&output);
+    let uuid = out.strip_prefix("Created task ").unwrap().strip_suffix(".\n").unwrap();
+    assert!(is_uuid(uuid), "{out}");
+
+    // Recurrence templates.
+    let output = env.task(&["rc.verbose=new-id", "add", "rec", "recur:weekly", "due:tomorrow"]);
+    assert_eq!(stdout(&output), "Created task 2 (recurrence template).\n");
+    let output = env.task(&["rc.verbose=new-uuid", "add", "rec", "recur:weekly", "due:tomorrow"]);
+    let out = stdout(&output);
+    let uuid = out
+        .strip_prefix("Created task ")
+        .unwrap()
+        .strip_suffix(" (recurrence template).\n")
+        .unwrap();
+    assert!(is_uuid(uuid), "{out}");
+
+    // A waiting task still gets an ID.
+    let output = env.task(&["rc.verbose=new-id", "add", "later", "wait:tomorrow"]);
+    assert_eq!(stdout(&output), "Created task 4.\n");
+}
+
+#[test]
+fn add_errors() {
+    let env = Env::new("");
+    assert_eq!(
+        quiet(&env, &["add"]),
+        (String::new(), "Additional text must be provided.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["add", "rec", "recur:weekly"]),
+        (
+            String::new(),
+            "A recurring task must also have a 'due' date.\n".into(),
+            2
+        )
+    );
+    assert_eq!(quiet(&env, &["count"]).0, "0\n");
+}
+
+#[test]
+fn add_dom_refers_to_earlier_modifications() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "x", "due:2030-01-01", "scheduled:due"]).2, 0);
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks[0]["scheduled"], tasks[0]["due"]);
+}
+
+#[test]
+fn log_adds_completed_task() {
+    let env = Env::new("");
+    let output = env.task(&["log", "one", "project:home"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers()
+            + "The project 'home' has changed.  Project 'home' is 100% complete (0 of 1 tasks remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["rc.verbose=new-uuid", "log", "two"]);
+    let out = stdout(&output);
+    let uuid = out.strip_prefix("Logged task ").unwrap().strip_suffix(".\n").unwrap();
+    assert!(is_uuid(uuid), "{out}");
+
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks.len(), 2);
+    for task in &tasks {
+        assert_eq!(task["status"], "completed");
+        assert_eq!(task["id"], 0);
+        assert!(task["end"].is_string(), "{task}");
+    }
+    // Both have ID 0, so `id,uuid` orders them by UUID.
+    assert!(tasks.iter().any(|t| t["uuid"] == uuid));
+    assert!(tasks[0]["uuid"].as_str().unwrap() < tasks[1]["uuid"].as_str().unwrap());
+}
+
+#[test]
+fn log_errors() {
+    let env = Env::new("");
+    assert_eq!(
+        quiet(&env, &["log", "rec", "recur:weekly", "due:tomorrow"]),
+        (String::new(), "You cannot log recurring tasks.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["log", "w", "wait:tomorrow"]),
+        (String::new(), "You cannot log waiting tasks.\n".into(), 2)
+    );
+    assert_eq!(
+        quiet(&env, &["log"]),
+        (String::new(), "Additional text must be provided.\n".into(), 2)
+    );
+    assert_eq!(quiet(&env, &["count"]).0, "0\n");
+}
+
+#[test]
+fn count_skips_recurring_templates() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["count"]), ("0\n".into(), String::new(), 0));
+    for args in [
+        &["add", "one", "+tag"][..],
+        &["add", "two"],
+        &["log", "three"],
+        &["add", "rec", "recur:weekly", "due:tomorrow"],
+    ] {
+        assert_eq!(quiet(&env, args).2, 0);
+    }
+    assert_eq!(quiet(&env, &["count"]).0, "3\n");
+    assert_eq!(quiet(&env, &["+tag", "count"]).0, "1\n");
+    assert_eq!(quiet(&env, &["status:pending", "count"]).0, "2\n");
+    assert_eq!(quiet(&env, &["status:recurring", "count"]).0, "0\n");
+    assert_eq!(quiet(&env, &["/o/", "count"]).0, "2\n");
+}
+
+#[test]
+fn export_json_array_and_decoration() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["export"]), ("[\n]\n".into(), String::new(), 0));
+    assert_eq!(
+        quiet(&env, &["rc.json.array=off", "export"]),
+        (String::new(), String::new(), 0)
+    );
+
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+    let (out, err, code) = quiet(&env, &["export"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    let lines: Vec<&str> = out.split('\n').collect();
+    assert_eq!(lines.len(), 5, "{out}");
+    assert_eq!(lines[0], "[");
+    assert!(lines[1].starts_with("{\"id\":1,\"description\":\"one\",") && lines[1].ends_with("\"urgency\":0},"));
+    assert!(lines[2].starts_with("{\"id\":2,\"description\":\"two\",") && lines[2].ends_with("\"urgency\":0}"));
+    assert_eq!(&lines[3..], ["]", ""]);
+
+    let (out, _, _) = quiet(&env, &["rc.json.array=off", "export"]);
+    let lines: Vec<&str> = out.split('\n').collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(lines[0].ends_with('}') && lines[1].ends_with('}') && lines[2].is_empty());
+
+    // limit:N, with a filter (a lone pseudo arg leaves a string result,
+    // which C++ `get_bool` treats as false).
+    let tasks = export(&env, &["/o/", "limit:1"]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["description"], "one");
+}
+
+#[test]
+fn export_depends_array() {
+    let env = Env::new("");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two", "depends:1"]);
+    let uuid = export(&env, &["1"])[0]["uuid"].as_str().unwrap().to_string();
+    let task = &export(&env, &["2"])[0];
+    assert_eq!(task["depends"], serde_json::json!([uuid]));
+    // Taskwarrior 3.5.0 has no `json.depends.array` setting: composeJSON
+    // always emits an array.
+    let task = &export(&env, &["rc.json.depends.array=off", "2"])[0];
+    assert_eq!(task["depends"], serde_json::json!([uuid]));
+}
+
+#[test]
+fn export_report_filter_and_sort() {
+    let env = Env::new(
+        "report.byrev.columns=id\nreport.byrev.sort=description-\nreport.byrev.filter=+x\n\
+         report.asgiven.columns=id\nreport.asgiven.sort=none\n",
+    );
+    quiet(&env, &["add", "a", "+x"]);
+    quiet(&env, &["add", "b"]);
+    quiet(&env, &["add", "c", "+x"]);
+    let descriptions = |tasks: Vec<serde_json::Value>| -> Vec<String> {
+        tasks
+            .iter()
+            .map(|t| t["description"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Report filter added to the command-line filter, report sort applied;
+    // report names are matched by closeEnough.
+    assert_eq!(descriptions(export_report(&env, &[], Some("byrev"))), ["c", "a"]);
+    assert_eq!(descriptions(export_report(&env, &[], Some("byr"))), ["c", "a"]);
+    assert_eq!(descriptions(export_report(&env, &["/a/"], Some("byrev"))), ["a"]);
+    // Without a report: `id,uuid`.
+    assert_eq!(descriptions(export(&env, &[])), ["a", "b", "c"]);
+
+    // sort=none: the command line's UUID order.
+    let uuids: Vec<String> = export(&env, &[])
+        .iter()
+        .map(|t| t["uuid"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        descriptions(export_report(&env, &[&uuids[2], &uuids[0], &uuids[1]], Some("asgiven"))),
+        ["c", "a", "b"]
+    );
+
+    assert_eq!(
+        quiet(&env, &["export", "nosuchreport"]),
+        (
+            String::new(),
+            "Unable to find report that matches 'nosuchreport'.\n".into(),
+            2
+        )
+    );
+    // Non-report commands do not match.
+    assert_eq!(
+        quiet(&env, &["export", "count"]),
+        (String::new(), "Unable to find report that matches 'count'.\n".into(), 2)
+    );
+}
