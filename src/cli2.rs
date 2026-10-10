@@ -3067,6 +3067,117 @@ mod tests {
         assert_eq!(prepared(&mut ctx, &["task", "urgency>5", "count"]), words("( urgency > 5 )"));
     }
 
+    /// Restores the process-wide minimum match length on drop (declared after
+    /// the env lock guard so it runs first).
+    struct MinimumGuard(i32);
+
+    impl Drop for MinimumGuard {
+        fn drop(&mut self) {
+            set_minimum_match_length(self.0);
+        }
+    }
+
+    #[test]
+    fn attribute_abbreviation_and_minimum() {
+        // C++ CLI2::canonicalize: an exact entity name always matches;
+        // otherwise autoComplete must find exactly one entity of which the
+        // name is a prefix of at least minimumMatchLength characters.
+        // desugarFilterAttributes downgrades an unrecognized pair to a word,
+        // and as desugarFilterPlainArgs already ran it stays a bare word.
+        let _lock = crate::test_util::env_lock();
+        let _restore = MinimumGuard(minimum_match_length());
+        // (minimum, argument, Some((canonical attribute, expected infix)) or
+        // None when the pair is not recognized).
+        type Case<'a> = (i32, &'a str, Option<(&'a str, &'a str)>);
+        let cases: [Case; 16] = [
+            (1, "pro:home", Some(("project", "pro = home"))),
+            (2, "pro:home", Some(("project", "pro = home"))),
+            (2, "proj:home", Some(("project", "proj = home"))),
+            (2, "projec:home", Some(("project", "projec = home"))),
+            (2, "pri:H", Some(("priority", "pri = H"))),
+            (2, "prio:H", Some(("priority", "prio = H"))),
+            (2, "du:today", Some(("due", "du = today"))),
+            (2, "pro.has:ho", Some(("project", "pro ~ ho"))),
+            // Ambiguous: project/priority, depends/description/due.
+            (1, "pr:home", None),
+            (2, "pr:home", None),
+            (1, "d:x", None),
+            (2, "de:x", None),
+            // Shorter than the minimum.
+            (4, "pro:home", None),
+            (4, "proj:home", Some(("project", "proj = home"))),
+            // An exact name ignores the minimum.
+            (10, "due:today", Some(("due", "due = today"))),
+            (10, "project:home", Some(("project", "project = home"))),
+        ];
+        for (minimum, arg, expected) in cases {
+            set_minimum_match_length(minimum);
+            let mut ctx = filter_context();
+            let raws = prepared(&mut ctx, &["task", arg, "count"]);
+            match expected {
+                Some((canonical, infix)) => {
+                    assert_eq!(raws, words(&format!("( {infix} )")), "{arg} (minimum {minimum})");
+                    let lhs = ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).nth(1).unwrap();
+                    assert_eq!(lhs.attribute("canonical"), canonical, "{arg} (minimum {minimum})");
+                    assert_eq!(lhs.lextype, LexerType::dom, "{arg} (minimum {minimum})");
+                }
+                None => {
+                    assert_eq!(raws, ["(", arg, ")"], "{arg} (minimum {minimum})");
+                    assert_eq!(filter_types(&ctx)[1], LexerType::word, "{arg} (minimum {minimum})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn alias_expansion_positions_and_terminator() {
+        // C++ CLI2::aliasExpansion replaces any non-TERMINATED argument whose
+        // raw text is an alias name, wherever it appears, lexing the value.
+        let mut ctx = filter_context();
+        ctx.cli2.alias("hometoday", "count project:home or +today");
+        let raws = prepared(&mut ctx, &["task", "hometoday"]);
+        assert_eq!(ctx.cli2.get_command(), "count");
+        // Alias tokens are not ORIGINAL, so they are not parenthesized.
+        assert_eq!(raws, words("project = home or tags _hastag_ today"));
+
+        // Not only in the command position.
+        let mut ctx = filter_context();
+        ctx.cli2.alias("home", "project:home");
+        let raws = prepared(&mut ctx, &["task", "home", "count"]);
+        assert_eq!(raws, words("project = home"));
+        assert_eq!(ctx.cli2.get_command(), "count");
+
+        // Alias names must match exactly (no abbreviation) and are case-sensitive.
+        let mut ctx = filter_context();
+        ctx.cli2.alias("home", "project:home");
+        let raws = prepared(&mut ctx, &["task", "hom", "Home", "count"]);
+        assert_eq!(raws, words("( description ~ hom and description ~ Home )"));
+
+        // Bug 1031: 'from' -> 'to' in modifications, but not after '--'.
+        for (list, expected) in [
+            (&["task", "add", "from"][..], vec!["to"]),
+            (&["task", "add", "from", "--", "to"][..], vec!["to", "to"]),
+            (&["task", "add", "to", "--", "from"][..], vec!["to", "from"]),
+        ] {
+            let mut ctx = context();
+            ctx.cli2.alias("from", "to");
+            parse(&mut ctx, list).unwrap();
+            let mods: Vec<String> = ctx
+                .cli2
+                .args
+                .iter()
+                .filter(|a| a.has_tag("MODIFICATION"))
+                .map(|a| a.attribute("raw"))
+                .collect();
+            assert_eq!(mods, expected, "{list:?}");
+            let terminated: Vec<String> =
+                ctx.cli2.args.iter().filter(|a| a.has_tag("TERMINATED")).map(|a| a.attribute("raw")).collect();
+            // As in C++ lexArguments, the '--' separator itself is TERMINATED too.
+            let expected_terminated: &[&str] = if list.len() == 5 { &list[3..] } else { &[] };
+            assert_eq!(terminated, expected_terminated, "{list:?}");
+        }
+    }
+
     #[test]
     fn junctions_and_empty_parens() {
         let mut ctx = filter_context();

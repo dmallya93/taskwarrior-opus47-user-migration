@@ -804,6 +804,49 @@ fn command_abbreviation() {
 }
 
 #[test]
+fn attribute_abbreviation_end_to_end() {
+    // abbreviation.test.py with count/_get in place of 'list'.
+    let env = Env::new("verbose=nothing\nabbreviation.minimum=1\n");
+    env.task(&["add", "project:home", "priority:H", "hasattributes"]);
+    env.task(&["add", "noattributes"]);
+    for arg in ["project:home", "projec:home", "proje:home", "proj:home", "pro:home"] {
+        assert_eq!(stdout(&env.task(&[arg, "_ids"])), "1\n", "{arg}");
+    }
+    for arg in ["priority:H", "priorit:H", "priori:H", "prior:H", "prio:H", "pri:H"] {
+        assert_eq!(stdout(&env.task(&[arg, "_ids"])), "1\n", "{arg}");
+    }
+    // Ambiguous (project/priority): a plain word, matching nothing.
+    assert_eq!(stdout(&env.task(&["pr:home", "count"])), "0\n");
+    // Abbreviated attribute names also apply to modifications.
+    env.task(&["add", "pro:work", "pri:L", "third"]);
+    assert_eq!(stdout(&env.task(&["_get", "3.project", "3.priority"])), "work L\n");
+    // ...but an ambiguous one is part of the description.
+    env.task(&["add", "pr:x", "fourth"]);
+    assert_eq!(stdout(&env.task(&["_get", "4.description", "4.project"])), "pr:x fourth \n");
+    // Below abbreviation.minimum the name is not recognized.
+    assert_eq!(stdout(&env.task(&["rc.abbreviation.minimum=4", "pro:home", "count"])), "0\n");
+    assert_eq!(stdout(&env.task(&["rc.abbreviation.minimum=4", "proj:home", "count"])), "1\n");
+}
+
+#[test]
+fn alias_expansion_end_to_end() {
+    // alias.test.py (bug 1031 and filter aliases) with count/_get.
+    let env = Env::new("verbose=nothing\nalias.from=to\nalias.cnt=count\nalias.hometoday=count project:home or +today\n");
+    env.task(&["add", "from"]);
+    env.task(&["add", "from", "--", "to"]);
+    env.task(&["add", "to", "--", "from"]);
+    assert_eq!(stdout(&env.task(&["_get", "1.description"])), "to\n");
+    assert_eq!(stdout(&env.task(&["_get", "2.description"])), "to to\n");
+    assert_eq!(stdout(&env.task(&["_get", "3.description"])), "to from\n");
+    env.task(&["add", "a", "project:home"]);
+    env.task(&["add", "b", "+today"]);
+    assert_eq!(stdout(&env.task(&["cnt"])), "5\n");
+    assert_eq!(stdout(&env.task(&["hometoday"])), "2\n");
+    // An alias from an rc override is loaded too.
+    assert_eq!(stdout(&env.task(&["rc.alias.zz=_ids", "zz", "+today"])), "5\n");
+}
+
+#[test]
 fn terminator_handling() {
     let env = Env::new("");
 
