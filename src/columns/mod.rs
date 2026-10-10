@@ -30,3 +30,4 @@ pub mod col_uuid;
 pub mod col_until;
 pub mod col_urgency;
 pub mod col_wait;
+#[cfg(test)] mod col_tests;
