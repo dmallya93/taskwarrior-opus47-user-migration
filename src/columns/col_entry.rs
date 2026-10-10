@@ -68,3 +68,40 @@ impl Column for ColumnEntry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Labels and the `ColumnTypeDate` delegation of `measure` / `render`
+    //! (every style is covered in `col_type_date`).
+    use super::*;
+    use crate::columns::column::{factory, FakeRenderEnv};
+    use crate::shared::localtime;
+
+    #[test]
+    fn labels_and_delegation() {
+        let mut env = FakeRenderEnv::with_config(&[("dateformat", "Y-M-D")]);
+        assert_eq!(factory("entry", "list", &env.config).unwrap().label(), "Added");
+        assert_eq!(factory("entry.age", "list", &env.config).unwrap().label(), "Age");
+        assert_eq!(factory("entry.countdown", "list", &env.config).unwrap().label(), "Added");
+
+        let mut task = Task::new();
+        task.set_int("entry", 1_700_000_000);
+        let c = factory("entry.epoch", "list", &env.config).unwrap();
+        assert_eq!(c.measure(&mut task, &mut env).unwrap(), (10, 10));
+        let mut lines = Vec::new();
+        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env).unwrap();
+        assert_eq!(lines, vec!["  1700000000".to_string()]);
+
+        // `remaining` renders nothing for a past date.
+        let c = factory("entry.remaining", "list", &env.config).unwrap();
+        task.set_int("entry", localtime::time_now() - 86400);
+        assert_eq!(c.measure(&mut task, &mut env).unwrap(), (0, 0));
+        let mut lines = Vec::new();
+        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env).unwrap();
+        assert!(lines.is_empty());
+
+        // No such date: nothing.
+        let mut empty = Task::new();
+        assert_eq!(c.measure(&mut empty, &mut env).unwrap(), (0, 0));
+    }
+}

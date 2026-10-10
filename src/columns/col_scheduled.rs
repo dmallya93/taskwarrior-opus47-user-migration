@@ -67,3 +67,40 @@ impl Column for ColumnScheduled {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Labels and the `ColumnTypeDate` delegation of `measure` / `render`
+    //! (every style is covered in `col_type_date`).
+    use super::*;
+    use crate::columns::column::{factory, FakeRenderEnv};
+    use crate::shared::localtime;
+
+    #[test]
+    fn labels_and_delegation() {
+        let mut env = FakeRenderEnv::with_config(&[("dateformat", "Y-M-D")]);
+        assert_eq!(factory("scheduled", "list", &env.config).unwrap().label(), "Scheduled");
+        assert_eq!(factory("scheduled.countdown", "list", &env.config).unwrap().label(), "Count");
+        assert_eq!(factory("scheduled.age", "list", &env.config).unwrap().label(), "Scheduled");
+
+        let mut task = Task::new();
+        task.set_int("scheduled", 1_700_000_000);
+        let c = factory("scheduled.epoch", "list", &env.config).unwrap();
+        assert_eq!(c.measure(&mut task, &mut env).unwrap(), (10, 10));
+        let mut lines = Vec::new();
+        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env).unwrap();
+        assert_eq!(lines, vec!["  1700000000".to_string()]);
+
+        // `remaining` renders nothing for a past date.
+        let c = factory("scheduled.remaining", "list", &env.config).unwrap();
+        task.set_int("scheduled", localtime::time_now() - 86400);
+        assert_eq!(c.measure(&mut task, &mut env).unwrap(), (0, 0));
+        let mut lines = Vec::new();
+        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env).unwrap();
+        assert!(lines.is_empty());
+
+        // No such date: nothing.
+        let mut empty = Task::new();
+        assert_eq!(c.measure(&mut empty, &mut env).unwrap(), (0, 0));
+    }
+}
