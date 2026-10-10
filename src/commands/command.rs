@@ -948,8 +948,10 @@ mod tests {
     ];
 
     /// Commands whose `execute` has been ported (milestone 1: `version`,
-    /// `_version` and `_show`); every other one must still be a stub.
-    const PORTED: [&str; 6] = ["_config", "_show", "_version", "calc", "config", "version"];
+    /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
+    /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
+    /// one must still be a stub.
+    const PORTED: [&str; 8] = ["_config", "_show", "_version", "add", "calc", "config", "log", "version"];
 
     fn default_config() -> Configuration {
         let mut config = Configuration::new();
@@ -1158,6 +1160,23 @@ mod tests {
                 let err = all[keyword].execute(&mut context, &mut output).unwrap_err();
                 assert_eq!(err.to_string(), "No expression to evaluate.");
                 assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "add" || keyword == "log" {
+                // Without modifications there is no description (text_required).
+                let err = all[keyword].execute(&mut context, &mut output).unwrap_err();
+                assert_eq!(err.to_string(), "Additional text must be provided.");
+                assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "_get" {
+                let err = all[keyword].execute(&mut context, &mut output).unwrap_err();
+                assert_eq!(err.to_string(), "No DOM reference specified.");
+                assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "count" || keyword == "export" {
+                // These read the replica; covered end to end in tests/cli.rs.
                 continue;
             }
             let rc = all[keyword].execute(&mut context, &mut output).unwrap();
