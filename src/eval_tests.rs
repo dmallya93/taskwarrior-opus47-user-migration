@@ -230,8 +230,8 @@ impl VariantTask for TagTask {
         self.annotations.clone()
     }
 
-    fn has_tag(&self, tag: &str) -> bool {
-        self.tags.contains(&tag)
+    fn has_tag(&self, tag: &str) -> crate::Result<bool> {
+        Ok(self.tags.contains(&tag))
     }
 }
 

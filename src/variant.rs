@@ -49,7 +49,9 @@
 //!   (`Result<bool>`: an invalid regex is [`TwError::Runtime`]),
 //!   `operator_partial` / `operator_nopartial` -> `op_partial` /
 //!   `op_nopartial` (`Result<bool>`, casts), `operator_hastag` /
-//!   `operator_notag` -> `op_hastag` / `op_notag` (`bool`).
+//!   `operator_notag` -> `op_hastag` / `op_notag` (`Result<bool>`: a
+//!   virtual tag can throw in C++ `Task::hasTag`, e.g. an invalid status
+//!   or a failing `tdb2.latest_id ()`).
 //! * The `Task&` parameters of `operator_match` / `operator_hastag` are
 //!   abstracted by [`VariantTask`].
 
@@ -159,7 +161,10 @@ pub trait VariantTask {
     fn get_annotations(&self) -> BTreeMap<String, String>;
 
     /// C++ `bool Task::hasTag (const std::string&) const`.
-    fn has_tag(&self, tag: &str) -> bool;
+    ///
+    /// # Errors
+    /// Whatever C++ `hasTag` throws (e.g. `The status '{1}' is not valid.`).
+    fn has_tag(&self, tag: &str) -> Result<bool>;
 }
 
 /// C++ `auto order = Task::customOrder.find (source)` followed, when found, by
@@ -1419,7 +1424,10 @@ impl Variant {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `bool Variant::operator_hastag (const Variant& other, const Task&
     /// task) const`.
-    pub fn op_hastag(&self, other: &Variant, task: &dyn VariantTask) -> bool {
+    ///
+    /// # Errors
+    /// As [`VariantTask::has_tag`].
+    pub fn op_hastag(&self, other: &Variant, task: &dyn VariantTask) -> Result<bool> {
         let mut right = other.clone();
         right.cast_infallible(Type::String);
         Lexer::dequote(&mut right._string);
@@ -1429,8 +1437,11 @@ impl Variant {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `bool Variant::operator_notag (const Variant& other, const Task&
     /// task) const`.
-    pub fn op_notag(&self, other: &Variant, task: &dyn VariantTask) -> bool {
-        !self.op_hastag(other, task)
+    ///
+    /// # Errors
+    /// As [`VariantTask::has_tag`].
+    pub fn op_notag(&self, other: &Variant, task: &dyn VariantTask) -> Result<bool> {
+        Ok(!self.op_hastag(other, task)?)
     }
 
     ////////////////////////////////////////////////////////////////////////////

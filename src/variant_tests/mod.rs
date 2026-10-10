@@ -356,7 +356,7 @@ fn cast_real_details() {
 fn empty_task_has_no_annotations_or_tags() {
     let task = Task::default();
     assert!(VariantTask::get_annotations(&task).is_empty());
-    assert!(!VariantTask::has_tag(&task, "anything"));
+    assert!(!VariantTask::has_tag(&task, "anything").unwrap());
 }
 
 #[test]

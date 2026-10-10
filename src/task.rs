@@ -19,8 +19,9 @@
 //!   (`Task::defaultProject` -> [`Task::default_project`] /
 //!   [`Task::set_default_project`], ...), defaults as in C++.
 //! * `getStatus` -> [`Task::get_status`] (`Result`, since `textToStatus`
-//!   throws). The predicates (`is_due`, `hasTag`, ...) are `bool` as in C++;
-//!   see [`Task::get_status`] for how they treat an invalid status.
+//!   throws). The predicates that call it in C++ (`is_ready`, `is_due*`,
+//!   `is_overdue`) and `hasTag` (which also reads `tdb2.latest_id ()`)
+//!   return `Result<bool>`, so those throws propagate with the C++ text.
 //! * C++ methods that read `Context::getContext ()` take a
 //!   `&mut dyn` [`TaskEnv`] (`rc.due`, the column registry,
 //!   `tdb2.latest_id ()`). [`Context`] implements it; [`NullEnv`] is the
@@ -150,8 +151,9 @@ pub trait TaskEnv {
     fn has_column(&self, name: &str) -> bool;
     /// The names (in registry order) of the columns whose `is_uda ()` is true.
     fn uda_columns(&self) -> Vec<String>;
-    /// C++ `Context::getContext ().tdb2.latest_id ()`.
-    fn latest_id(&mut self) -> i32;
+    /// C++ `Context::getContext ().tdb2.latest_id ()`; its errors propagate
+    /// as the C++ throw would.
+    fn latest_id(&mut self) -> Result<i32>;
 }
 
 impl TaskEnv for Context {
@@ -167,13 +169,11 @@ impl TaskEnv for Context {
         self.columns.iter().filter(|(_, col)| col.is_uda()).map(|(name, _)| name.clone()).collect()
     }
 
-    /// Deviation: C++ `TDB2::latest_id` can throw (replica errors while
-    /// loading the working set); the trait returns `i32` as `hasTag` is
-    /// `bool`, so an error reads as 0 (no task has ID 0 in the working set,
-    /// so `+LATEST` is false). Tdb2 has normally loaded the working set
-    /// successfully before any filter runs.
-    fn latest_id(&mut self) -> i32 {
-        self.tdb2.latest_id().unwrap_or(0)
+    /// C++ `TDB2::latest_id` can throw (replica errors while loading the
+    /// working set, or no replica open); the error propagates out of
+    /// `hasTag ("LATEST")`.
+    fn latest_id(&mut self) -> Result<i32> {
+        self.tdb2.latest_id()
     }
 }
 
@@ -196,8 +196,8 @@ impl TaskEnv for NullEnv {
         Vec::new()
     }
 
-    fn latest_id(&mut self) -> i32 {
-        0
+    fn latest_id(&mut self) -> Result<i32> {
+        Ok(0)
     }
 }
 
@@ -227,7 +227,7 @@ impl VariantTask for TaskWithEnv<'_> {
         self.task.get_annotations()
     }
 
-    fn has_tag(&self, tag: &str) -> bool {
+    fn has_tag(&self, tag: &str) -> Result<bool> {
         let mut env = self.env.borrow_mut();
         self.task.has_tag(tag, &mut **env)
     }
@@ -241,7 +241,7 @@ impl VariantTask for Task {
         Task::get_annotations(self)
     }
 
-    fn has_tag(&self, tag: &str) -> bool {
+    fn has_tag(&self, tag: &str) -> Result<bool> {
         Task::has_tag(self, tag, &mut NullEnv)
     }
 }
@@ -656,17 +656,6 @@ impl Task {
         Ok(status)
     }
 
-    /// `getStatus ()` as called from the `bool` predicates (`is_due`,
-    /// `hasTag`, ...).
-    ///
-    /// Deviation: where C++ would throw "The status 'x' is not valid." out
-    /// of a predicate, the status reads as `pending`. Statuses are checked
-    /// by `validate` before anything is stored, so only externally
-    /// corrupted data can reach this.
-    fn predicate_status(&self) -> Status {
-        self.get_status().unwrap_or(Status::Pending)
-    }
-
     /// C++ `void Task::setStatus (Task::status)`: `waiting` is stored as
     /// `pending`.
     pub fn set_status(&mut self, status: Status) {
@@ -845,85 +834,91 @@ impl Task {
 
     /// C++ `bool Task::is_ready () const`: pending, not blocked and either
     /// not scheduled or scheduled before now.
-    pub fn is_ready(&self) -> bool {
-        self.predicate_status() == Status::Pending
+    ///
+    /// # Errors
+    /// `The status '{1}' is not valid.` (C++ `getStatus` throws).
+    pub fn is_ready(&self) -> Result<bool> {
+        Ok(self.get_status()? == Status::Pending
             && !self.is_blocked
-            && (!self.has("scheduled") || named_date("now") > Datetime::from_epoch(self.get_date("scheduled")))
+            && (!self.has("scheduled") || named_date("now") > Datetime::from_epoch(self.get_date("scheduled"))))
     }
 
     /// Whether the task has a `due` and is neither completed nor deleted
     /// (the common prefix of the `is_due*` predicates).
-    fn has_open_due(&self) -> bool {
+    fn has_open_due(&self) -> Result<bool> {
         if self.has("due") {
-            let status = self.predicate_status();
-            return status != Status::Completed && status != Status::Deleted;
+            let status = self.get_status()?;
+            return Ok(status != Status::Completed && status != Status::Deleted);
         }
-        false
+        Ok(false)
     }
 
     /// C++ `bool Task::is_due () const`.
-    pub fn is_due(&self, env: &mut dyn TaskEnv) -> bool {
-        if self.has_open_due() {
+    ///
+    /// # Errors
+    /// `The status '{1}' is not valid.` (C++ `getStatus` throws).
+    pub fn is_due(&self, env: &mut dyn TaskEnv) -> Result<bool> {
+        if self.has_open_due()? {
             let state = self.get_date_state("due", env);
             if state == DateState::AfterToday || state == DateState::EarlierToday || state == DateState::LaterToday {
-                return true;
+                return Ok(true);
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// C++ `bool Task::is_dueyesterday () const`.
-    pub fn is_dueyesterday(&self) -> bool {
-        self.has_open_due() && named_date("yesterday").same_day(&Datetime::from_epoch(self.get_date("due")))
+    pub fn is_dueyesterday(&self) -> Result<bool> {
+        Ok(self.has_open_due()? && named_date("yesterday").same_day(&Datetime::from_epoch(self.get_date("due"))))
     }
 
     /// C++ `bool Task::is_duetoday () const`.
-    pub fn is_duetoday(&self, env: &mut dyn TaskEnv) -> bool {
-        if self.has_open_due() {
+    pub fn is_duetoday(&self, env: &mut dyn TaskEnv) -> Result<bool> {
+        if self.has_open_due()? {
             let state = self.get_date_state("due", env);
             if state == DateState::EarlierToday || state == DateState::LaterToday {
-                return true;
+                return Ok(true);
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// C++ `bool Task::is_duetomorrow () const`.
-    pub fn is_duetomorrow(&self) -> bool {
-        self.has_open_due() && named_date("tomorrow").same_day(&Datetime::from_epoch(self.get_date("due")))
+    pub fn is_duetomorrow(&self) -> Result<bool> {
+        Ok(self.has_open_due()? && named_date("tomorrow").same_day(&Datetime::from_epoch(self.get_date("due"))))
     }
 
     /// `due >= Datetime (start) && due <= Datetime (end)` for an open due.
-    fn due_within(&self, start: &str, end: &str) -> bool {
-        if self.has_open_due() {
+    fn due_within(&self, start: &str, end: &str) -> Result<bool> {
+        if self.has_open_due()? {
             let due = Datetime::from_epoch(self.get_date("due"));
             if due >= named_date(start) && due <= named_date(end) {
-                return true;
+                return Ok(true);
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// C++ `bool Task::is_dueweek () const`: due between `sow` and `eow`.
-    pub fn is_dueweek(&self) -> bool {
+    pub fn is_dueweek(&self) -> Result<bool> {
         self.due_within("sow", "eow")
     }
 
     /// C++ `bool Task::is_duemonth () const`: due between `som` and `eom`.
-    pub fn is_duemonth(&self) -> bool {
+    pub fn is_duemonth(&self) -> Result<bool> {
         self.due_within("som", "eom")
     }
 
     /// C++ `bool Task::is_duequarter () const`: due between `soq` and `eoq`.
-    pub fn is_duequarter(&self) -> bool {
+    pub fn is_duequarter(&self) -> Result<bool> {
         self.due_within("soq", "eoq")
     }
 
     /// C++ `bool Task::is_dueyear () const`: due between `soy` and `eoy`.
-    pub fn is_dueyear(&self) -> bool {
+    pub fn is_dueyear(&self) -> Result<bool> {
         self.due_within("soy", "eoy")
     }
 
@@ -949,19 +944,19 @@ impl Task {
     }
 
     /// C++ `bool Task::is_overdue () const`.
-    pub fn is_overdue(&self, env: &mut dyn TaskEnv) -> bool {
+    pub fn is_overdue(&self, env: &mut dyn TaskEnv) -> Result<bool> {
         if self.has("due") {
-            let status = self.predicate_status();
+            let status = self.get_status()?;
 
             if status != Status::Completed && status != Status::Deleted && status != Status::Recurring {
                 let state = self.get_date_state("due", env);
                 if state == DateState::EarlierToday || state == DateState::BeforeToday {
-                    return true;
+                    return Ok(true);
                 }
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// C++ `bool Task::is_waiting () const`: the stored status is `pending`
@@ -1093,7 +1088,7 @@ impl Task {
     /// due:1month      -       -       -    -       -      -    -     ?
     /// due:1year       -       -       -    -       -      -    -     -
     /// ```
-    pub fn has_tag(&self, tag: &str, env: &mut dyn TaskEnv) -> bool {
+    pub fn has_tag(&self, tag: &str, env: &mut dyn TaskEnv) -> Result<bool> {
         // Synthetic tags - dynamically generated, but do not occupy storage space.
         // Note: This list must match that in CmdInfo::execute.
         // Note: This list must match that in ::feedback_reserved_tags.
@@ -1102,9 +1097,9 @@ impl Task {
             // * the list in CmdTags.cpp for the _tags command.
             // * the list in CmdInfo.cpp for the info command.
             match tag {
-                "BLOCKED" => return self.is_blocked,
-                "UNBLOCKED" => return !self.is_blocked,
-                "BLOCKING" => return self.is_blocking,
+                "BLOCKED" => return Ok(self.is_blocked),
+                "UNBLOCKED" => return Ok(!self.is_blocked),
+                "BLOCKING" => return Ok(self.is_blocking),
                 "READY" => return self.is_ready(),
                 "DUE" => return self.is_due(env),
                 "DUETODAY" => return self.is_duetoday(env), // 2016-03-29: Deprecated in 2.6.0
@@ -1116,30 +1111,30 @@ impl Task {
                 "MONTH" => return self.is_duemonth(),
                 "QUARTER" => return self.is_duequarter(),
                 "YEAR" => return self.is_dueyear(),
-                "ACTIVE" => return self.has("start"),
-                "SCHEDULED" => return self.has("scheduled"),
-                "CHILD" => return self.has("parent") || self.has("template"), // 2017-01-07: Deprecated in 2.6.0
-                "INSTANCE" => return self.has("template") || self.has("parent"),
-                "UNTIL" => return self.has("until"),
-                "ANNOTATED" => return self.has_annotations(),
-                "TAGGED" => return self.get_tag_count() > 0,
-                "PARENT" => return self.has("mask") || self.has("last"), // 2017-01-07: Deprecated in 2.6.0
-                "TEMPLATE" => return self.has("last") || self.has("mask"),
-                "WAITING" => return self.is_waiting(),
-                "PENDING" => return self.predicate_status() == Status::Pending,
-                "COMPLETED" => return self.predicate_status() == Status::Completed,
-                "DELETED" => return self.predicate_status() == Status::Deleted,
-                "UDA" => return self.is_uda_present(env),
-                "ORPHAN" => return self.is_orphan_present(env),
-                "LATEST" => return self.id == env.latest_id(),
-                "PROJECT" => return self.has("project"),
-                "PRIORITY" => return self.has("priority"),
+                "ACTIVE" => return Ok(self.has("start")),
+                "SCHEDULED" => return Ok(self.has("scheduled")),
+                "CHILD" => return Ok(self.has("parent") || self.has("template")), // 2017-01-07: Deprecated in 2.6.0
+                "INSTANCE" => return Ok(self.has("template") || self.has("parent")),
+                "UNTIL" => return Ok(self.has("until")),
+                "ANNOTATED" => return Ok(self.has_annotations()),
+                "TAGGED" => return Ok(self.get_tag_count() > 0),
+                "PARENT" => return Ok(self.has("mask") || self.has("last")), // 2017-01-07: Deprecated in 2.6.0
+                "TEMPLATE" => return Ok(self.has("last") || self.has("mask")),
+                "WAITING" => return Ok(self.is_waiting()),
+                "PENDING" => return Ok(self.get_status()? == Status::Pending),
+                "COMPLETED" => return Ok(self.get_status()? == Status::Completed),
+                "DELETED" => return Ok(self.get_status()? == Status::Deleted),
+                "UDA" => return Ok(self.is_uda_present(env)),
+                "ORPHAN" => return Ok(self.is_orphan_present(env)),
+                "LATEST" => return Ok(self.id == env.latest_id()?),
+                "PROJECT" => return Ok(self.has("project")),
+                "PRIORITY" => return Ok(self.has("priority")),
                 _ => {}
             }
         }
 
         // Concrete tags.
-        self.has(&Task::tag2attr(tag))
+        Ok(self.has(&Task::tag2attr(tag)))
     }
 
     /// C++ `void Task::addTag (const std::string&)`.
@@ -1781,7 +1776,7 @@ impl Task {
         value = add_term(value, || self.urgency_blocking(), Task::urgency_blocking_coefficient());
         value = add_term(value, || self.urgency_age(), Task::urgency_age_coefficient());
 
-        value = self.urgency_user_terms(value, ctx);
+        value = self.urgency_user_terms(value, ctx)?;
 
         if self.is_blocking && ctx.config.get_boolean("urgency.inherit") {
             let prev = value;
@@ -1812,10 +1807,10 @@ impl Task {
     ///
     /// `.coefficient` is found anywhere in the key (C++ `find`), and the
     /// `substr` lengths wrap exactly as the C++ `size_t` arithmetic does.
-    fn urgency_user_terms(&self, mut value: f32, env: &mut dyn TaskEnv) -> f32 {
+    fn urgency_user_terms(&self, mut value: f32, env: &mut dyn TaskEnv) -> Result<f32> {
         let task_project_name = self.get("project");
         // Tag- and project-specific coefficients.
-        Task::with_coefficients(|coefficients| {
+        Task::with_coefficients(|coefficients| -> Result<()> {
             for (key, &coefficient) in coefficients {
                 // C++ `if (fabs (var.second) > epsilon)`: a NaN coefficient
                 // (`strtod ("nan")`) is not greater, so it is skipped too.
@@ -1842,7 +1837,7 @@ impl Task {
                         if let Some(end) = key.find(".coefficient") {
                             let tag = cpp_substr(key, 17, end.wrapping_sub(17));
 
-                            if self.has_tag(tag, env) {
+                            if self.has_tag(tag, env)? {
                                 value += coefficient;
                             }
                         }
@@ -1881,9 +1876,10 @@ impl Task {
                     }
                 }
             }
-        });
+            Ok(())
+        })?;
 
-        value
+        Ok(value)
     }
 
     /// C++ `float Task::urgency ()`: the cached [`Task::urgency_c`], recomputed
@@ -2709,8 +2705,8 @@ mod tests {
         fn uda_columns(&self) -> Vec<String> {
             self.udas.clone()
         }
-        fn latest_id(&mut self) -> i32 {
-            self.latest
+        fn latest_id(&mut self) -> Result<i32> {
+            Ok(self.latest)
         }
     }
 
@@ -2769,7 +2765,7 @@ mod tests {
             "PRIORITY",
         ]
         .into_iter()
-        .filter(|tag| t.has_tag(tag, e))
+        .filter(|tag| t.has_tag(tag, e).unwrap())
         .collect()
     }
 
@@ -2920,8 +2916,11 @@ mod tests {
 
         t.set("status", "bogus");
         assert!(t.get_status().is_err());
-        // Predicates treat an invalid status as pending.
-        assert!(t.has_tag("PENDING", &mut NullEnv));
+        // As in C++, hasTag propagates the getStatus throw.
+        assert_eq!(
+            t.has_tag("PENDING", &mut NullEnv).unwrap_err().to_string(),
+            "The status 'bogus' is not valid."
+        );
     }
 
     #[test]
@@ -3075,9 +3074,9 @@ mod tests {
         assert_eq!(t.get_tags(), vec!["garden", "home"]);
         assert_eq!(t.get("tags"), "garden,home");
         assert_eq!(t.get_tag_count(), 2);
-        assert!(t.has_tag("home", &mut NullEnv));
-        assert!(!t.has_tag("work", &mut NullEnv));
-        assert!(VariantTask::has_tag(&t, "garden"));
+        assert!(t.has_tag("home", &mut NullEnv).unwrap());
+        assert!(!t.has_tag("work", &mut NullEnv).unwrap());
+        assert!(VariantTask::has_tag(&t, "garden").unwrap());
 
         t.recalc_urgency = false;
         t.add_tag("home");
@@ -3103,11 +3102,11 @@ mod tests {
 
         // A concrete upper-case tag that is not virtual.
         t.add_tag("FOO");
-        assert!(t.has_tag("FOO", &mut NullEnv));
+        assert!(t.has_tag("FOO", &mut NullEnv).unwrap());
         // A concrete tag shadowed by a virtual one.
         t.add_tag("PROJECT");
-        assert!(!t.has_tag("PROJECT", &mut NullEnv));
-        assert!(!t.has_tag("", &mut NullEnv));
+        assert!(!t.has_tag("PROJECT", &mut NullEnv).unwrap());
+        assert!(!t.has_tag("", &mut NullEnv).unwrap());
     }
 
     #[test]
@@ -3231,107 +3230,107 @@ mod tests {
 
         // Overdue by a week.
         let t = pending_due(today - 7 * DAY);
-        assert!(t.is_overdue(&mut e));
-        assert!(!t.is_due(&mut e));
-        assert!(!t.is_duetoday(&mut e));
-        assert!(!t.is_dueyesterday());
-        assert!(!t.is_duetomorrow());
+        assert!(t.is_overdue(&mut e).unwrap());
+        assert!(!t.is_due(&mut e).unwrap());
+        assert!(!t.is_duetoday(&mut e).unwrap());
+        assert!(!t.is_dueyesterday().unwrap());
+        assert!(!t.is_duetomorrow().unwrap());
 
         // Yesterday.
         let t = pending_due(epoch_of("yesterday") + 3600);
-        assert!(t.is_overdue(&mut e));
-        assert!(t.is_dueyesterday());
-        assert!(!t.is_due(&mut e));
+        assert!(t.is_overdue(&mut e).unwrap());
+        assert!(t.is_dueyesterday().unwrap());
+        assert!(!t.is_due(&mut e).unwrap());
 
         // Today (end of the day: later today).
         let t = pending_due(epoch_of("tomorrow") - 1);
-        assert!(t.is_due(&mut e));
-        assert!(t.is_duetoday(&mut e));
-        assert!(!t.is_overdue(&mut e));
-        assert!(!t.is_duetomorrow());
-        assert!(t.is_dueweek());
-        assert!(t.is_duemonth());
-        assert!(t.is_duequarter());
-        assert!(t.is_dueyear());
+        assert!(t.is_due(&mut e).unwrap());
+        assert!(t.is_duetoday(&mut e).unwrap());
+        assert!(!t.is_overdue(&mut e).unwrap());
+        assert!(!t.is_duetomorrow().unwrap());
+        assert!(t.is_dueweek().unwrap());
+        assert!(t.is_duemonth().unwrap());
+        assert!(t.is_duequarter().unwrap());
+        assert!(t.is_dueyear().unwrap());
 
         // Today, earlier: overdue and due today.
         let t = pending_due(today + 1);
         if today + 1 < now() {
-            assert!(t.is_overdue(&mut e));
-            assert!(t.is_duetoday(&mut e));
+            assert!(t.is_overdue(&mut e).unwrap());
+            assert!(t.is_duetoday(&mut e).unwrap());
         }
 
         // Tomorrow.
         let t = pending_due(epoch_of("tomorrow") + 3600);
-        assert!(t.is_due(&mut e));
-        assert!(t.is_duetomorrow());
-        assert!(!t.is_duetoday(&mut e));
-        assert!(!t.is_overdue(&mut e));
+        assert!(t.is_due(&mut e).unwrap());
+        assert!(t.is_duetomorrow().unwrap());
+        assert!(!t.is_duetoday(&mut e).unwrap());
+        assert!(!t.is_overdue(&mut e).unwrap());
 
         // In a year and a day: none.
         let t = pending_due(epoch_of("eoy") + DAY);
-        assert!(!t.is_due(&mut e));
-        assert!(!t.is_dueyear());
-        assert!(!t.is_duequarter());
-        assert!(!t.is_duemonth());
-        assert!(!t.is_dueweek());
+        assert!(!t.is_due(&mut e).unwrap());
+        assert!(!t.is_dueyear().unwrap());
+        assert!(!t.is_duequarter().unwrap());
+        assert!(!t.is_duemonth().unwrap());
+        assert!(!t.is_dueweek().unwrap());
 
         // Range boundaries are inclusive.
         let t = pending_due(epoch_of("sow"));
-        assert!(t.is_dueweek());
+        assert!(t.is_dueweek().unwrap());
         let t = pending_due(epoch_of("eom"));
-        assert!(t.is_duemonth());
+        assert!(t.is_duemonth().unwrap());
         let t = pending_due(epoch_of("soq"));
-        assert!(t.is_duequarter());
+        assert!(t.is_duequarter().unwrap());
         let t = pending_due(epoch_of("soy") - 1);
-        assert!(!t.is_dueyear());
+        assert!(!t.is_dueyear().unwrap());
 
         // Completed/deleted tasks are never due.
         for status in ["completed", "deleted"] {
             let mut t = pending_due(epoch_of("tomorrow") - 1);
             t.set("status", status);
-            assert!(!t.is_due(&mut e));
-            assert!(!t.is_duetoday(&mut e));
-            assert!(!t.is_overdue(&mut e));
-            assert!(!t.is_dueyear());
+            assert!(!t.is_due(&mut e).unwrap());
+            assert!(!t.is_duetoday(&mut e).unwrap());
+            assert!(!t.is_overdue(&mut e).unwrap());
+            assert!(!t.is_dueyear().unwrap());
             let mut t = pending_due(epoch_of("yesterday") + 1);
             t.set("status", status);
-            assert!(!t.is_dueyesterday());
-            assert!(!t.is_overdue(&mut e));
+            assert!(!t.is_dueyesterday().unwrap());
+            assert!(!t.is_overdue(&mut e).unwrap());
         }
 
         // Recurring templates are due but never overdue.
         let mut t = pending_due(epoch_of("yesterday") + 3600);
         t.set("status", "recurring");
-        assert!(!t.is_overdue(&mut e));
-        assert!(t.is_dueyesterday());
+        assert!(!t.is_overdue(&mut e).unwrap());
+        assert!(t.is_dueyesterday().unwrap());
 
         // No due.
         let t = Task::new();
-        assert!(!t.is_due(&mut e));
-        assert!(!t.is_overdue(&mut e));
-        assert!(!t.is_dueweek());
+        assert!(!t.is_due(&mut e).unwrap());
+        assert!(!t.is_overdue(&mut e).unwrap());
+        assert!(!t.is_dueweek().unwrap());
     }
 
     #[test]
     fn ready() {
         let mut t = Task::new();
         t.set("status", "pending");
-        assert!(t.is_ready());
+        assert!(t.is_ready().unwrap());
         t.set_int("scheduled", now() - DAY);
-        assert!(t.is_ready());
+        assert!(t.is_ready().unwrap());
         t.set_int("scheduled", now() + DAY);
-        assert!(!t.is_ready());
+        assert!(!t.is_ready().unwrap());
         t.remove("scheduled");
         t.is_blocked = true;
-        assert!(!t.is_ready());
+        assert!(!t.is_ready().unwrap());
         t.is_blocked = false;
         t.set("status", "completed");
-        assert!(!t.is_ready());
+        assert!(!t.is_ready().unwrap());
         // Waiting is not pending.
         t.set("status", "pending");
         t.set_int("wait", now() + DAY);
-        assert!(!t.is_ready());
+        assert!(!t.is_ready().unwrap());
     }
 
     #[test]
@@ -3380,12 +3379,12 @@ mod tests {
         assert_eq!(virtual_tags(&t, &mut e), vec!["UNBLOCKED", "PARENT", "TEMPLATE", "ORPHAN"]);
         let mut t = Task::new();
         t.set("last", "1");
-        assert!(t.has_tag("TEMPLATE", &mut e));
-        assert!(t.has_tag("PARENT", &mut e));
+        assert!(t.has_tag("TEMPLATE", &mut e).unwrap());
+        assert!(t.has_tag("PARENT", &mut e).unwrap());
         let mut t = Task::new();
         t.set("template", "u");
-        assert!(t.has_tag("INSTANCE", &mut e));
-        assert!(t.has_tag("CHILD", &mut e));
+        assert!(t.has_tag("INSTANCE", &mut e).unwrap());
+        assert!(t.has_tag("CHILD", &mut e).unwrap());
     }
 
     #[test]
@@ -3393,18 +3392,18 @@ mod tests {
         let mut e = env();
         let mut t = Task::new();
         t.set("status", "completed");
-        assert!(t.has_tag("COMPLETED", &mut e));
-        assert!(!t.has_tag("PENDING", &mut e));
-        assert!(!t.has_tag("READY", &mut e));
+        assert!(t.has_tag("COMPLETED", &mut e).unwrap());
+        assert!(!t.has_tag("PENDING", &mut e).unwrap());
+        assert!(!t.has_tag("READY", &mut e).unwrap());
         t.set("status", "deleted");
-        assert!(t.has_tag("DELETED", &mut e));
+        assert!(t.has_tag("DELETED", &mut e).unwrap());
         t.set("status", "pending");
         t.set_int("wait", now() + DAY);
-        assert!(t.has_tag("WAITING", &mut e));
-        assert!(!t.has_tag("PENDING", &mut e));
+        assert!(t.has_tag("WAITING", &mut e).unwrap());
+        assert!(!t.has_tag("PENDING", &mut e).unwrap());
         // No status attribute reads as pending.
         let t = Task::new();
-        assert!(t.has_tag("PENDING", &mut e));
+        assert!(t.has_tag("PENDING", &mut e).unwrap());
     }
 
     #[test]
@@ -3413,38 +3412,38 @@ mod tests {
         let today = epoch_of("today");
 
         let t = pending_due(epoch_of("tomorrow") - 1);
-        assert!(t.has_tag("DUE", &mut e));
-        assert!(t.has_tag("DUETODAY", &mut e));
-        assert!(t.has_tag("TODAY", &mut e));
-        assert!(!t.has_tag("OVERDUE", &mut e));
-        assert!(!t.has_tag("TOMORROW", &mut e));
-        assert!(!t.has_tag("YESTERDAY", &mut e));
-        assert!(t.has_tag("MONTH", &mut e));
-        assert!(t.has_tag("QUARTER", &mut e));
-        assert!(t.has_tag("YEAR", &mut e));
-        assert_eq!(t.has_tag("WEEK", &mut e), t.is_dueweek());
+        assert!(t.has_tag("DUE", &mut e).unwrap());
+        assert!(t.has_tag("DUETODAY", &mut e).unwrap());
+        assert!(t.has_tag("TODAY", &mut e).unwrap());
+        assert!(!t.has_tag("OVERDUE", &mut e).unwrap());
+        assert!(!t.has_tag("TOMORROW", &mut e).unwrap());
+        assert!(!t.has_tag("YESTERDAY", &mut e).unwrap());
+        assert!(t.has_tag("MONTH", &mut e).unwrap());
+        assert!(t.has_tag("QUARTER", &mut e).unwrap());
+        assert!(t.has_tag("YEAR", &mut e).unwrap());
+        assert_eq!(t.has_tag("WEEK", &mut e).unwrap(), t.is_dueweek().unwrap());
 
         let t = pending_due(epoch_of("tomorrow") + 1);
-        assert!(t.has_tag("TOMORROW", &mut e));
-        assert!(t.has_tag("DUE", &mut e));
-        assert!(!t.has_tag("TODAY", &mut e));
+        assert!(t.has_tag("TOMORROW", &mut e).unwrap());
+        assert!(t.has_tag("DUE", &mut e).unwrap());
+        assert!(!t.has_tag("TODAY", &mut e).unwrap());
 
         let t = pending_due(epoch_of("yesterday") + 1);
-        assert!(t.has_tag("YESTERDAY", &mut e));
-        assert!(t.has_tag("OVERDUE", &mut e));
-        assert!(!t.has_tag("DUE", &mut e));
+        assert!(t.has_tag("YESTERDAY", &mut e).unwrap());
+        assert!(t.has_tag("OVERDUE", &mut e).unwrap());
+        assert!(!t.has_tag("DUE", &mut e).unwrap());
 
         // The rc.due window comes from the environment.
         let t = pending_due(today + 5 * DAY);
-        assert!(t.has_tag("DUE", &mut e));
+        assert!(t.has_tag("DUE", &mut e).unwrap());
         e.due = 2;
-        assert!(!t.has_tag("DUE", &mut e));
+        assert!(!t.has_tag("DUE", &mut e).unwrap());
         e.due = 0;
-        assert!(t.has_tag("DUE", &mut e));
+        assert!(t.has_tag("DUE", &mut e).unwrap());
         // NullEnv uses the default rc.due=7.
-        assert!(t.has_tag("DUE", &mut NullEnv));
+        assert!(t.has_tag("DUE", &mut NullEnv).unwrap());
         let t = pending_due(today + 9 * DAY);
-        assert!(!t.has_tag("DUE", &mut NullEnv));
+        assert!(!t.has_tag("DUE", &mut NullEnv).unwrap());
     }
 
     #[test]
@@ -3459,9 +3458,9 @@ mod tests {
         t.add_tag("x");
         t.add_annotation("a");
         t.set("dep_abc", "x");
-        assert!(!t.has_tag("UDA", &mut e));
+        assert!(!t.has_tag("UDA", &mut e).unwrap());
         // `tags` itself has no column here, so it is an orphan.
-        assert!(t.has_tag("ORPHAN", &mut e));
+        assert!(t.has_tag("ORPHAN", &mut e).unwrap());
         assert_eq!(t.get_uda_orphans(&mut e), vec!["tags"]);
         e.columns.push("tags".into());
         assert!(!t.is_orphan_present(&mut e));
@@ -3469,7 +3468,7 @@ mod tests {
 
         t.set("estimate", "3");
         assert!(t.is_uda_present(&mut e));
-        assert!(t.has_tag("UDA", &mut e));
+        assert!(t.has_tag("UDA", &mut e).unwrap());
 
         t.set("zzz", "1");
         t.set("aaa", "1");
@@ -3487,11 +3486,11 @@ mod tests {
         let mut t = Task::new();
         t.id = 4;
         e.latest = 4;
-        assert!(t.has_tag("LATEST", &mut e));
+        assert!(t.has_tag("LATEST", &mut e).unwrap());
         e.latest = 5;
-        assert!(!t.has_tag("LATEST", &mut e));
+        assert!(!t.has_tag("LATEST", &mut e).unwrap());
         // NullEnv latest_id is 0.
-        assert!(!t.has_tag("LATEST", &mut NullEnv));
+        assert!(!t.has_tag("LATEST", &mut NullEnv).unwrap());
     }
 
     #[test]
@@ -3507,15 +3506,87 @@ mod tests {
         {
             let adapter = TaskWithEnv::new(&t, &mut e);
             let vt: &dyn VariantTask = &adapter;
-            assert!(vt.has_tag("UDA"));
-            assert!(vt.has_tag("LATEST"));
-            assert!(vt.has_tag("ANNOTATED"));
+            assert!(vt.has_tag("UDA").unwrap());
+            assert!(vt.has_tag("LATEST").unwrap());
+            assert!(vt.has_tag("ANNOTATED").unwrap());
             assert_eq!(vt.get_annotations().len(), 1);
             assert_eq!(adapter.task().id, 2);
         }
         // Plain Task as VariantTask uses NullEnv.
-        assert!(!VariantTask::has_tag(&t, "UDA"));
-        assert!(!VariantTask::has_tag(&t, "LATEST"));
+        assert!(!VariantTask::has_tag(&t, "UDA").unwrap());
+        assert!(!VariantTask::has_tag(&t, "LATEST").unwrap());
+    }
+
+    #[test]
+    fn invalid_status_propagates_from_predicates() {
+        // C++ `getStatus ()` throws from these predicates and from hasTag.
+        let mut e = env();
+        let mut t = Task::new();
+        t.set("status", "bogus");
+        t.set_int("due", now() + DAY);
+        let expected = "The status 'bogus' is not valid.";
+        assert_eq!(t.is_ready().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_due(&mut e).unwrap_err().to_string(), expected);
+        assert_eq!(t.is_dueyesterday().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_duetoday(&mut e).unwrap_err().to_string(), expected);
+        assert_eq!(t.is_duetomorrow().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_dueweek().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_duemonth().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_duequarter().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_dueyear().unwrap_err().to_string(), expected);
+        assert_eq!(t.is_overdue(&mut e).unwrap_err().to_string(), expected);
+        for tag in [
+            "READY", "DUE", "DUETODAY", "TODAY", "YESTERDAY", "TOMORROW", "OVERDUE", "WEEK", "MONTH", "QUARTER",
+            "YEAR", "PENDING", "COMPLETED", "DELETED",
+        ] {
+            assert_eq!(t.has_tag(tag, &mut e).unwrap_err().to_string(), expected, "{tag}");
+        }
+        // Virtual tags that do not read the status, and concrete tags, still work.
+        assert!(!t.has_tag("BLOCKED", &mut e).unwrap());
+        assert!(!t.has_tag("WAITING", &mut e).unwrap());
+        assert!(!t.has_tag("home", &mut e).unwrap());
+        // Without a due date the is_due* predicates never read the status.
+        t.remove("due");
+        assert!(!t.is_due(&mut e).unwrap());
+        assert!(!t.is_overdue(&mut e).unwrap());
+        // Through the Variant interface, as Eval's `_hastag_` uses it.
+        let v = crate::variant::Variant::default();
+        let err = v.op_hastag(&crate::variant::Variant::from_string("PENDING"), &t).unwrap_err();
+        assert_eq!(err.to_string(), expected);
+        let err = v.op_notag(&crate::variant::Variant::from_string("PENDING"), &t).unwrap_err();
+        assert_eq!(err.to_string(), expected);
+    }
+
+    /// A [`TaskEnv`] whose `latest_id` fails, like a TDB2 whose working set
+    /// cannot be loaded.
+    struct FailingLatest;
+    impl TaskEnv for FailingLatest {
+        fn due_days(&self) -> i32 {
+            7
+        }
+        fn has_column(&self, _name: &str) -> bool {
+            false
+        }
+        fn uda_columns(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn latest_id(&mut self) -> Result<i32> {
+            Err(TwError::Message("working set unavailable".into()))
+        }
+    }
+
+    #[test]
+    fn latest_id_error_propagates() {
+        let t = Task::new();
+        assert_eq!(t.has_tag("LATEST", &mut FailingLatest).unwrap_err().to_string(), "working set unavailable");
+        // Only +LATEST reads latest_id.
+        assert!(t.has_tag("PENDING", &mut FailingLatest).unwrap());
+        let mut env = FailingLatest;
+        let adapter = TaskWithEnv::new(&t, &mut env);
+        let err = crate::variant::Variant::default()
+            .op_hastag(&crate::variant::Variant::from_string("LATEST"), &adapter)
+            .unwrap_err();
+        assert_eq!(err.to_string(), "working set unavailable");
     }
 
     struct UdaCol(bool);
@@ -3535,11 +3606,20 @@ mod tests {
         assert!(ctx.has_column("description"));
         assert!(!ctx.has_column("project"));
         assert_eq!(ctx.uda_columns(), vec!["estimate"]);
-        assert_eq!(TaskEnv::latest_id(&mut ctx), 0);
+        // No replica open: C++ `TDB2::replica ()` asserts; the error propagates
+        // out of latest_id and +LATEST.
+        assert_eq!(TaskEnv::latest_id(&mut ctx).unwrap_err().to_string(), "replica not open");
 
         let mut t = Task::new();
         t.set("estimate", "2");
-        assert!(t.has_tag("UDA", &mut ctx));
+        assert!(t.has_tag("UDA", &mut ctx).unwrap());
+        assert_eq!(t.has_tag("LATEST", &mut ctx).unwrap_err().to_string(), "replica not open");
+
+        // With a replica, +LATEST compares against the working set.
+        let dir = tempfile::TempDir::new().unwrap();
+        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        assert_eq!(TaskEnv::latest_id(&mut ctx).unwrap(), 0);
+        assert!(t.has_tag("LATEST", &mut ctx).unwrap());
     }
 
     #[test]
@@ -4049,7 +4129,7 @@ mod urgency_tests {
     }
 
     fn user_terms(t: &Task) -> f32 {
-        t.urgency_user_terms(0.0, &mut NullEnv)
+        t.urgency_user_terms(0.0, &mut NullEnv).unwrap()
     }
 
     #[test]
@@ -4425,7 +4505,7 @@ mod urgency_tests {
         }
         assert_eq!(user_terms(&t), expected);
         // Starting value is carried through.
-        assert_eq!(t.urgency_user_terms(1.0, &mut NullEnv), {
+        assert_eq!(t.urgency_user_terms(1.0, &mut NullEnv).unwrap(), {
             let mut v: f32 = 1.0;
             for c in [1e8_f32, 0.3, 0.2, 0.1] {
                 v += c;
