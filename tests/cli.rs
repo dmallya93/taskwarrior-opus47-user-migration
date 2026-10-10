@@ -1,6 +1,8 @@
 //! End-to-end tests of the `task` binary: the `version` family and
 //! configuration loading (`TASKRC`, `rc:`, `rc.x=y` / `rc.x:y` overrides,
-//! `include`), plus `main.cpp`'s exit statuses.
+//! `include`), `main.cpp`'s exit statuses, and `Context` dispatch through the
+//! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
+//! `information`, abbreviations, `--`, argument checks, message colours).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -649,4 +651,238 @@ fn calc_binary() {
     let output = calc(&[]);
     assert_eq!((stdout(&output).as_str(), stderr(&output).as_str()), ("", "No expression to evaluate.\n"));
     assert_eq!(output.status.code(), Some(255));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Context::initialize / run / dispatch with the full CLI2 parser
+
+/// The C++ title contains U+0456 (Cyrillic i) in "specifіc".
+const FINAL_PARSE_TREE: &str = "Parse Tree (before command-specif\u{456}c processing)";
+
+const ESC: &str = "\x1b";
+
+#[test]
+fn debug_parser_1_dumps_the_final_parse_tree() {
+    let env = Env::new("");
+    let output = env.task(&["rc.debug.parser=1", "calc", "1", "+", "2"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), "3\n");
+    let err = stderr(&output);
+    // rc.debug.parser=1 implies rc.debug (propagateDebug): timer, the one
+    // final tree dump, Eval tracing and the Perf line.
+    assert!(err.starts_with(&format!("Timer Config::load ({}) ", env.rc().display())), "{err}");
+    assert_eq!(err.matches(FINAL_PARSE_TREE).count(), 1, "{err}");
+    assert!(err.contains(&format!("{ESC}[1m{FINAL_PARSE_TREE}{ESC}[0m\n  _original_args\n")), "{err}");
+    assert!(err.contains("MISCELLANEOUS"), "{err}");
+    assert!(err.contains("\nPerf task 3.5.0 "), "{err}");
+    // No intermediate pass dumps at level 1.
+    assert!(!err.contains("CLI2::analyze"), "{err}");
+    assert!(err.ends_with(&(env.override_headers() + "Configuration override rc.debug.parser=1\n")), "{err}");
+}
+
+#[test]
+fn debug_parser_2_dumps_every_pass_but_no_final_tree() {
+    let env = Env::new("");
+    let output = env.task(&["rc.debug.parser=2", "calc", "1"]);
+    assert_eq!(output.status.code(), Some(0));
+    let err = stderr(&output);
+    for title in ["CLI2::analyze", "CLI2::analyze lexArguments", "CLI2::analyze findCommand", "CLI2::analyze categorizeArgs"] {
+        assert!(err.contains(&format!("{ESC}[1m{title}{ESC}[0m\n")), "{title}: {err}");
+    }
+    assert!(!err.contains(FINAL_PARSE_TREE), "{err}");
+}
+
+#[test]
+fn debug_without_parser_level_has_no_tree() {
+    let env = Env::new("");
+    let output = env.task(&["rc.debug=on", "rc.debug.parser=0", "_version"]);
+    assert_eq!(output.status.code(), Some(0));
+    let err = stderr(&output);
+    assert!(err.starts_with("Timer Config::load ("), "{err}");
+    assert!(err.contains("\nPerf task 3.5.0 "), "{err}");
+    assert!(!err.contains(FINAL_PARSE_TREE), "{err}");
+
+    // Without any debug setting there is no debug output at all.
+    let output = env.task(&["_version"]);
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn default_command_without_arguments() {
+    let env = Env::new("default.command=version\n");
+    let output = env.task(&["rc.verbose=default"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).contains("task 3.5.0 built for "));
+    // 'default' verbosity implies 'header': the recomposed command line.
+    assert_eq!(
+        stderr(&output),
+        format!("[{} version rc.verbose=default]\n", env!("CARGO_BIN_EXE_task"))
+    );
+
+    // Not shown without the 'default' token (the stock verbosity lacks it).
+    let output = env.task(&[]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stderr(&output), env.override_headers());
+}
+
+#[test]
+fn unknown_word_is_a_filter_for_the_default_command() {
+    // The default command is used, and categorizeArgs rejects the word for a
+    // command that accepts no arguments.
+    let env = Env::new("default.command=version\n");
+    let output = env.task(&["nosuchcommand"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "The 'version' command does not allow 'nosuchcommand'.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    // With the stock default command ('next', not yet ported).
+    let env = Env::new("");
+    let output = env.task(&["nosuchcommand"]);
+    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn command_that_allows_nothing_rejects_arguments() {
+    let env = Env::new("");
+    for args in [&["version", "foo"][..], &["version", "--", "foo"][..], &["_version", "+tag"][..]] {
+        let output = env.task(args);
+        let word = args.last().unwrap();
+        let command = args[0];
+        let expected = format!("The '{command}' command does not allow '{word}'.\n");
+        assert!(stderr(&output).ends_with(&expected), "{args:?}: {}", stderr(&output));
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert_eq!(stdout(&output), "", "{args:?}");
+    }
+}
+
+#[test]
+fn id_without_command_assumes_information() {
+    let env = Env::new("");
+    let output = env.task(&["rc.verbose=default", "1"]);
+    assert_eq!(
+        stderr(&output),
+        "No command specified - assuming 'information'.\nCommand 'information' is not yet implemented.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    // The header needs the 'default' verbosity token; a UUID also counts.
+    for args in [&["1", "3"][..], &["a1b2c3d4-0000-4000-8000-000000000000"][..]] {
+        let output = env.task(args);
+        assert_eq!(
+            stderr(&output),
+            env.override_headers() + "Command 'information' is not yet implemented.\n",
+            "{args:?}"
+        );
+    }
+
+    // C++ defaultCommand only looks for number/uuid lexemes: a range or list
+    // (a Lexer 'set') falls through to the default command.
+    let output = env.task(&["1-2,4"]);
+    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
+}
+
+#[test]
+fn command_abbreviation() {
+    let env = Env::new("");
+    let output = env.task(&["rc.verbose=nothing", "vers"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).contains("task 3.5.0 built for "));
+    assert_eq!(stderr(&output), "");
+
+    // Below abbreviation.minimum (2) it is not a command: a filter word for
+    // the default command.
+    let output = env.task(&["rc.verbose=nothing", "v"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    let output = env.task(&["rc.verbose=nothing", "rc.abbreviation.minimum=5", "vers"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+}
+
+#[test]
+fn terminator_handling() {
+    let env = Env::new("");
+
+    // Arguments after '--' are passed through as words.
+    let output = env.task(&["rc.verbose=nothing", "calc", "1", "--", "+", "2"]);
+    assert_eq!(stdout(&output), "3\n");
+    assert_eq!(output.status.code(), Some(0));
+
+    // Before '--' an rc.x=y argument is a configuration override (and not a
+    // word); after it, it is just a word and is not applied.
+    let output = env.task(&["calc", "rc.x=1", "2"]);
+    assert_eq!(stdout(&output), "2\n");
+    assert_eq!(stderr(&output), env.override_headers() + "Configuration override rc.x=1\n");
+    let output = env.task(&["calc", "--", "rc.verbose=nothing", "2"]);
+    assert!(stderr(&output).starts_with(&env.override_headers()), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("Configuration override"), "{}", stderr(&output));
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn forced_color_message_colors() {
+    let env = Env::new("");
+    // Errors from initialize are coloured as footnotes (a C++ quirk)...
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.verbose=nothing",
+        "rc.color.footnote=green",
+        "rc.color.error=red",
+        "version",
+        "foo",
+    ]);
+    assert_eq!(stderr(&output), format!("{ESC}[32mThe 'version' command does not allow 'foo'.{ESC}[0m\n"));
+    assert_eq!(output.status.code(), Some(2));
+
+    // ...errors from run as errors; headers and footnotes in their colours.
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.color.header=blue",
+        "rc.color.footnote=green",
+        "rc.color.error=red",
+        "nosuchcommand",
+    ]);
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "{ESC}[34mTASKRC override: {}{ESC}[0m\n{ESC}[34mTASKDATA override: {}{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc._forcecolor=on{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc.color.header=blue{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc.color.footnote=green{ESC}[0m\n\
+             {ESC}[32mConfiguration override rc.color.error=red{ESC}[0m\n\
+             {ESC}[31mCommand 'next' is not yet implemented.{ESC}[0m\n",
+            env.rc().display(),
+            env.data().display()
+        )
+    );
+
+    // Debug messages in color.debug.
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.color.debug=blue",
+        "rc.debug=on",
+        "rc.debug.parser=0",
+        "_version",
+    ]);
+    assert!(stderr(&output).starts_with(&format!("{ESC}[34mTimer Config::load (")), "{}", stderr(&output));
+
+    // An empty rule leaves the text alone; without a TTY or _forcecolor there
+    // is no colour at all.
+    let output = env.task(&["rc._forcecolor=on", "rc.color.error=", "rc.verbose=nothing", "nosuchcommand"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    let output = env.task(&["rc.color=on", "rc.color.error=red", "rc.verbose=nothing", "nosuchcommand"]);
+    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+}
+
+#[test]
+fn bad_color_rule_is_reported() {
+    let env = Env::new("");
+    let output = env.task(&["rc._forcecolor=on", "rc.color.error=chartreuse", "rc.verbose=nothing", "_version"]);
+    // initializeColorRules queues the error and initialization continues; the
+    // error is printed by run.
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout(&output).starts_with("3.5.0"), "{}", stdout(&output));
+    assert_eq!(stderr(&output), "The color 'chartreuse' is not recognized.\n");
 }

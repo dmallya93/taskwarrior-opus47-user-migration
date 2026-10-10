@@ -21,43 +21,47 @@
 //! them; [`Context::initialize_with`] / [`Context::run_with`] take the two
 //! streams explicitly (used by the unit tests).
 //!
-//! # Hook points for later milestones
+//! # Completeness, and the remaining hook points
 //!
-//! Everything in `Context.cpp` is ported, but parts call into modules that do
-//! not exist yet. Those calls are explicit hook points (no-ops, or bootstrap
-//! approximations), each documented where it occurs:
+//! Every function of `Context.cpp` is ported, in the C++ order:
 //!
-//! - **Milestone 2** (Datetime/Duration/JSON/Lexer): done.
-//!   `staticInitialization` sets `Lexer::minimumMatchLength`,
-//!   `Lexer::dateFormat`, `Datetime::weekstart` / `isoEnabled` /
-//!   `standalone*Enabled` and `Duration::standaloneSecondsEnabled`
-//!   ([`Lexer`], [`Datetime`], [`Duration`]; thread-local statics, which is
-//!   equivalent to the C++ statics for the single-threaded binary), and all
-//!   date formatting goes through [`Datetime`].
-//! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics
-//!   (including the `Variant::dateFormat` half of `Lexer::dateFormat =
-//!   Variant::dateFormat`),
-//!   `Eval::getOperators` / `getBinaryOperators` entities (done, via
-//!   [`Eval::get_operators`] / [`Eval::get_binary_operators`]), and the
-//!   `colorize*` functions (identity until the colour rules exist; libshared
-//!   `Color` and `Table` themselves are already ported).
-//! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
-//!   coefficients. `TDB2::open_replica` and `TDB2::gc`
-//!   ([`crate::tdb2::Tdb2`]) are ported: the replica is opened for every
-//!   registered command (as in C++) and `gc` time is added to
-//!   `time_gc_us`; task loading time accumulates in `Tdb2::time_load_us`
-//!   and is folded into `time_load_us` for the Perf line.
-//! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the `CLI2` parser
-//!   ([`crate::cli2::Cli2`]) runs detached from the Context via
-//!   [`cli2::with_cli2`]. DOM lookups (`getDOM`, Eval's `domSource`) are
-//!   [`crate::dom`] functions taking `&mut Context`, with the contextual
-//!   task passed separately (`current_task` is an `Rc`, cloned first).
-//! - **Milestone 6** (reports and columns): column rendering,
-//!   `initializeColorRules` (only its
-//!   `color ()` short-circuit is ported, in [`crate::rules`]).
-//! - **Milestone 7** (mutations, hooks, recurrence, undo, sync):
-//!   `Hooks::initialize` / `onLaunch` / `onExit` ([`crate::hooks::Hooks`]),
-//!   `handleUntil` / `handleRecurrence` ([`crate::recur`]).
+//! - `initialize`: rc file resolution and load, `rc.` overrides
+//!   ([`cli2::apply_overrides`]), data location, `createDefaultConfig`,
+//!   `Command::factory` / `Column::factory` entities, modifier and operator
+//!   entities, `initializeColorRules` ([`rules::initialize_color_rules`],
+//!   which makes the `color ()` / `_forcecolor` decision and loads the
+//!   `color.*` rules), `staticInitialization` (CLI2 / Lexer / Task / Variant
+//!   / Datetime / Duration / TDB2 statics, thread-local here), `propagateDebug`,
+//!   `loadAliases`, the full [`Cli2`] parse (`analyze`, run detached via
+//!   [`cli2::with_cli2`]), the `[<default command>]` and "assuming
+//!   'information'" headers, `TDB2::open_replica` and `Hooks::initialize`.
+//! - `run`: `Hooks::onLaunch`, `dispatch`, `Hooks::onExit`, the Perf debug
+//!   line, then debug messages, headers, output, footnotes and errors, each
+//!   coloured with the `rules.cpp` `colorize*` functions when `color ()`.
+//! - `dispatch`: `updateXtermTitle`, `updateVerbosity`, `TDB2::gc` for
+//!   `needs_gc` commands, `prepareFilter` for commands accepting
+//!   modifications but no filter, the `rc.debug.parser=1` parse-tree dump,
+//!   `handleUntil` / `handleRecurrence` for `needs_recur_update` commands
+//!   with `rc.gc`, then the command (or `help` when there is none).
+//! - `getWidth` / `getHeight` (`ioctl (TIOCGWINSZ)`), `getTaskContext`,
+//!   `color`, `verbose`, `getColumns`, `getLimits`, `decomposeSortField`,
+//!   `debugTiming`, `withCurrentTask`, `header` / `footnote` / `error` /
+//!   `debug`.
+//!
+//! DOM lookups (`getDOM`, Eval's `domSource`) are [`crate::dom`] functions
+//! taking `&mut Context`, with the contextual task passed separately
+//! (`current_task` is an `Rc`, cloned first).
+//!
+//! The call sites for subsystems owned by later milestones exist and are
+//! called at the C++ places; their bodies are documented no-ops (milestone 5
+//! Design Decision 3, option 1):
+//!
+//! - **Milestone 7**: `Hooks::initialize` / `onLaunch` / `onExit`
+//!   ([`crate::hooks::Hooks`]), `handleUntil` / `handleRecurrence`
+//!   ([`crate::recur`]).
+//! - **Milestone 6**: the per-task colour rules of `rules.cpp`
+//!   (`autoColorize`) are not called by Context; only report rendering uses
+//!   them.
 //!
 //! # `TASK_RCDIR`
 //!
@@ -83,7 +87,7 @@ use crate::eval::Eval;
 use crate::hooks::Hooks;
 use crate::lexer::Lexer;
 use crate::recur;
-use crate::rules;
+use crate::rules::{self, colorize_debug, colorize_error, colorize_footnote, colorize_header};
 use crate::shared::configuration::Configuration;
 use crate::shared::datetime::Datetime;
 use crate::shared::duration::Duration;
@@ -547,22 +551,6 @@ pub(crate) fn strtol(text: &str) -> i32 {
     value as i32
 }
 
-// Milestone 3 (Color) / 6 (rules.cpp) hooks: C++ `colorizeHeader`,
-// `colorizeFootnote`, `colorizeError`, `colorizeDebug` colour the text with
-// `color.header` etc. once colour rules exist. Until then they are identity.
-fn colorize_header(input: &str) -> String {
-    input.to_string()
-}
-fn colorize_footnote(input: &str) -> String {
-    input.to_string()
-}
-fn colorize_error(input: &str) -> String {
-    input.to_string()
-}
-fn colorize_debug(input: &str) -> String {
-    input.to_string()
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `class Context`.
 pub struct Context {
@@ -861,8 +849,7 @@ impl Context {
         //
         ////////////////////////////////////////////////////////////////////////
 
-        // Milestone 6 hook: only the `color ()` short-circuit is ported.
-        rules::initialize_color_rules(self);
+        rules::initialize_color_rules(self)?;
         self.static_initialization()?;
         self.propagate_debug();
         self.load_aliases();
