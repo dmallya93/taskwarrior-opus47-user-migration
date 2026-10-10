@@ -51,8 +51,8 @@
 //! # Still to come
 //!
 //! - `CmdCustom` and `CmdTimesheet` override the C++ virtual `uses_context`
-//!   with a `report.<name>.context` lookup; [`Command::uses_context`] takes
-//!   no configuration yet, so those overrides arrive with their ports.
+//!   with a `report.<name>.context` lookup, which is why
+//!   [`Command::uses_context`] takes the configuration.
 //! - Nothing else in `Command.cpp` depends on Task/TDB2: `permission` is
 //!   ported as [`Command::permission`].
 
@@ -306,8 +306,10 @@ pub trait Command {
         self.meta().needs_recur_update
     }
 
-    /// C++ virtual `Command::uses_context`.
-    fn uses_context(&self) -> bool {
+    /// C++ virtual `Command::uses_context`. The configuration replaces the
+    /// C++ `Context::getContext ().config` read by the `CmdCustom` /
+    /// `CmdTimesheet` overrides (`report.<name>.context`).
+    fn uses_context(&self, _config: &Configuration) -> bool {
         self.meta().uses_context
     }
 
@@ -834,7 +836,7 @@ mod tests {
             assert_eq!(c.usage(), format!("task <filter> {name}"));
             assert_eq!(c.description(), description);
             assert!(c.read_only() && c.displays_id() && c.needs_gc() && c.needs_recur_update());
-            assert!(c.uses_context() && c.accepts_filter());
+            assert!(c.uses_context(&Configuration::new()) && c.accepts_filter());
             assert!(!c.needs_confirm() && !c.accepts_modifications() && !c.accepts_miscellaneous());
             assert_eq!(c.category(), Category::Report);
         }
@@ -946,7 +948,7 @@ mod tests {
                 c.needs_confirm(),
                 c.needs_gc(),
                 c.needs_recur_update(),
-                c.uses_context(),
+                c.uses_context(&Configuration::new()),
                 c.accepts_filter(),
                 c.accepts_modifications(),
                 c.accepts_miscellaneous(),

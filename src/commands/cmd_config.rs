@@ -10,8 +10,8 @@
 //! [`CmdConfig::unset_config_variable`]; they take the configuration
 //! explicitly instead of reading `Context::getContext().config`.
 //!
-//! The command words come from the bootstrap [`crate::cli2::Cli2::get_words`]
-//! until milestone 5 (CLI2 and dispatch) lands the full parser.
+//! The command words are the MISCELLANEOUS arguments,
+//! [`crate::cli2::Cli2::get_words`].
 
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
@@ -332,12 +332,14 @@ mod tests {
         let (config, rc) = config_from(dir, contents);
         let mut context = Context::new();
         context.config = config;
+        crate::commands::command::factory(&mut context.commands, &Configuration::new()).expect("factory");
         context.cli2.entity("cmd", "config");
         context.cli2.entity("cmd", "_config");
         for arg in args {
             context.cli2.add(arg);
         }
-        context.cli2.analyze(&context.config, &mut Vec::new()).expect("analyze");
+        crate::cli2::with_cli2(&mut context, |cli2, ctx| cli2.analyze(ctx)).expect("analyze");
+        context.debug_messages.clear();
         (context, rc)
     }
 

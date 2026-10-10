@@ -9,15 +9,13 @@
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
 use crate::error::{Result, TwError};
+use crate::shared::configuration::Configuration;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdTimesheet` (`timesheet`).
 ///
 /// The C++ class also overrides `uses_context` to honour
-/// `report.timesheet.context`; that needs the configuration, which the
-/// [`Command::uses_context`] signature does not take yet, so the override
-/// arrives with the port (milestone 8). Until then the constructor value is
-/// returned.
+/// `report.timesheet.context` ([`Command::uses_context`]).
 pub struct CmdTimesheet {
     meta: CommandMeta,
 }
@@ -54,6 +52,17 @@ impl Default for CmdTimesheet {
 impl Command for CmdTimesheet {
     fn meta(&self) -> &CommandMeta {
         &self.meta
+    }
+
+    /// C++ `CmdTimesheet::uses_context`: honours `report.timesheet.context`.
+    fn uses_context(&self, config: &Configuration) -> bool {
+        let key = "report.timesheet.context";
+
+        if config.has(key) {
+            config.get_boolean(key)
+        } else {
+            self.meta.uses_context
+        }
     }
 
     /// C++ `CmdTimesheet::execute`: not yet implemented; ported by milestone 8 (remaining

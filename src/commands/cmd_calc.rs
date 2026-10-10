@@ -128,11 +128,12 @@ mod tests {
         for (name, value) in config {
             context.config.set(name, *value);
         }
+        crate::commands::command::register(&mut context.commands, std::rc::Rc::new(CmdCalc::new()));
         context.cli2.entity("cmd", "calc");
         for a in args {
             context.cli2.add(a);
         }
-        context.cli2.analyze(&context.config, &mut context.debug_messages).unwrap();
+        crate::cli2::with_cli2(&mut context, |cli2, ctx| cli2.analyze(ctx)).unwrap();
         context
     }
 

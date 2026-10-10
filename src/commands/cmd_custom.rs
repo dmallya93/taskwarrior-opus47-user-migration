@@ -11,15 +11,13 @@
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
 use crate::error::{Result, TwError};
+use crate::shared::configuration::Configuration;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdCustom` (a custom report).
 ///
 /// The C++ class also overrides `uses_context` to honour
-/// `report.<name>.context`; that needs the configuration, which the
-/// [`Command::uses_context`] signature does not take yet, so the override
-/// arrives with the port (milestone 6). Until then the constructor value is
-/// returned.
+/// `report.<name>.context` ([`Command::uses_context`]).
 pub struct CmdCustom {
     meta: CommandMeta,
 }
@@ -50,6 +48,18 @@ impl CmdCustom {
 impl Command for CmdCustom {
     fn meta(&self) -> &CommandMeta {
         &self.meta
+    }
+
+    /// C++ `CmdCustom::uses_context`: whether a report uses context is
+    /// defined by the `report.<name>.context` configuration variable.
+    fn uses_context(&self, config: &Configuration) -> bool {
+        let key = format!("report.{}.context", self.meta.keyword);
+
+        if config.has(&key) {
+            config.get_boolean(&key)
+        } else {
+            self.meta.uses_context
+        }
     }
 
     /// C++ `CmdCustom::execute`: not yet implemented; ported by milestone 6 (reports and columns).

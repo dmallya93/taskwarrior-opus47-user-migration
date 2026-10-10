@@ -1,34 +1,39 @@
-//! Rust translation of `src/CLI2.cpp`.
+//! Rust translation of `src/CLI2.h` / `src/CLI2.cpp`: the hand-written
+//! command-line grammar (spec Design Decision 5: clap is not used).
 //!
-//! # What is here now (milestone 1, foundation)
+//! # Shape (milestone 5 Design Decision 1)
 //!
-//! - The static early-override helpers, ported exactly:
-//!   [`get_override`] (C++ `CLI2::getOverride`), [`get_data_location`]
-//!   (`CLI2::getDataLocation`) and [`apply_overrides`]
-//!   (`CLI2::applyOverrides`), plus their shared private helper `get_value`
-//!   (the C++ file-static `getValue`). All three only look at arguments
-//!   before the first `--`.
-//! - The `CLI2::minimumMatchLength` static ([`minimum_match_length`] /
-//!   [`set_minimum_match_length`]).
-//! - A *bootstrap* [`Cli2`] object: the C++ member functions that are pure
-//!   bookkeeping are ported exactly (`entity`, `alias`, `add`, `getBinary`,
-//!   `getCommand`, `exactMatch`, `canonicalize`, `handleArg0`, `findCommand`),
-//!   a bootstrap [`Cli2::get_words`] (`getWords` for miscellaneous-only
-//!   commands such as `config`), and [`Cli2::analyze`] runs the C++ `analyze` steps that select the
-//!   command (arg0 handling, `--` termination, alias expansion, command
-//!   lookup, `rc.default.command` / assumed `information`).
+//! [`A2`] mirrors the C++ `A2` member for member: the Lexer type
+//! (`_lextype`), the tag list (`std::vector<std::string> _tags`, kept in
+//! insertion order) and the attribute map (`std::map`, here a `BTreeMap`).
+//! [`Cli2`] mirrors `class CLI2`; every C++ pass (`handleArg0`,
+//! `lexArguments`, `aliasExpansion`, `findCommand`, `defaultCommand`,
+//! `demotion`, `canonicalizeNames`, `categorizeArgs`,
+//! `parenthesizeOriginalFilter`, and the `prepareFilter` passes) is a
+//! separate function with the C++ name, called in the C++ order, so the
+//! `rc.debug.parser=2` dumps match pass for pass.
 //!
-//! # What milestone 5 (CLI2 and dispatch) replaces
+//! # Borrowing (milestone 5 Design Decision 2)
 //!
-//! The bootstrap does not lex arguments: every argument is treated as a
-//! single `Lexer::Type::word`, alias values and `rc.default.command` are split
-//! on whitespace instead of being lexed, and "is this an ID/UUID" is a simple
-//! digits-or-UUID check (see [`Cli2::analyze`]). Demotion, canonical names,
-//! FILTER/MODIFICATION/MISCELLANEOUS categorisation, `prepareFilter` and the
-//! real `dump` all arrive with the full parser port. [`A2`] is a minimal
-//! version of the C++ `A2` (raw text, attributes and tags only).
+//! The C++ passes reach `Context::getContext ()` for the configuration, the
+//! debug/footnote sinks, verbosity, the command registry (command DNA,
+//! `categorizeArgs`) and `getTaskContext`. Those passes take
+//! `ctx: &mut Context` explicitly, and run on a [`Cli2`] that is *detached*
+//! from the Context: [`with_cli2`] moves `ctx.cli2` out
+//! (`std::mem::take`), runs the closure with the detached parser and the
+//! Context, and puts the parser back (also on error). While detached,
+//! `ctx.cli2` is an empty placeholder; none of the CLI2 code reads it.
+//!
+//! Read-only helpers whose C++ only needs the configuration and the debug
+//! sink ([`Cli2::get_words`]) take those narrow inputs instead, so commands
+//! can call them on `ctx.cli2` directly.
+//!
+//! The static early-override helpers ([`get_override`],
+//! [`get_data_location`], [`apply_overrides`]) scan argv before full parsing
+//! and only look at arguments before the first `--`.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::context::Context;
@@ -39,6 +44,7 @@ use crate::shared::configuration::Configuration;
 use crate::shared::format::format;
 use crate::shared::fs::{File, Path};
 use crate::shared::shared::auto_complete;
+use crate::shared::utf8::{utf8_character, utf8_next_char};
 
 /// C++ `int CLI2::minimumMatchLength = 3;` (set from `abbreviation.minimum`
 /// by `Context::staticInitialization`).
@@ -152,73 +158,239 @@ pub fn apply_overrides(args: &[String], context: &mut Context) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Minimal C++ `A2`: one command-line argument, with string attributes
-/// (`raw`, `canonical`, `basename`, …) and tags (`ORIGINAL`, `BINARY`, `CMD`,
-/// `DEFAULT`, `ASSUMED`, `TERMINATOR`, `TERMINATED`, …).
+/// Runs `f` on the Context's CLI2 parser, detached from the Context so that
+/// `f` can also borrow the Context mutably (see the module documentation,
+/// "Borrowing"). The parser is put back afterwards, whatever `f` returns.
 ///
-/// Milestone 5 adds the lexer type and the remaining `A2` members.
-#[derive(Debug, Clone, Default, PartialEq)]
+/// ```ignore
+/// cli2::with_cli2(ctx, |cli2, ctx| cli2.analyze(ctx))?;
+/// ```
+pub fn with_cli2<R>(context: &mut Context, f: impl FnOnce(&mut Cli2, &mut Context) -> R) -> R {
+    let mut cli2 = std::mem::take(&mut context.cli2);
+    let result = f(&mut cli2, context);
+    context.cli2 = cli2;
+    result
+}
+
+/// C++ `Context::getContext ().config.getInteger ("debug.parser") >= 2`, the
+/// guard of every intermediate parse-tree dump.
+fn debug_parser(context: &Context) -> bool {
+    context.config.get_integer("debug.parser") >= 2
+}
+
+/// C++ `safetyValveDefault`: alias expansion limit. Any more indicates some
+/// kind of error.
+const SAFETY_VALVE_DEFAULT: i32 = 10;
+
+////////////////////////////////////////////////////////////////////////////////
+/// C++ `class A2`: represents a single argument.
+#[derive(Debug, Clone, PartialEq)]
 pub struct A2 {
-    attributes: BTreeMap<String, String>,
-    tags: Vec<String>,
+    /// C++ `_lextype` (default `Lexer::Type::word`).
+    pub lextype: LexerType,
+    /// C++ `_tags`, in insertion order, without duplicates.
+    pub tags: Vec<String>,
+    /// C++ `_attributes`.
+    pub attributes: BTreeMap<String, String>,
 }
 
 impl A2 {
-    /// C++ `A2::A2 (raw, lextype)` (lextype not yet modelled).
-    pub fn new(raw: &str) -> Self {
-        let mut arg = A2::default();
-        arg.set_attribute("raw", raw);
-        arg
-    }
-
-    /// C++ `A2::attribute (name, value)`.
-    pub fn set_attribute(&mut self, name: &str, value: &str) {
-        self.attributes.insert(name.to_string(), value.to_string());
-    }
-
-    /// C++ `A2::attribute (name)`: the attribute value or `""`.
-    pub fn attribute(&self, name: &str) -> String {
-        self.attributes.get(name).cloned().unwrap_or_default()
-    }
-
-    /// C++ `A2::tag`: adds a tag (no duplicates).
-    pub fn tag(&mut self, tag: &str) {
-        if !self.has_tag(tag) {
-            self.tags.push(tag.to_string());
-        }
+    /// C++ `A2::A2 (raw, lextype)`: records the type, then sets the `raw`
+    /// attribute, which [`decompose`](Self::decompose)s it (tags get
+    /// `name`/`sign`, pairs `name`/`modifier`/`separator`/`value` and the
+    /// `RC`/`CONFIG` tag, substitutions and patterns their parts).
+    pub fn new(raw: &str, lextype: LexerType) -> Self {
+        let mut a = A2 {
+            lextype,
+            tags: Vec::new(),
+            attributes: BTreeMap::new(),
+        };
+        a.set_attribute("raw", raw);
+        a
     }
 
     /// C++ `A2::hasTag`.
     pub fn has_tag(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
     }
+
+    /// C++ `A2::tag`: adds a tag unless already present.
+    pub fn tag(&mut self, tag: &str) {
+        if !self.has_tag(tag) {
+            self.tags.push(tag.to_string());
+        }
+    }
+
+    /// C++ `A2::unTag`: removes the first occurrence of a tag.
+    pub fn un_tag(&mut self, tag: &str) {
+        if let Some(i) = self.tags.iter().position(|t| t == tag) {
+            self.tags.remove(i);
+        }
+    }
+
+    /// C++ `A2::attribute (name, value)`: sets an attribute; setting `raw`
+    /// re-runs [`decompose`](Self::decompose).
+    pub fn set_attribute(&mut self, name: &str, value: &str) {
+        self.attributes.insert(name.to_string(), value.to_string());
+
+        if name == "raw" {
+            self.decompose();
+        }
+    }
+
+    /// C++ `A2::attribute (name)`: the attribute value, or `""` (no
+    /// autovivification).
+    pub fn attribute(&self, name: &str) -> String {
+        self.attributes.get(name).cloned().unwrap_or_default()
+    }
+
+    /// C++ `A2::getToken`: the `canonical` attribute if present, else `raw`.
+    ///
+    /// Deviation: C++ dereferences the end iterator when neither exists
+    /// (undefined behaviour; never happens, `raw` is always set); this
+    /// returns `""`.
+    pub fn get_token(&self) -> String {
+        self.attributes
+            .get("canonical")
+            .or_else(|| self.attributes.get("raw"))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// C++ `A2::decompose`: splits `raw` into its parts according to the
+    /// Lexer type.
+    pub fn decompose(&mut self) {
+        let raw = self.attribute("raw");
+        match self.lextype {
+            LexerType::tag => {
+                // C++ `raw.substr (1)` / `raw.substr (0, 1)`; Lexer tags always
+                // start with an ASCII '+' or '-'.
+                let name = raw.get(1..).unwrap_or("").to_string();
+                let sign = raw.get(..1).unwrap_or("").to_string();
+                self.set_attribute("name", &name);
+                self.set_attribute("sign", &sign);
+            }
+
+            LexerType::substitution => {
+                // if (Directory (raw).exists ())
+                //   return;
+
+                let mut from = String::new();
+                let mut to = String::new();
+                let mut flags = String::new();
+                if Lexer::decompose_substitution(&raw, &mut from, &mut to, &mut flags) {
+                    self.set_attribute("from", &from);
+                    self.set_attribute("to", &to);
+                    self.set_attribute("flags", &flags);
+                }
+            }
+
+            LexerType::pair => {
+                let mut name = String::new();
+                let mut modifier = String::new();
+                let mut sep = String::new();
+                let mut value = String::new();
+                if Lexer::decompose_pair(&raw, &mut name, &mut modifier, &mut sep, &mut value) {
+                    self.set_attribute("name", &name);
+                    self.set_attribute("modifier", &modifier);
+                    self.set_attribute("separator", &sep);
+                    self.set_attribute("value", &value);
+
+                    if name == "rc" {
+                        if !modifier.is_empty() {
+                            self.tag("CONFIG");
+                        } else {
+                            self.tag("RC");
+                        }
+                    }
+                }
+            }
+
+            LexerType::pattern => {
+                // if (Directory (raw).exists ())
+                //   return;
+
+                let mut pattern = String::new();
+                let mut flags = String::new();
+                if Lexer::decompose_pattern(&raw, &mut pattern, &mut flags) {
+                    self.set_attribute("pattern", &pattern);
+                    self.set_attribute("flags", &flags);
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    /// C++ `A2::dump`: the colourised Lexer type, then every attribute as
+    /// `name='<yellow>value</yellow>' `, then every tag in its colour
+    /// (`BINARY`, `CMD`, `FILTER`, `MODIFICATION`, `MISCELLANEOUS`, `RC`,
+    /// `CONFIG`, `?` have their own; the rest are green), each followed by a
+    /// space.
+    pub fn dump(&self) -> String {
+        let output = Lexer::type_to_string(self.lextype);
+
+        // Dump attributes.
+        let mut atts = String::new();
+        for (name, value) in &self.attributes {
+            atts += &format!("{name}='\x1b[33m{value}\x1b[0m' ");
+        }
+
+        // Dump tags.
+        let mut tags = String::new();
+        for tag in &self.tags {
+            let color = match tag.as_str() {
+                "BINARY" => "\x1b[1;37;44m",
+                "CMD" => "\x1b[1;37;46m",
+                "FILTER" => "\x1b[1;37;42m",
+                "MODIFICATION" => "\x1b[1;37;43m",
+                "MISCELLANEOUS" => "\x1b[1;37;45m",
+                "RC" => "\x1b[1;37;41m",
+                "CONFIG" => "\x1b[1;37;101m",
+                "?" => "\x1b[38;5;255;48;5;232m",
+                _ => "\x1b[32m",
+            };
+            tags += &format!("{color}{tag}\x1b[0m ");
+        }
+
+        format!("{output} {atts}{tags}")
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// The `CLI2` object held by `Context` (`Context::cli2`).
-///
-/// Bootstrap version; see the module documentation for what milestone 5
-/// (CLI2 and dispatch) completes.
+/// C++ `class CLI2`: represents the command line. Held by `Context`
+/// (`Context::cli2`).
 #[derive(Debug, Clone, Default)]
 pub struct Cli2 {
+    /// C++ `_entities` (`std::multimap<category, name>`): per category, the
+    /// names in insertion order (the multimap's iteration order).
+    pub entities: BTreeMap<String, Vec<String>>,
     /// C++ `_aliases`.
     pub aliases: BTreeMap<String, String>,
-    /// C++ `_entities` (`std::multimap<category, name>`): per category, the
-    /// names in insertion order.
-    pub entities: BTreeMap<String, Vec<String>>,
+    /// C++ `_canonical_cache`: memoised [`canonicalize`](Self::canonicalize)
+    /// results (interior mutability because `canonicalize` is called while
+    /// arguments are borrowed).
+    ///
+    /// Deviation: C++ keys the cache by the `int` truncation of
+    /// `31 * hash (category) + hash (value)`, so colliding keys could return
+    /// a wrong cached value; this keys by the `(category, value)` pair.
+    pub canonical_cache: RefCell<HashMap<(String, String), String>>,
     /// C++ `_original_args`.
     pub original_args: Vec<A2>,
     /// C++ `_args`.
     pub args: Vec<A2>,
+    /// C++ `_id_ranges`: `(low, high)` ID ranges found by `findIDs`.
+    pub id_ranges: Vec<(String, String)>,
+    /// C++ `_uuid_list`: UUIDs found by `findUUIDs`.
+    pub uuid_list: Vec<String>,
     /// C++ `_command`: the cached canonical command, once analysed.
     pub command: String,
+    /// C++ `_context_added`: recursion block for [`add_context`](Self::add_context).
+    pub context_added: bool,
 }
 
-/// C++ `safetyValveDefault` used by `aliasExpansion`.
-const SAFETY_VALVE_DEFAULT: i32 = 10;
-
 impl Cli2 {
-    /// C++ `CLI2::CLI2`.
+    /// C++ `CLI2::CLI2 () = default`.
     pub fn new() -> Self {
         Cli2::default()
     }
@@ -228,18 +400,23 @@ impl Cli2 {
         self.aliases.insert(name.to_string(), value.to_string());
     }
 
-    /// C++ `CLI2::entity`: records `name` under `category` unless present.
+    /// C++ `CLI2::entity`: records `name` under `category` unless the pair is
+    /// already present.
     pub fn entity(&mut self, category: &str, name: &str) {
+        // Walk the list of entities for category.
         let names = self.entities.entry(category.to_string()).or_default();
-        if !names.iter().any(|n| n == name) {
-            names.push(name.to_string());
+        if names.iter().any(|n| n == name) {
+            return;
         }
+
+        // The category/name pair was not found, therefore add it.
+        names.push(name.to_string());
     }
 
-    /// C++ `CLI2::add`: captures one argument (trimmed of spaces by
-    /// [`Lexer::trim`]) and invalidates prior analysis.
+    /// C++ `CLI2::add (const std::string&)`: captures a single argument
+    /// (trimmed by [`Lexer::trim`], tagged `ORIGINAL`).
     pub fn add(&mut self, argument: &str) {
-        let mut arg = A2::new(&Lexer::trim(argument));
+        let mut arg = A2::new(&Lexer::trim(argument), LexerType::word);
         arg.tag("ORIGINAL");
         self.original_args.push(arg);
 
@@ -247,57 +424,238 @@ impl Cli2 {
         self.args.clear();
     }
 
-    /// C++ `CLI2::getBinary`.
-    pub fn get_binary(&self) -> String {
-        self.args.first().map(|a| a.attribute("raw")).unwrap_or_default()
-    }
+    /// C++ `CLI2::add (const std::vector<std::string>&, int offset = 0)`:
+    /// captures a set of arguments (as untagged words), inserted immediately
+    /// after `offset` arguments after the binary.
+    ///
+    /// Deviation: C++ has undefined behaviour when `offset + 1` exceeds the
+    /// number of original arguments; here the arguments are appended.
+    pub fn add_args(&mut self, arguments: &[String], offset: usize) {
+        let keep = (offset + 1).min(self.original_args.len());
+        let mut replacement: Vec<A2> = self.original_args[..keep].to_vec();
 
-    /// C++ `CLI2::getCommand (canonical = true)`.
-    pub fn get_command(&self) -> String {
-        self.get_command_form(true)
-    }
-
-    /// C++ `CLI2::getCommand (canonical)`.
-    pub fn get_command_form(&self, canonical: bool) -> String {
-        // Shortcut if analysis has been finalized
-        if !self.command.is_empty() {
-            return self.command.clone();
+        for arg in arguments {
+            replacement.push(A2::new(arg, LexerType::word));
         }
 
-        for a in &self.args {
-            if a.has_tag("CMD") {
-                return a.attribute(if canonical { "canonical" } else { "raw" });
+        for i in (1 + offset)..self.original_args.len() {
+            replacement.push(self.original_args[i].clone());
+        }
+
+        self.original_args = replacement;
+
+        // Adding a new argument invalidates prior analysis.
+        self.args.clear();
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::analyze`: intended to be called after [`add`](Self::add) to
+    /// perform the final analysis. Fails with `You must specify a command or
+    /// a task to modify.` when no command can be determined, and with the
+    /// `categorizeArgs` errors.
+    pub fn analyze(&mut self, ctx: &mut Context) -> Result<()> {
+        if debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze"));
+        }
+
+        // Process _original_args.
+        self.args.clear();
+        self.handle_arg0();
+        self.lex_arguments(ctx);
+
+        // Process _args.
+        self.alias_expansion(ctx);
+        if !self.find_command(ctx) {
+            self.default_command(ctx);
+            if !self.find_command(ctx) {
+                return Err(TwError::Message(
+                    "You must specify a command or a task to modify.".to_string(),
+                ));
             }
         }
 
-        String::new()
+        self.demotion(ctx);
+        self.canonicalize_names(ctx);
+
+        // Determine arg types: FILTER, MODIFICATION, MISCELLANEOUS.
+        self.categorize_args(ctx)?;
+        self.parenthesize_original_filter(ctx);
+
+        // Cache frequently looked up items
+        self.command = self.get_command();
+        Ok(())
     }
 
-    /// Bootstrap C++ `CLI2::getWords`: the raw text of every MISCELLANEOUS
-    /// argument. With `debug.parser` >= 2 a `CLI2::getWords` debug message
-    /// lists them.
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::addFilter`: processes a raw filter string, inserting its
+    /// lexed tokens (wrapped in parentheses) immediately after the binary,
+    /// then re-analyses.
+    pub fn add_filter(&mut self, ctx: &mut Context, arg: &str) -> Result<()> {
+        if !arg.is_empty() {
+            let mut filter = vec!["(".to_string()];
+
+            let mut lexeme = String::new();
+            let mut type_ = LexerType::word;
+            let mut lex = Lexer::new(arg);
+
+            while lex.token(&mut lexeme, &mut type_) {
+                filter.push(lexeme.clone());
+            }
+
+            filter.push(")".to_string());
+            self.add_args(&filter, 0);
+            self.analyze(ctx)?;
+        }
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::addModifications`: processes a raw modification string,
+    /// inserting its lexed tokens immediately after the command (i.e. `add`),
+    /// then re-analyses.
     ///
-    /// The bootstrap does not categorise arguments, so this applies the C++
-    /// `categorizeArgs` rules for a command that accepts only miscellaneous
-    /// arguments (such as `config`): every argument except the binary
-    /// (`BINARY`), the command (`CMD`), the first `--` (a
-    /// `Lexer::Type::separator`) and, before that `--`, the `rc:<file>` /
-    /// `rc.<name>=<value>` pairs (tagged `RC` / `CONFIG` in C++). Arguments
-    /// after `--` are words, so they are always included, as are later
-    /// `--`s. Milestone 5 replaces this with the real categorisation.
+    /// As in C++, the command's index in `_args` is used as the offset into
+    /// `_original_args`.
+    pub fn add_modifications(&mut self, ctx: &mut Context, arg: &str) -> Result<()> {
+        if !arg.is_empty() {
+            let mut mods = Vec::new();
+
+            let mut lexeme = String::new();
+            let mut type_ = LexerType::word;
+            let mut lex = Lexer::new(arg);
+
+            while lex.token(&mut lexeme, &mut type_) {
+                mods.push(lexeme.clone());
+            }
+
+            // Determine at which argument index does the task modification command
+            // reside
+            let cmd_index = self.args.iter().position(|a| a.has_tag("CMD")).unwrap_or(self.args.len());
+
+            // Insert modifications after the command.
+            self.add_args(&mods, cmd_index);
+            self.analyze(ctx)?;
+        }
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::addContext`: there are situations where a context filter is
+    /// applied. This method determines whether one applies, and if so,
+    /// applies it (`context.<name>.read` as a filter for `readable`
+    /// commands, else `context.<name>.write` as modifications for
+    /// `writeable` ones; see [`Context::get_task_context`]).
+    /// Disqualifiers include:
+    ///   - filter contains ID or UUID
+    pub fn add_context(&mut self, ctx: &mut Context, readable: bool, writeable: bool) -> Result<()> {
+        // Recursion block.
+        if self.context_added {
+            return Ok(());
+        }
+
+        // Detect if any context is set, and bail out if not
+        let context_string = if readable {
+            // Empty string is treated as "currently selected context"
+            ctx.get_task_context("read", "", true)
+        } else if writeable {
+            ctx.get_task_context("write", "", true)
+        } else {
+            return Ok(());
+        };
+
+        // If context is empty, bail out too
+        if context_string.is_empty() {
+            return Ok(());
+        }
+
+        // For readable contexts: Detect if UUID or ID is set, and bail out
+        if readable {
+            for a in &self.args {
+                if matches!(a.lextype, LexerType::uuid | LexerType::number | LexerType::set) {
+                    ctx.debug(&format(
+                        "UUID/ID argument found '{1}', not applying context.",
+                        &[&a.attribute("raw")],
+                    ));
+                    return Ok(());
+                }
+            }
+        }
+
+        // Apply the context. Readable (filtering) takes precedence. Also set the
+        // block now, since addFilter calls analyze(), which calls addContext().
+        self.context_added = true;
+        if readable {
+            self.add_filter(ctx, &context_string)?;
+        } else if writeable {
+            self.add_modifications(ctx, &context_string)?;
+        }
+
+        // Inform the user about the application of context
+        if ctx.verbose("context") {
+            let name = ctx.config.get("context");
+            ctx.footnote(&format(
+                "Context '{1}' set. Use 'task context none' to remove.",
+                &[&name],
+            ));
+        }
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::prepareFilter`: parses the command line, identifying filter
+    /// components and expanding syntactic sugar as necessary. With the
+    /// `filter` verbosity token, footnotes `Filter: <raw FILTER args>`.
     ///
-    /// `debug_messages` is the Context debug sink (C++
-    /// `Context::getContext().debug`).
+    /// Fails with the `desugarFilterAttributes` errors.
+    pub fn prepare_filter(&mut self, ctx: &mut Context) -> Result<()> {
+        // Clear and re-populate.
+        self.id_ranges.clear();
+        self.uuid_list.clear();
+        self.context_added = false;
+
+        // Remove all the syntactic sugar for FILTERs.
+        self.lex_filter_args(ctx);
+        self.find_ids(ctx);
+        self.find_uuids(ctx);
+        self.insert_id_expr(ctx);
+        self.desugar_filter_plain_args(ctx);
+        self.find_stray_modifications(ctx);
+        self.desugar_filter_tags(ctx);
+        self.desugar_filter_attributes(ctx)?;
+        self.desugar_filter_patterns(ctx);
+        self.insert_junctions(ctx); // Deliberately after all desugar calls.
+
+        if ctx.verbose("filter") {
+            let mut combined = String::new();
+            for a in &self.args {
+                if a.has_tag("FILTER") {
+                    if !combined.is_empty() {
+                        combined.push(' ');
+                    }
+
+                    combined += &a.attribute("raw");
+                }
+            }
+
+            if !combined.is_empty() {
+                ctx.footnote(&format!("Filter: {combined}"));
+            }
+        }
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::getWords`: the raw text of every `MISCELLANEOUS` argument.
+    /// With `debug.parser` >= 2 a `CLI2::getWords` debug message lists them.
+    ///
+    /// Takes the configuration and the Context debug sink (C++
+    /// `Context::getContext ().debug`) rather than the Context, so commands
+    /// can call it on `ctx.cli2` directly.
     pub fn get_words(&self, config: &Configuration, debug_messages: &mut Vec<String>) -> Vec<String> {
         let words: Vec<String> = self
             .args
             .iter()
-            .filter(|a| {
-                !(a.has_tag("BINARY")
-                    || a.has_tag("CMD")
-                    || a.has_tag("TERMINATOR")
-                    || (!a.has_tag("TERMINATED") && is_rc_pair(&a.attribute("raw"))))
-            })
+            .filter(|a| a.has_tag("MISCELLANEOUS"))
             .map(|a| a.attribute("raw"))
             .collect();
 
@@ -315,137 +673,348 @@ impl Cli2 {
         words
     }
 
-    /// C++ `CLI2::exactMatch`.
-    pub fn exact_match(&self, category: &str, value: &str) -> bool {
-        self.entities
-            .get(category)
-            .is_some_and(|names| names.iter().any(|n| n == value))
+    /// C++ `CLI2::getMiscellaneous`: all the `MISCELLANEOUS` args.
+    pub fn get_miscellaneous(&self) -> Vec<A2> {
+        self.args.iter().filter(|a| a.has_tag("MISCELLANEOUS")).cloned().collect()
     }
 
-    /// C++ `CLI2::canonicalize` (without the hash cache, which only affects
-    /// speed): an exact entity match, or the single entity that `value`
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::canonicalize`: searches for `value` in the `category`
+    /// entities; returns the exact match, or the single entity that `value`
     /// abbreviates by at least [`minimum_match_length`] characters.
     pub fn canonicalize(&self, category: &str, value: &str) -> Option<String> {
-        let names = self.entities.get(category).map(Vec::as_slice).unwrap_or(&[]);
-        if names.iter().any(|n| n == value) {
-            return Some(value.to_string());
+        // Utilize a cache mapping of (category, value) -> canonicalized value.
+        // This cache does not need to be invalidated, because entities are defined
+        // only once per initialization of the Context object.
+        let cache_key = (category.to_string(), value.to_string());
+        if let Some(cached) = self.canonical_cache.borrow().get(&cache_key) {
+            return Some(cached.clone());
         }
 
-        let matches = auto_complete(value, names, minimum_match_length());
+        // Extract a list of entities for category.
+        let mut options: Vec<&String> = Vec::new();
+        for e in self.entities.get(category).map(Vec::as_slice).unwrap_or(&[]) {
+            // Shortcut: if an exact match is found, success.
+            if value == e {
+                self.canonical_cache.borrow_mut().insert(cache_key, value.to_string());
+                return Some(value.to_string());
+            }
+
+            options.push(e);
+        }
+
+        // Match against the options, throw away results.
+        let matches = auto_complete(value, &options, minimum_match_length());
         if matches.len() == 1 {
-            return matches.into_iter().next();
+            let canonical = matches[0].clone();
+            self.canonical_cache.borrow_mut().insert(cache_key, canonical.clone());
+            return Some(canonical);
         }
 
         None
     }
 
-    /// Bootstrap C++ `CLI2::analyze`: builds `args` from `original_args`
-    /// and finds the command, applying `rc.default.command` or assuming
-    /// `information` like C++ `defaultCommand`. Fails with the C++ message
-    /// `You must specify a command or a task to modify.` when no command can
-    /// be determined.
-    ///
-    /// Milestone 5 hook: lexing, demotion, canonical names, categorisation
-    /// and filter parenthesisation are not yet performed.
-    ///
-    /// `debug_messages` is the Context debug sink (C++
-    /// `Context::getContext().debug`).
-    pub fn analyze(&mut self, config: &Configuration, debug_messages: &mut Vec<String>) -> Result<()> {
-        // Process _original_args.
-        self.args.clear();
-        self.handle_arg0();
-        self.lex_arguments();
+    /// C++ `CLI2::getBinary`.
+    pub fn get_binary(&self) -> String {
+        self.args.first().map(|a| a.attribute("raw")).unwrap_or_default()
+    }
 
-        // Process _args.
-        self.alias_expansion(debug_messages);
-        if !self.find_command() {
-            self.default_command(config);
-            if !self.find_command() {
-                return Err(TwError::Message(
-                    "You must specify a command or a task to modify.".to_string(),
-                ));
+    /// C++ `CLI2::getCommand ()` (`canonical = true`).
+    pub fn get_command(&self) -> String {
+        self.get_command_form(true)
+    }
+
+    /// C++ `CLI2::getCommand (canonical)`. As in C++, once analysis has been
+    /// finalised the cached `_command` is returned whatever `canonical` is.
+    pub fn get_command_form(&self, canonical: bool) -> String {
+        // Shortcut if analysis has been finalized
+        if !self.command.is_empty() {
+            return self.command.clone();
+        }
+
+        for a in &self.args {
+            if a.has_tag("CMD") {
+                return a.attribute(if canonical { "canonical" } else { "raw" });
             }
         }
 
-        // Cache frequently looked up items
-        self.command = self.get_command();
-        Ok(())
+        String::new()
     }
 
-    /// Bootstrap C++ `CLI2::dump`: the bold title and the raw arguments.
-    /// Milestone 5 hook: the full colourised parse-tree dump.
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::dump (title = "CLI2 Parser")`: the full parse-tree dump used
+    /// for `rc.debug.parser`: the bold title, `_original_args` (ORIGINAL ones
+    /// in `gray10 on gray4`, inserted ones in `black on rgb311`), every
+    /// `_args` entry ([`A2::dump`]), and `_id_ranges` / `_uuid_list` when
+    /// present.
     pub fn dump(&self, title: &str) -> String {
         let mut out = format!("\x1b[1m{title}\x1b[0m\n  _original_args\n    ");
-        let raws: Vec<String> = self.original_args.iter().map(|a| a.attribute("raw")).collect();
-        out.push_str(&raws.join(" "));
+
+        let color_args = Color::parse("gray10 on gray4").unwrap_or_default();
+        let color_filter = Color::parse("black on rgb311").unwrap_or_default();
+        for (i, a) in self.original_args.iter().enumerate() {
+            if i != 0 {
+                out.push(' ');
+            }
+
+            if a.has_tag("ORIGINAL") {
+                out += &color_args.colorize(&a.attribute("raw"));
+            } else {
+                out += &color_filter.colorize(&a.attribute("raw"));
+            }
+        }
+
         out.push('\n');
+
+        if !self.args.is_empty() {
+            out += "  _args\n";
+            for a in &self.args {
+                out += "    ";
+                out += &a.dump();
+                out.push('\n');
+            }
+        }
+
+        if !self.id_ranges.is_empty() {
+            out += "  _id_ranges\n    ";
+            for (first, second) in &self.id_ranges {
+                if first != second {
+                    out += &color_args.colorize(&format!("{first}-{second}"));
+                } else {
+                    out += &color_args.colorize(first);
+                }
+                out.push(' ');
+            }
+
+            out.push('\n');
+        }
+
+        if !self.uuid_list.is_empty() {
+            out += "  _uuid_list\n    ";
+            for uuid in &self.uuid_list {
+                out += &color_args.colorize(uuid);
+                out.push(' ');
+            }
+
+            out.push('\n');
+        }
+
         out
     }
 
-    /// C++ `CLI2::prepareFilter`. Milestone 5 hook: no-op until the filter
-    /// parser exists.
-    pub fn prepare_filter(&mut self) {}
-
-    /// C++ `CLI2::handleArg0`: arg0 is tagged `BINARY`; invoked as `cal` or
-    /// `calendar` (via a symlink), a `calendar` argument is added.
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::handleArg0`: arg0 is the first argument, which is the name
+    /// and potentially a relative or absolute path to the invoked binary.
+    ///
+    /// The binary name is 'task', but if the binary is reported as 'cal' or
+    /// 'calendar' then it was invoked via symbolic link, in which case capture
+    /// the first argument as 'calendar'.
+    ///
+    /// Deviation: C++ indexes `_original_args[0]` unconditionally (undefined
+    /// behaviour when nothing was added); here nothing happens.
     fn handle_arg0(&mut self) {
+        // Capture arg0 separately, because it is the command that was run, and could
+        // need special handling.
         let Some(first) = self.original_args.first() else {
             return;
         };
         let raw = first.attribute("raw");
-        let mut a = A2::new(&raw);
+        let mut a = A2::new(&raw, LexerType::word);
         a.tag("BINARY");
 
-        let basename = match raw.rfind('/') {
-            Some(slash) => raw[slash + 1..].to_string(),
-            None => "task".to_string(),
-        };
+        let mut basename = "task".to_string();
+        if let Some(slash) = raw.rfind('/') {
+            basename = raw[slash + 1..].to_string();
+        }
 
         a.set_attribute("basename", &basename);
-        self.args.push(a);
         if basename == "cal" || basename == "calendar" {
-            self.args.push(A2::new("calendar"));
-        }
-    }
+            self.args.push(a);
 
-    /// Bootstrap C++ `CLI2::lexArguments`: copies arguments 1.. as single
-    /// words; the first `--` is tagged `TERMINATOR` and every later argument
-    /// `TERMINATED`. Milestone 5 hook: real lexing.
-    fn lex_arguments(&mut self) {
-        let mut terminated = false;
-        for original in self.original_args.iter().skip(1) {
-            let raw = original.attribute("raw");
-            let mut a = A2::new(&raw);
-            if !terminated && raw == "--" {
-                terminated = true;
-                a.tag("TERMINATOR");
-            } else if terminated {
-                a.tag("TERMINATED");
-            }
+            let cal = A2::new("calendar", LexerType::word);
+            self.args.push(cal);
+        } else {
             self.args.push(a);
         }
     }
 
-    /// C++ `CLI2::aliasExpansion`: replaces every (non-terminated) argument
-    /// that names an alias by the alias value's tokens, repeatedly, at most
-    /// `safetyValveDefault` times. Bootstrap: alias values are split on
-    /// whitespace instead of lexed (milestone 5 hook).
-    fn alias_expansion(&mut self, debug_messages: &mut Vec<String>) {
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::lexArguments`: all arguments must be individually and
+    /// wholly recognized by the Lexer. Any argument not recognized is
+    /// considered a `Lexer::Type::word` (with unescaped single quotes
+    /// escaped, then read and dequoted as one quoted word).
+    ///
+    /// As a side effect, tags all arguments after a terminator (`--`), and the
+    /// terminator itself, with `TERMINATED`; they become words.
+    fn lex_arguments(&mut self, ctx: &mut Context) {
+        // Note: Starts iterating at index 1, because ::handleArg0 has already
+        //       processed it.
+        let mut terminated = false;
+        for i in 1..self.original_args.len() {
+            let raw = self.original_args[i].attribute("raw");
+            let is_original = self.original_args[i].has_tag("ORIGINAL");
+            let quoted = Lexer::was_quoted(&raw);
+
+            // Process single-token arguments.
+            let mut lexeme = String::new();
+            let mut type_ = LexerType::word;
+            let mut lex = Lexer::new(&raw);
+            // Token goes to EOS, or quoted pairs automatically go to EOS.
+            if lex.token(&mut lexeme, &mut type_) && (lex.is_eos() || (quoted && type_ == LexerType::pair)) {
+                if !terminated && type_ == LexerType::separator {
+                    terminated = true;
+                } else if terminated {
+                    type_ = LexerType::word;
+                }
+
+                let mut a = A2::new(&raw, type_);
+                if terminated {
+                    a.tag("TERMINATED");
+                }
+                if quoted {
+                    a.tag("QUOTED");
+                }
+
+                if is_original {
+                    a.tag("ORIGINAL");
+                }
+
+                self.args.push(a);
+            }
+            // Process multiple-token arguments.
+            else {
+                let quote = "'";
+
+                // Escape unescaped single quotes
+                let mut escaped = String::with_capacity(raw.len());
+
+                let mut cursor = 0usize;
+                let mut next_escaped = false;
+                loop {
+                    let num = utf8_next_char(&raw, &mut cursor);
+                    if num == 0 {
+                        break;
+                    }
+                    let character = utf8_character(num);
+                    if !next_escaped && character == "\\" {
+                        next_escaped = true;
+                    } else {
+                        if character == quote && !next_escaped {
+                            escaped.push('\\');
+                        }
+                        next_escaped = false;
+                    }
+                    escaped += &character;
+                }
+
+                cursor = 0;
+                let mut word = String::new();
+                if Lexer::read_word_quoted(&format!("{quote}{escaped}{quote}"), quote, &mut cursor, &mut word) {
+                    Lexer::dequote(&mut word);
+                    let mut unknown = A2::new(&word, LexerType::word);
+                    if Lexer::was_quoted(&raw) {
+                        unknown.tag("QUOTED");
+                    }
+
+                    if is_original {
+                        unknown.tag("ORIGINAL");
+                    }
+
+                    self.args.push(unknown);
+                }
+                // This branch may have no use-case.
+                else {
+                    let mut unknown = A2::new(&raw, LexerType::word);
+                    unknown.tag("UNKNOWN");
+
+                    if Lexer::was_quoted(&raw) {
+                        unknown.tag("QUOTED");
+                    }
+
+                    if is_original {
+                        unknown.tag("ORIGINAL");
+                    }
+
+                    self.args.push(unknown);
+                }
+            }
+        }
+
+        if debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze lexArguments"));
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::demotion`:
+    /// [1] Scan all args for the 'add' and 'log' commands, and demote any
+    ///     `Lexer::Type::tag` args with sign '-' to `Lexer::Type::word`.
+    /// [2] Convert any pseudo args name:value into config settings, and erase.
+    ///
+    /// As in C++, the "erase" of [2] has no effect: the C++ builds the
+    /// `replacement` list without the pseudo args but never assigns it to
+    /// `_args`, so the pseudo args stay in the argument list (only the
+    /// configuration changes). The `-tag` demotion happens in place.
+    fn demotion(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+        let mut replacement: Vec<A2> = Vec::new();
+
+        for i in 0..self.args.len() {
+            if self.args[i].lextype == LexerType::tag && self.args[i].attribute("sign") == "-" {
+                let command = self.get_command();
+                if command == "add" || command == "log" {
+                    self.args[i].lextype = LexerType::word;
+                    changes = true;
+                }
+            } else if self.args[i].lextype == LexerType::pair {
+                if let Some(canonical) = self.canonicalize("pseudo", &self.args[i].attribute("name")) {
+                    ctx.config.set(&canonical, self.args[i].attribute("value"));
+                    changes = true;
+
+                    // Equivalent to erasing 'a'.
+                    continue;
+                }
+            }
+
+            replacement.push(self.args[i].clone());
+        }
+        // C++ quirk preserved: `replacement` is discarded (see above).
+        drop(replacement);
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze demotion"));
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::aliasExpansion`: if any aliases are found in un-TERMINATED
+    /// arguments, replace the alias with a set of Lexed tokens from the
+    /// configuration. Repeats (for nested aliases) while anything was
+    /// expanded, at most `safetyValveDefault` extra times; reaching the limit
+    /// queues `Nested alias limit of 10 reached.` as a debug message.
+    ///
+    /// `_original_args` are expanded the same way, up to the first `--`.
+    fn alias_expansion(&mut self, ctx: &mut Context) {
+        let mut changes = false;
         let mut counter = 0;
         loop {
             let mut action = false;
             let mut reconstructed = Vec::new();
+
             for i in &self.args {
                 let raw = i.attribute("raw");
                 if i.has_tag("TERMINATED") {
                     reconstructed.push(i.clone());
                 } else if let Some(value) = self.aliases.get(&raw) {
-                    reconstructed.extend(value.split_whitespace().map(A2::new));
+                    lex_into(value, &mut reconstructed);
+
                     action = true;
+                    changes = true;
                 } else {
                     reconstructed.push(i.clone());
                 }
             }
+
             self.args = reconstructed;
 
             let mut reconstructed_originals = Vec::new();
@@ -455,15 +1024,19 @@ impl Cli2 {
                 if raw == "--" {
                     terminated = true;
                 }
+
                 if terminated {
                     reconstructed_originals.push(i.clone());
                 } else if let Some(value) = self.aliases.get(&raw) {
-                    reconstructed_originals.extend(value.split_whitespace().map(A2::new));
+                    lex_into(value, &mut reconstructed_originals);
+
                     action = true;
+                    changes = true;
                 } else {
                     reconstructed_originals.push(i.clone());
                 }
             }
+
             self.original_args = reconstructed_originals;
 
             // C++ `while (action && counter++ < safetyValveDefault)`.
@@ -478,21 +1051,256 @@ impl Cli2 {
         }
 
         if counter >= SAFETY_VALVE_DEFAULT {
-            debug_messages.push(format(
-                "Nested alias limit of {1} reached.",
-                &[&SAFETY_VALVE_DEFAULT],
-            ));
+            ctx.debug(&format("Nested alias limit of {1} reached.", &[&SAFETY_VALVE_DEFAULT]));
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze aliasExpansion"));
         }
     }
 
-    /// C++ `CLI2::findCommand`: tags the first argument that is (or
-    /// abbreviates) a command as `CMD`, unless it is exactly an attribute
-    /// name. Command DNA tags (`READONLY`, …) are milestone 5.
-    fn find_command(&mut self) -> bool {
-        for index in 0..self.args.len() {
-            let raw = self.args[index].attribute("raw");
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::canonicalizeNames`: scan all arguments and canonicalize
+    /// names that need it. Every pair not starting with `rc:` / `rc.` gets a
+    /// `canonical` attribute (a pseudo or attribute name), or is demoted to
+    /// a word when its name is neither.
+    fn canonicalize_names(&mut self, ctx: &mut Context) {
+        let mut changes = false;
+        for i in 0..self.args.len() {
+            if self.args[i].lextype == LexerType::pair {
+                let raw = self.args[i].attribute("raw");
+                if !raw.starts_with("rc:") && !raw.starts_with("rc.") {
+                    let name = self.args[i].attribute("name");
+                    if let Some(canonical) = self
+                        .canonicalize("pseudo", &name)
+                        .or_else(|| self.canonicalize("attribute", &name))
+                    {
+                        self.args[i].set_attribute("canonical", &canonical);
+                    } else {
+                        self.args[i].lextype = LexerType::word;
+                    }
+
+                    changes = true;
+                }
+            }
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze canonicalizeNames"));
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::categorizeArgs`: categorize FILTER, MODIFICATION and
+    /// MISCELLANEOUS args, based on CMD DNA. Applies the context first
+    /// ([`add_context`](Self::add_context)) for commands that use it.
+    ///
+    /// Fails with `The '<cmd>' command does not allow '<arg>'.` for an
+    /// argument to a command that accepts none, and `Unknown error. Please
+    /// report.` (a C++ `throw std::string`) for internally inconsistent DNA.
+    ///
+    /// The C++ `dynamic_cast` special cases for `CmdCustom` / `CmdTimesheet`
+    /// are the [`Command::uses_context`](crate::commands::command::Command::uses_context)
+    /// overrides here.
+    fn categorize_args(&mut self, ctx: &mut Context) -> Result<()> {
+        // Context is only applied for commands that request it.
+        let command = self.get_command();
+        let cmd = ctx.commands.get(&command).cloned();
+
+        // Determine if the command uses Context. CmdCustom and CmdTimesheet need to
+        // be handled separately, as they override the parent Command::use_context
+        // method, and this is a pointer to Command class.
+        //
+        // All Command classes overriding uses_context () getter need to be specified
+        // here.
+        let uses_context = cmd.as_ref().is_some_and(|c| c.uses_context(&ctx.config));
+
+        // Apply the context, if applicable
+        if let Some(c) = &cmd {
+            if uses_context {
+                self.add_context(ctx, c.accepts_filter(), c.accepts_modifications())?;
+            }
+        }
+
+        let mut changes = false;
+        let mut after_command = false;
+        for a in self.args.iter_mut() {
+            if a.lextype == LexerType::separator {
+                continue;
+            }
+
+            // Record that the command has been found, it affects behavior.
+            if a.has_tag("CMD") {
+                after_command = true;
+                continue;
+            }
+
+            // Skip admin args.
+            if a.has_tag("BINARY") || a.has_tag("RC") || a.has_tag("CONFIG") {
+                // NOP.
+                continue;
+            }
+
+            let Some(c) = &cmd else {
+                continue;
+            };
+
+            // All combinations, with all 8 cases handled below.:
+            //
+            //   -- -- --   Error: found an arg, but none expected
+            //   -- -- Mi   task [Mi] <cmd> [Mi]
+            //   -- Mo --   task [Mo] <cmd> [Mo]
+            //   -- Mo Mi   Internally inconsistent
+            //   Fi -- --   task [Fi] <cmd> [Fi]
+            //   Fi -- Mi   task [Fi] <cmd> [Mi]
+            //   Fi Mo --   task [Fi] <cmd> [Mo]
+            //   Fi Mo Mi   Internally inconsistent
+            //
+            match (c.accepts_filter(), c.accepts_modifications(), c.accepts_miscellaneous()) {
+                (false, false, false) => {
+                    // No commands were expected --> error.
+                    return Err(TwError::Message(format(
+                        "The '{1}' command does not allow '{2}'.",
+                        &[&command, &a.attribute("raw")],
+                    )));
+                }
+                (false, false, true) => {
+                    a.tag("MISCELLANEOUS");
+                    changes = true;
+                }
+                (false, true, false) => {
+                    a.tag("MODIFICATION");
+                    changes = true;
+                }
+                (false, true, true) | (true, true, true) => {
+                    // Error: internally inconsistent.
+                    return Err(TwError::Message("Unknown error. Please report.".to_string()));
+                }
+                (true, false, false) => {
+                    a.tag("FILTER");
+                    changes = true;
+                }
+                (true, false, true) => {
+                    if !after_command {
+                        a.tag("FILTER");
+                    } else {
+                        a.tag("MISCELLANEOUS");
+                    }
+
+                    changes = true;
+                }
+                (true, true, false) => {
+                    if !after_command {
+                        a.tag("FILTER");
+                    } else {
+                        a.tag("MODIFICATION");
+                    }
+
+                    changes = true;
+                }
+            }
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze categorizeArgs"));
+        }
+        Ok(())
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::parenthesizeOriginalFilter`. The following command:
+    ///
+    /// ```text
+    ///    task +home or +work list
+    /// ```
+    ///
+    /// Is reasonable, and does not work unless the filter is parenthesized.
+    /// Ignoring context, the 'list' report has a filter, which is inserted at
+    /// the beginning like this:
+    ///
+    /// ```text
+    ///   task ( status:pending ) +home or +work list
+    /// ```
+    ///
+    /// Parenthesizing the user-provided (original) filter yields this:
+    ///
+    /// ```text
+    ///   task ( status:pending ) ( +home or +work ) list
+    /// ```
+    ///
+    /// And when the conjunction is added:
+    ///
+    /// ```text
+    ///   task ( status:pending ) and ( +home or +work ) list
+    /// ```
+    ///
+    /// the query is correct.
+    fn parenthesize_original_filter(&mut self, ctx: &mut Context) {
+        // Locate the first and last ORIGINAL FILTER args.
+        let mut first_original_filter = 0usize;
+        let mut last_original_filter = 0usize;
+        for i in 1..self.args.len() {
+            if self.args[i].has_tag("FILTER") && self.args[i].has_tag("ORIGINAL") {
+                if first_original_filter == 0 {
+                    first_original_filter = i;
+                }
+
+                last_original_filter = i;
+            }
+        }
+
+        // If found, parenthesize the arg list accordingly.
+        if first_original_filter != 0 && last_original_filter != 0 {
+            let mut reconstructed = Vec::new();
+            for (i, a) in self.args.iter().enumerate() {
+                if i == first_original_filter {
+                    let mut open_paren = A2::new("(", LexerType::op);
+                    open_paren.tag("ORIGINAL");
+                    open_paren.tag("FILTER");
+                    reconstructed.push(open_paren);
+                }
+
+                reconstructed.push(a.clone());
+
+                if i == last_original_filter {
+                    let mut close_paren = A2::new(")", LexerType::op);
+                    close_paren.tag("ORIGINAL");
+                    close_paren.tag("FILTER");
+                    reconstructed.push(close_paren);
+                }
+            }
+
+            self.args = reconstructed;
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::analyze parenthesizeOriginalFilter"));
+            }
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::findCommand`: scan all arguments and if any are an exact
+    /// match for a command name, then tag as CMD. If an argument is an exact
+    /// match for an attribute, despite being an inexact match for a command,
+    /// then it is not a command. The command's DNA is applied as tags
+    /// (`READONLY`, `SHOWSID`, `RUNSGC`, `USESCONTEXT`, `ALLOWSFILTER`,
+    /// `ALLOWSMODIFICATIONS`, `ALLOWSMISC`).
+    ///
+    /// Deviation: C++ dereferences a null `Command*` when a `cmd` entity has
+    /// no registered command (a crash; `Context::initialize` registers the
+    /// entities from the registry, so it never happens there); here the DNA
+    /// tags are skipped.
+    fn find_command(&mut self, ctx: &mut Context) -> bool {
+        for i in 0..self.args.len() {
+            let raw = self.args[i].attribute("raw");
+
+            // If the arg canonicalized to a 'cmd', but is also not an exact match
+            // for an 'attribute', proceed. Example:
+            //   task project=foo list
+            //        ^cmd        ^cmd
+            //        ^attribute
             let canonical = if self.exact_match("cmd", &raw) {
-                raw.clone()
+                raw
             } else if self.exact_match("attribute", &raw) {
                 continue;
             } else if let Some(canonical) = self.canonicalize("cmd", &raw) {
@@ -501,41 +1309,164 @@ impl Cli2 {
                 continue;
             };
 
-            let a = &mut self.args[index];
+            let a = &mut self.args[i];
             a.set_attribute("canonical", &canonical);
             a.tag("CMD");
+
+            // Apply command DNA as tags.
+            if let Some(command) = ctx.commands.get(&canonical).cloned() {
+                if command.read_only() {
+                    a.tag("READONLY");
+                }
+                if command.displays_id() {
+                    a.tag("SHOWSID");
+                }
+                if command.needs_gc() {
+                    a.tag("RUNSGC");
+                }
+                if command.uses_context(&ctx.config) {
+                    a.tag("USESCONTEXT");
+                }
+                if command.accepts_filter() {
+                    a.tag("ALLOWSFILTER");
+                }
+                if command.accepts_modifications() {
+                    a.tag("ALLOWSMODIFICATIONS");
+                }
+                if command.accepts_miscellaneous() {
+                    a.tag("ALLOWSMISC");
+                }
+            }
+
+            if debug_parser(ctx) {
+                ctx.debug(&self.dump("CLI2::analyze findCommand"));
+            }
+
+            // Stop and indicate command found.
             return true;
         }
 
+        // Indicate command not found.
         false
     }
 
-    /// C++ `CLI2::defaultCommand`: with no command and no ID/UUID argument,
-    /// injects `rc.default.command` (tagged `DEFAULT`) after arg0; with an
-    /// ID/UUID, appends an `information` argument tagged `ASSUMED`.
+    /// C++ `CLI2::exactMatch`: searches for exact `value` in the `category`
+    /// entities.
+    pub fn exact_match(&self, category: &str, value: &str) -> bool {
+        // Extract a list of entities for category.
+        self.entities
+            .get(category)
+            .is_some_and(|names| names.iter().any(|n| n == value))
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // CLI2 part B: C++ `CLI2::desugarFilterTags` (`+tag` --> `tags _hastag_
+    // tag`, `-tag` --> `tags _notag_ tag`). Placeholder: does nothing yet.
+    fn desugar_filter_tags(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::findStrayModifications`. Placeholder: does
+    // nothing yet.
+    fn find_stray_modifications(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::desugarFilterAttributes` (throws `Error:
+    // unrecognized attribute modifier '{1}'.`, hence the `Result`; uses
+    // `ctx.columns`). Placeholder: does nothing yet.
+    fn desugar_filter_attributes(&mut self, _ctx: &mut Context) -> Result<()> {
+        Ok(())
+    }
+
+    // CLI2 part B: C++ `CLI2::desugarFilterPatterns`. Placeholder: does
+    // nothing yet.
+    fn desugar_filter_patterns(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::findIDs` (fills `id_ranges`; honours
+    // `rc.sugar`). Placeholder: does nothing yet.
+    fn find_ids(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::findUUIDs` (fills `uuid_list`; honours
+    // `rc.sugar`). Placeholder: does nothing yet.
+    fn find_uuids(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::insertIDExpr`. Placeholder: does nothing yet.
+    fn insert_id_expr(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::lexFilterArgs` (FILTER word args are lexed).
+    // Placeholder: does nothing yet.
+    fn lex_filter_args(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::isEmptyParenExpression (iterator it, bool
+    // forward = true)`; the iterator becomes an index into `args`.
+    // Placeholder: always `false` until `insert_junctions` is ported.
+    #[allow(dead_code)]
+    fn is_empty_paren_expression(&self, _index: usize, _forward: bool) -> bool {
+        false
+    }
+
+    // CLI2 part B: C++ `CLI2::desugarFilterPlainArgs`. Placeholder: does
+    // nothing yet.
+    fn desugar_filter_plain_args(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::insertJunctions` (implicit `and`).
+    // Placeholder: does nothing yet.
+    fn insert_junctions(&mut self, _ctx: &mut Context) {}
+
+    // CLI2 part B: C++ `CLI2::lexExpression`, used by
+    // `desugarFilterAttributes`. Placeholder: returns no tokens yet.
+    #[allow(dead_code)]
+    fn lex_expression(&self, _expression: &str) -> Vec<A2> {
+        Vec::new()
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    /// C++ `CLI2::defaultCommand`: look for situations that require defaults:
     ///
-    /// Bootstrap: an ID/UUID is an all-digit word or a canonical 36-character
-    /// UUID; the default command is split on whitespace (milestone 5 hook:
-    /// Lexer types).
-    fn default_command(&mut self, config: &Configuration) {
-        let found_command = self.args.iter().any(|a| a.has_tag("CMD"));
-        let found_sequence = self.args.iter().any(|a| looks_like_sequence(&a.attribute("raw")));
+    /// 1. If no command was found, and no ID/UUID, and if rc.default.command
+    ///    is configured, inject the lexed tokens from rc.default.command
+    ///    (tagged `DEFAULT` in `_args`) after arg0.
+    ///
+    /// 2. If no command was found, but an ID/UUID (a `Lexer::Type::number` or
+    ///    `uuid` argument) was found, then assume a command of 'information'
+    ///    (tagged `ASSUMED`).
+    fn default_command(&mut self, ctx: &mut Context) {
+        // Scan the top-level branches for evidence of ID, UUID, overrides and other
+        // arguments.
+        let mut changes = false;
+        let mut found_command = false;
+        let mut found_sequence = false;
+
+        for a in &self.args {
+            if a.has_tag("CMD") {
+                found_command = true;
+            }
+
+            if a.lextype == LexerType::uuid || a.lextype == LexerType::number {
+                found_sequence = true;
+            }
+        }
 
         // If no command was specified, then a command will be inserted.
         if !found_command {
             // Default command.
             if !found_sequence {
                 // Apply overrides, if any.
-                let default_command = config.get("default.command");
-                if !default_command.is_empty() && !self.args.is_empty() {
+                let default_command = ctx.config.get("default.command");
+                // Deviation: C++ indexes `_original_args[0]` / `_args[0]`
+                // unconditionally; here an empty list is left alone.
+                if !default_command.is_empty() && !self.args.is_empty() && !self.original_args.is_empty() {
                     // Modify _args, _original_args to be:
                     //   <args0> [<def0> ...] <args1> [...]
+
                     let mut reconstructed_originals = vec![self.original_args[0].clone()];
                     let mut reconstructed = vec![self.args[0].clone()];
 
-                    for lexeme in default_command.split_whitespace() {
-                        reconstructed_originals.push(A2::new(lexeme));
-                        let mut cmd = A2::new(lexeme);
+                    let mut lexeme = String::new();
+                    let mut type_ = LexerType::word;
+                    let mut lex = Lexer::new(&default_command);
+
+                    while lex.token(&mut lexeme, &mut type_) {
+                        reconstructed_originals.push(A2::new(&lexeme, type_));
+
+                        let mut cmd = A2::new(&lexeme, type_);
                         cmd.tag("DEFAULT");
                         reconstructed.push(cmd);
                     }
@@ -545,68 +1476,31 @@ impl Cli2 {
 
                     self.original_args = reconstructed_originals;
                     self.args = reconstructed;
+                    changes = true;
                 }
             } else {
-                let mut info = A2::new("information");
+                let mut info = A2::new("information", LexerType::word);
                 info.tag("ASSUMED");
                 self.args.push(info);
+                changes = true;
             }
+        }
+
+        if changes && debug_parser(ctx) {
+            ctx.debug(&self.dump("CLI2::analyze defaultCommand"));
         }
     }
 }
 
-/// Bootstrap stand-in for "becomes a `Lexer::Type::pair` argument whose
-/// `Lexer::decomposePair` name is `rc`" (the C++ `A2` constructor tags those
-/// `RC`, or `CONFIG` when there is a modifier).
-///
-/// C++ `lexArguments` keeps an argument as a pair when its first token is a
-/// pair that reaches the end of the argument, or when the argument
-/// [`Lexer::was_quoted`] (contains one of ` \t()<>&~`). The first token is a
-/// pair when the argument starts with an identifier ([`Lexer::is_identifier`],
-/// which stops at `:`, `=`, whitespace and single-character operators)
-/// immediately followed by `:`, `=`, `::` or `:=`; an unquoted value then
-/// always reaches the end or stops at whitespace or a parenthesis (making the
-/// argument "quoted"), so only a value that is a quoted string ending before
-/// the argument does falls through to a plain word. The name is the
-/// identifier's text before its first `.` (or the whole identifier).
-///
-/// The identifier scan and the quoting test use the real Lexer (milestone
-/// 2). Milestone 5 hook: the pair recognition itself (`Lexer::isPair`,
-/// `Lexer::decomposePair`) moves into the full `lexArguments`.
-fn is_rc_pair(raw: &str) -> bool {
-    let mut identifier = String::new();
-    let mut type_ = LexerType::identifier;
-    if !Lexer::new(raw).is_identifier(&mut identifier, &mut type_) {
-        return false;
+/// The C++ alias-expansion idiom `Lexer lex (value); while (lex.token
+/// (lexeme, type)) list.emplace_back (lexeme, type);`.
+fn lex_into(value: &str, list: &mut Vec<A2>) {
+    let mut lexeme = String::new();
+    let mut type_ = LexerType::word;
+    let mut lex = Lexer::new(value);
+    while lex.token(&mut lexeme, &mut type_) {
+        list.push(A2::new(&lexeme, type_));
     }
-    let end = identifier.len();
-    let name = raw[..end].split('.').next().unwrap_or("");
-    let rest = &raw[end..];
-    if name != "rc" || !(rest.starts_with(':') || rest.starts_with('=')) {
-        return false;
-    }
-
-    let separator = if rest.starts_with("::") || rest.starts_with(":=") { 2 } else { 1 };
-    let value = &rest[separator..];
-    let short_quoted = value
-        .chars()
-        .next()
-        .filter(|&q| q == '\'' || q == '"')
-        .and_then(|q| value[1..].find(q))
-        .is_some_and(|close| close + 2 < value.len());
-
-    !short_quoted || Lexer::was_quoted(raw)
-}
-
-/// Bootstrap stand-in for "lexes as `Lexer::Type::number` or `uuid`".
-fn looks_like_sequence(raw: &str) -> bool {
-    let is_number = !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit());
-    let is_uuid = raw.len() == 36
-        && raw.bytes().enumerate().all(|(i, b)| match i {
-            8 | 13 | 18 | 23 => b == b'-',
-            _ => b.is_ascii_hexdigit(),
-        });
-    is_number || is_uuid
 }
 
 #[cfg(test)]
@@ -665,173 +1559,429 @@ mod tests {
         set_minimum_match_length(old);
     }
 
-    #[test]
-    fn entities_aliases_and_command_selection() {
-        // Holds the lock because abbreviation depends on the process-wide
-        // minimum match length.
-        let _lock = env_lock();
-        let mut cli = Cli2::new();
-        for cmd in ["list", "add", "information", "next", "calendar", "calc"] {
-            cli.entity("cmd", cmd);
-        }
-        cli.entity("cmd", "list");
-        assert_eq!(cli.entities["cmd"].len(), 6, "no duplicate entities");
-        cli.entity("attribute", "project");
+    use crate::commands::command::factory;
 
-        cli.alias("ls", "list rc.x=1");
-        for a in ["/usr/bin/task", " ls ", "+tag"] {
+    /// A Context with the real command registry (`Command::factory`) and its
+    /// `cmd` entities, a few `attribute` entities and the `limit` pseudo, as
+    /// `Context::initialize` steps [3]-[4] set them up.
+    fn context() -> Context {
+        let mut ctx = Context::new();
+        factory(&mut ctx.commands, &ctx.config).unwrap();
+        let keywords: Vec<String> = ctx.commands.keys().cloned().collect();
+        for keyword in keywords {
+            ctx.cli2.entity("cmd", &keyword);
+        }
+        for name in ["description", "due", "project", "status", "tags"] {
+            ctx.cli2.entity("attribute", name);
+        }
+        ctx.cli2.entity("pseudo", "limit");
+        ctx
+    }
+
+    /// `task <list...>` analysed on `ctx` (fresh arguments each time).
+    fn parse(ctx: &mut Context, list: &[&str]) -> Result<()> {
+        ctx.cli2.original_args.clear();
+        ctx.cli2.args.clear();
+        ctx.cli2.command.clear();
+        ctx.cli2.context_added = false;
+        for a in list {
+            ctx.cli2.add(a);
+        }
+        with_cli2(ctx, |cli2, ctx| cli2.analyze(ctx))
+    }
+
+    fn raws(args: &[A2]) -> Vec<String> {
+        args.iter().map(|a| a.attribute("raw")).collect()
+    }
+
+    fn find<'a>(ctx: &'a Context, raw: &str) -> &'a A2 {
+        ctx.cli2.args.iter().find(|a| a.attribute("raw") == raw).expect(raw)
+    }
+
+    #[test]
+    fn a2_decompose_tags_and_token() {
+        let tag = A2::new("+home", LexerType::tag);
+        assert_eq!(tag.attribute("name"), "home");
+        assert_eq!(tag.attribute("sign"), "+");
+
+        let rc = A2::new("rc:/x/rc", LexerType::pair);
+        assert!(rc.has_tag("RC") && !rc.has_tag("CONFIG"));
+        let config = A2::new("rc.verbose=nothing", LexerType::pair);
+        assert!(config.has_tag("CONFIG") && !config.has_tag("RC"));
+        assert_eq!(config.attribute("modifier"), "verbose");
+        assert_eq!(config.attribute("value"), "nothing");
+
+        let pair = A2::new("pro:home", LexerType::pair);
+        assert_eq!(
+            (pair.attribute("name"), pair.attribute("separator"), pair.attribute("value")),
+            ("pro".to_string(), ":".to_string(), "home".to_string())
+        );
+
+        let sub = A2::new("/a/b/g", LexerType::substitution);
+        assert_eq!((sub.attribute("from"), sub.attribute("to"), sub.attribute("flags")), ("a".into(), "b".into(), "g".into()));
+        let pat = A2::new("/x/", LexerType::pattern);
+        assert_eq!(pat.attribute("pattern"), "x");
+
+        // A word is not decomposed; tags are ordered and unique.
+        let mut word = A2::new("+home", LexerType::word);
+        assert_eq!(word.attribute("name"), "");
+        word.tag("B");
+        word.tag("A");
+        word.tag("B");
+        assert_eq!(word.tags, ["B", "A"]);
+        word.un_tag("B");
+        assert_eq!(word.tags, ["A"]);
+        word.un_tag("missing");
+
+        assert_eq!(word.get_token(), "+home");
+        word.set_attribute("canonical", "canon");
+        assert_eq!(word.get_token(), "canon");
+    }
+
+    #[test]
+    fn a2_dump_format() {
+        let mut a = A2::new("+x", LexerType::tag);
+        a.tag("FILTER");
+        a.tag("ORIGINAL");
+        assert_eq!(
+            a.dump(),
+            "\x1b[37;45mtag\x1b[0m name='\x1b[33mx\x1b[0m' raw='\x1b[33m+x\x1b[0m' sign='\x1b[33m+\x1b[0m' \
+             \x1b[1;37;42mFILTER\x1b[0m \x1b[32mORIGINAL\x1b[0m "
+        );
+
+        let mut b = A2::new("w", LexerType::word);
+        for tag in ["BINARY", "CMD", "MODIFICATION", "MISCELLANEOUS", "RC", "CONFIG", "?"] {
+            b.tag(tag);
+        }
+        assert_eq!(
+            b.dump(),
+            "\x1b[38;5;15m\x1b[48;5;236mword\x1b[0m raw='\x1b[33mw\x1b[0m' \x1b[1;37;44mBINARY\x1b[0m \
+             \x1b[1;37;46mCMD\x1b[0m \x1b[1;37;43mMODIFICATION\x1b[0m \x1b[1;37;45mMISCELLANEOUS\x1b[0m \
+             \x1b[1;37;41mRC\x1b[0m \x1b[1;37;101mCONFIG\x1b[0m \x1b[38;5;255;48;5;232m?\x1b[0m "
+        );
+    }
+
+    #[test]
+    fn cli2_dump_format() {
+        let mut cli = Cli2::new();
+        cli.add("task");
+        cli.original_args.push(A2::new("inserted", LexerType::word));
+        let gray = Color::parse("gray10 on gray4").unwrap();
+        let filter = Color::parse("black on rgb311").unwrap();
+        assert_eq!(
+            cli.dump("T"),
+            format!("\x1b[1mT\x1b[0m\n  _original_args\n    {} {}\n", gray.colorize("task"), filter.colorize("inserted"))
+        );
+
+        cli.args.push(A2::new("task", LexerType::word));
+        cli.id_ranges = vec![("1".into(), "3".into()), ("5".into(), "5".into())];
+        cli.uuid_list = vec!["abc".into()];
+        assert_eq!(
+            cli.dump("T"),
+            format!(
+                "\x1b[1mT\x1b[0m\n  _original_args\n    {} {}\n  _args\n    {}\n  _id_ranges\n    {} {} \n  _uuid_list\n    {} \n",
+                gray.colorize("task"),
+                filter.colorize("inserted"),
+                cli.args[0].dump(),
+                gray.colorize("1-3"),
+                gray.colorize("5"),
+                gray.colorize("abc"),
+            )
+        );
+    }
+
+    #[test]
+    fn add_args_inserts_after_offset() {
+        let mut cli = Cli2::new();
+        for a in ["task", "a", "b"] {
             cli.add(a);
         }
-        let mut config = Configuration::new();
-        cli.analyze(&config, &mut Vec::new()).unwrap();
-        assert_eq!(cli.get_command(), "list");
-        assert_eq!(cli.get_binary(), "/usr/bin/task");
-        let raws: Vec<String> = cli.args.iter().map(|a| a.attribute("raw")).collect();
-        assert_eq!(raws, ["/usr/bin/task", "list", "rc.x=1", "+tag"]);
+        cli.add_args(&["x".to_string(), "y".to_string()], 0);
+        assert_eq!(raws(&cli.original_args), ["task", "x", "y", "a", "b"]);
+        assert!(!cli.original_args[1].has_tag("ORIGINAL"));
+        assert!(cli.original_args[3].has_tag("ORIGINAL"));
+        cli.add_args(&["z".to_string()], 4);
+        assert_eq!(raws(&cli.original_args), ["task", "x", "y", "a", "b", "z"]);
+        cli.add_args(&["end".to_string()], 99);
+        assert_eq!(raws(&cli.original_args).last().unwrap(), "end");
+    }
 
-        // Abbreviation (minimum 3) and ambiguity.
-        let mut cli2 = cli.clone();
-        cli2.original_args.clear();
-        cli2.command.clear();
-        cli2.add("task");
-        cli2.add("inf");
-        cli2.analyze(&config, &mut Vec::new()).unwrap();
-        assert_eq!(cli2.get_command(), "information");
-        assert_eq!(cli2.get_command_form(true), "information");
+    #[test]
+    fn lexing_types_and_quoting() {
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "add", "foo bar", "don't stop", "it's", "pro:home", "+tag", "rc.x=1", "12"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "add");
 
-        // No command: default.command applies, tagged DEFAULT.
-        let mut cli3 = Cli2::new();
-        cli3.entities = cli.entities.clone();
-        cli3.add("task");
-        cli3.add("cal");
-        config.set("default.command", "next limit:3");
-        cli3.analyze(&config, &mut Vec::new()).unwrap();
-        assert_eq!(cli3.get_command(), "next");
-        assert!(cli3.args[1].has_tag("DEFAULT"));
-        let raws: Vec<String> = cli3.args.iter().map(|a| a.attribute("raw")).collect();
-        assert_eq!(raws, ["task", "next", "limit:3", "cal"]);
+        let binary = &ctx.cli2.args[0];
+        assert!(binary.has_tag("BINARY"));
+        assert_eq!(binary.attribute("basename"), "task");
 
-        // An ID assumes 'information'.
-        let mut cli4 = Cli2::new();
-        cli4.entities = cli.entities.clone();
-        cli4.add("task");
-        cli4.add("12");
-        cli4.analyze(&config, &mut Vec::new()).unwrap();
-        assert_eq!(cli4.get_command(), "information");
-        assert!(cli4.args.last().unwrap().has_tag("ASSUMED"));
+        // Multi-token arguments become one QUOTED word.
+        let quoted = find(&ctx, "foo bar");
+        assert_eq!(quoted.lextype, LexerType::word);
+        assert!(quoted.has_tag("QUOTED") && quoted.has_tag("ORIGINAL"));
+        // Unescaped single quotes are escaped, then dequoted.
+        let apostrophe = find(&ctx, "don't stop");
+        assert_eq!(apostrophe.lextype, LexerType::word);
+        assert!(apostrophe.has_tag("QUOTED"));
+        // A single token is kept with its Lexer type.
+        assert_eq!(find(&ctx, "it's").lextype, LexerType::identifier);
 
-        // Nothing at all.
-        let mut cli5 = Cli2::new();
-        cli5.entities = cli.entities.clone();
-        cli5.add("task");
-        config.set("default.command", "");
-        let err = cli5.analyze(&config, &mut Vec::new()).unwrap_err();
+        assert_eq!(find(&ctx, "pro:home").lextype, LexerType::pair);
+        assert_eq!(find(&ctx, "pro:home").attribute("canonical"), "project");
+        assert_eq!(find(&ctx, "+tag").lextype, LexerType::tag);
+        assert!(find(&ctx, "rc.x=1").has_tag("CONFIG"));
+        assert_eq!(find(&ctx, "12").lextype, LexerType::number);
+
+        // 'add' takes modifications only: everything but admin args.
+        for raw in ["foo bar", "don't stop", "it's", "pro:home", "+tag", "12"] {
+            assert!(find(&ctx, raw).has_tag("MODIFICATION"), "{raw}");
+        }
+        assert!(!find(&ctx, "rc.x=1").has_tag("MODIFICATION"));
+
+        // Command DNA.
+        let cmd = find(&ctx, "add");
+        for tag in ["CMD", "USESCONTEXT", "ALLOWSMODIFICATIONS"] {
+            assert!(cmd.has_tag(tag), "{tag}");
+        }
+        for tag in ["READONLY", "SHOWSID", "RUNSGC", "ALLOWSFILTER", "ALLOWSMISC"] {
+            assert!(!cmd.has_tag(tag), "{tag}");
+        }
+
+        // Quoted pairs go to EOS.
+        parse(&mut ctx, &["task", "add", "pro:a b"]).unwrap();
+        let pair = find(&ctx, "pro:a b");
+        assert_eq!(pair.lextype, LexerType::pair);
+        assert!(pair.has_tag("QUOTED"));
+        assert_eq!(pair.attribute("value"), "a b");
+    }
+
+    #[test]
+    fn terminator_and_terminated_args() {
+        let mut ctx = context();
+        ctx.cli2.alias("x", "list");
+        parse(&mut ctx, &["task", "add", "--", "+tag", "x", "pro:a", "--"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "add");
+        let args = &ctx.cli2.args;
+        assert_eq!(raws(args), ["task", "add", "--", "+tag", "x", "pro:a", "--"]);
+        assert_eq!(args[2].lextype, LexerType::separator);
+        assert!(args[2].has_tag("TERMINATED"));
+        assert!(!args[2].has_tag("MODIFICATION"), "the separator is not categorised");
+        for a in &args[3..] {
+            assert_eq!(a.lextype, LexerType::word, "{}", a.attribute("raw"));
+            assert!(a.has_tag("TERMINATED") && a.has_tag("MODIFICATION"));
+        }
+    }
+
+    #[test]
+    fn alias_expansion_lexes_and_nests() {
+        let mut ctx = context();
+        ctx.cli2.alias("ls", "count rc.x=1");
+        ctx.cli2.alias("ll", "ls +tag");
+        parse(&mut ctx, &["task", "ll", "pro:a"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "count");
+        // Only the ORIGINAL filter argument is parenthesized.
+        assert_eq!(raws(&ctx.cli2.args), ["task", "count", "rc.x=1", "+tag", "(", "pro:a", ")"]);
+        assert!(find(&ctx, "+tag").has_tag("FILTER"));
+        assert!(find(&ctx, "rc.x=1").has_tag("CONFIG"));
+        assert_eq!(find(&ctx, "+tag").lextype, LexerType::tag);
+        assert!(!find(&ctx, "+tag").has_tag("ORIGINAL"), "alias tokens are not ORIGINAL");
+        assert_eq!(raws(&ctx.cli2.original_args), ["task", "count", "rc.x=1", "+tag", "pro:a"]);
+        // 'count' uses context; none is set.
+        assert_eq!(ctx.debug_messages, ["No context set"]);
+
+        // Recursive aliases hit the safety valve.
+        let mut ctx = context();
+        ctx.cli2.alias("a", "a");
+        parse(&mut ctx, &["task", "a", "count"]).unwrap();
+        assert_eq!(ctx.debug_messages, ["Nested alias limit of 10 reached.", "No context set"]);
+
+        // Original args after '--' are not expanded.
+        let mut ctx = context();
+        ctx.cli2.alias("x", "y z");
+        parse(&mut ctx, &["task", "add", "--", "x"]).unwrap();
+        assert_eq!(raws(&ctx.cli2.original_args), ["task", "add", "--", "x"]);
+    }
+
+    #[test]
+    fn command_abbreviation_and_minimum() {
+        // Abbreviation depends on the process-wide minimum match length.
+        let _lock = crate::test_util::env_lock();
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "vers"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "version");
+        assert_eq!(find(&ctx, "vers").attribute("canonical"), "version");
+
+        // Ambiguous ('con' is config/context): falls back to default.command.
+        ctx.config.set("default.command", "");
+        let err = parse(&mut ctx, &["task", "con"]).unwrap_err();
         assert_eq!(err.to_string(), "You must specify a command or a task to modify.");
 
+        // Shorter than abbreviation.minimum.
+        let old = minimum_match_length();
+        set_minimum_match_length(5);
+        let mut ctx = context();
+        ctx.config.set("default.command", "");
+        let result = parse(&mut ctx, &["task", "vers"]);
+        set_minimum_match_length(old);
+        assert!(result.is_err());
+
+        // An exact attribute name is not a command abbreviation.
+        let mut ctx = context();
+        ctx.cli2.entity("attribute", "proj");
+        parse(&mut ctx, &["task", "proj", "projects"]).unwrap();
+        assert!(!find(&ctx, "proj").has_tag("CMD"));
+        assert_eq!(ctx.cli2.get_command(), "projects");
+    }
+
+    #[test]
+    fn default_and_assumed_commands() {
+        let mut ctx = context();
+        ctx.config.set("default.command", "next limit:3");
+        ctx.cli2.entity("cmd", "next");
+        let result = parse(&mut ctx, &["task", "pro:x"]);
+        // 'next' is a custom report, not registered without its config.
+        assert!(result.is_ok());
+        assert_eq!(ctx.cli2.get_command(), "next");
+        assert_eq!(raws(&ctx.cli2.args), ["task", "next", "limit:3", "pro:x"]);
+        assert!(ctx.cli2.args[1].has_tag("DEFAULT") && ctx.cli2.args[2].has_tag("DEFAULT"));
+        assert_eq!(raws(&ctx.cli2.original_args), ["task", "next", "limit:3", "pro:x"]);
+        // The pseudo attribute is applied (and, as in C++, not erased).
+        assert_eq!(ctx.config.get("limit"), "3");
+
+        // An ID (or UUID) assumes 'information'.
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "12"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "information");
+        assert!(ctx.cli2.args.last().unwrap().has_tag("ASSUMED"));
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "a1b2c3d4-0000-1111-2222-333344445555"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "information");
+
         // Invoked as 'cal'.
-        let mut cli6 = Cli2::new();
-        cli6.entities = cli.entities.clone();
-        cli6.add("/bin/cal");
-        cli6.analyze(&config, &mut Vec::new()).unwrap();
-        assert_eq!(cli6.get_command(), "calendar");
-
-        // Exact attribute names are not commands.
-        let mut cli7 = Cli2::new();
-        cli7.entity("cmd", "projects");
-        cli7.entity("attribute", "pro");
-        cli7.add("task");
-        cli7.add("pro");
-        cli7.add("proj");
-        cli7.analyze(&config, &mut Vec::new()).unwrap();
-        assert!(!cli7.args[1].has_tag("CMD"));
-        assert!(cli7.args[2].has_tag("CMD"));
-        assert_eq!(cli7.args[2].attribute("raw"), "proj");
-        // As in C++, the cached _command shortcut ignores `canonical`.
-        assert_eq!(cli7.get_command_form(false), "projects");
-        assert_eq!(cli7.get_command(), "projects");
+        let mut ctx = context();
+        parse(&mut ctx, &["/usr/bin/cal"]).unwrap();
+        assert_eq!(ctx.cli2.get_command(), "calendar");
+        assert_eq!(ctx.cli2.get_binary(), "/usr/bin/cal");
+        assert_eq!(ctx.cli2.args[0].attribute("basename"), "cal");
     }
 
     #[test]
-    fn terminated_args_are_not_alias_expanded() {
-        let mut cli = Cli2::new();
-        cli.entity("cmd", "list");
-        cli.alias("x", "list");
-        for a in ["task", "list", "--", "x"] {
-            cli.add(a);
+    fn demotion_and_canonical_names() {
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "add", "-tag", "+keep", "foo:bar", "due:tomorrow", "rc:x"]).unwrap();
+        assert_eq!(find(&ctx, "-tag").lextype, LexerType::word, "demoted for add");
+        assert_eq!(find(&ctx, "+keep").lextype, LexerType::tag);
+        assert_eq!(find(&ctx, "foo:bar").lextype, LexerType::word, "unknown name");
+        assert_eq!(find(&ctx, "due:tomorrow").attribute("canonical"), "due");
+        assert_eq!(find(&ctx, "rc:x").attribute("canonical"), "", "rc: is left alone");
+
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "-tag", "count"]).unwrap();
+        assert_eq!(find(&ctx, "-tag").lextype, LexerType::tag, "not demoted for count");
+    }
+
+    #[test]
+    fn categories_and_parenthesized_filter() {
+        let mut ctx = context();
+        // modify: filter before the command, modifications after.
+        parse(&mut ctx, &["task", "+a", "or", "+b", "modify", "pro:x"]).unwrap();
+        assert_eq!(raws(&ctx.cli2.args), ["task", "(", "+a", "or", "+b", ")", "modify", "pro:x"]);
+        for raw in ["(", "+a", "or", "+b", ")"] {
+            assert!(find(&ctx, raw).has_tag("FILTER"), "{raw}");
         }
-        cli.analyze(&Configuration::new(), &mut Vec::new()).unwrap();
-        assert!(cli.args[2].has_tag("TERMINATOR"));
-        assert!(cli.args[3].has_tag("TERMINATED"));
-        assert_eq!(cli.args[3].attribute("raw"), "x");
-    }
+        assert!(find(&ctx, "pro:x").has_tag("MODIFICATION"));
 
-    #[test]
-    fn nested_alias_limit() {
-        let mut cli = Cli2::new();
-        cli.entity("cmd", "list");
-        cli.alias("a", "a");
-        cli.add("task");
-        cli.add("a");
-        cli.add("list");
+        // config: miscellaneous only; getWords returns them.
+        parse(&mut ctx, &["task", "rc:/x/rc", "config", "rc.a:1", "name", "b c", ""]).unwrap();
         let mut debug = Vec::new();
-        cli.analyze(&Configuration::new(), &mut debug).unwrap();
-        assert_eq!(debug, ["Nested alias limit of 10 reached."]);
-    }
+        assert_eq!(ctx.cli2.get_words(&ctx.config, &mut debug), ["name", "b c", ""]);
+        assert!(debug.is_empty());
+        assert_eq!(raws(&ctx.cli2.get_miscellaneous()), ["name", "b c", ""]);
 
-    #[test]
-    fn get_words_skips_binary_command_overrides_and_terminator() {
-        let words = |list: &[&str]| {
-            let mut cli = Cli2::new();
-            cli.entity("cmd", "config");
-            for a in list {
-                cli.add(a);
-            }
-            cli.analyze(&Configuration::new(), &mut Vec::new()).unwrap();
-            cli.get_words(&Configuration::new(), &mut Vec::new())
-        };
+        parse(&mut ctx, &["task", "config", "--", "rc.a=1", "--", "x"]).unwrap();
+        assert_eq!(ctx.cli2.get_words(&ctx.config, &mut debug), ["rc.a=1", "--", "x"]);
 
-        assert_eq!(words(&["task", "config", "a", "b c", ""]), ["a", "b c", ""]);
-        assert_eq!(
-            words(&["task", "rc:/x/rc", "rc.confirmation=off", "config", "rc.a:1", "name", "v"]),
-            ["name", "v"]
-        );
-        assert_eq!(words(&["task", "config", "--", "rc.a=1", "--", "x"]), ["rc.a=1", "--", "x"]);
-        assert_eq!(words(&["task", "pre", "config", "post"]), ["pre", "post"], "before the command too");
-        assert_eq!(words(&["task", "config", "config"]), ["config"], "only the first is the command");
-        // Not single `rc` pairs: they lex as words.
-        assert_eq!(
-            words(&["task", "config", "rcx=1", "rc", "rc.a-b=1", "rc.a='b'c", "rcfile"]),
-            ["rcx=1", "rc", "rc.a-b=1", "rc.a='b'c", "rcfile"]
-        );
-        // `rc=`, `rc::`, `rc.:`, empty, quoted and "quoted" values are rc pairs.
-        assert!(words(&["task", "config", "rc=x", "rc::x", "rc.:x", "rc.a=", "rc.a='b'", "rc.a=b c", "rc.a='b' c"])
-            .is_empty());
+        // A command that takes no arguments.
+        let err = parse(&mut ctx, &["task", "version", "extra"]).unwrap_err();
+        assert_eq!(err.to_string(), "The 'version' command does not allow 'extra'.");
     }
 
     #[test]
     fn get_words_debug_parser() {
-        let mut cli = Cli2::new();
-        cli.entity("cmd", "config");
-        for a in ["task", "config", "a", "b"] {
-            cli.add(a);
-        }
+        let mut ctx = context();
+        parse(&mut ctx, &["task", "config", "a", "b"]).unwrap();
         let mut config = Configuration::new();
-        cli.analyze(&config, &mut Vec::new()).unwrap();
-        let mut debug = Vec::new();
-        cli.get_words(&config, &mut debug);
-        assert!(debug.is_empty());
-
         config.set("debug.parser", 2);
-        cli.get_words(&config, &mut debug);
+        let mut debug = Vec::new();
+        ctx.cli2.get_words(&config, &mut debug);
         let color = Color::parse("gray10 on gray4").unwrap();
         assert_eq!(debug, [format!("CLI2::getWords {} {} ", color.colorize("a"), color.colorize("b"))]);
     }
 
     #[test]
-    fn sequences() {
-        assert!(looks_like_sequence("1"));
-        assert!(looks_like_sequence("a1b2c3d4-0000-1111-2222-333344445555"));
-        assert!(!looks_like_sequence("1-2x"));
-        assert!(!looks_like_sequence(""));
+    fn debug_parser_dumps_each_pass() {
+        let mut ctx = context();
+        ctx.config.set("debug.parser", 2);
+        ctx.cli2.alias("al", "add");
+        parse(&mut ctx, &["task", "al", "-x", "pro:a"]).unwrap();
+        let titles: Vec<&str> = ctx
+            .debug_messages
+            .iter()
+            .filter_map(|m| m.strip_prefix("\x1b[1m"))
+            .map(|m| m.split('\x1b').next().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "CLI2::analyze",
+                "CLI2::analyze lexArguments",
+                "CLI2::analyze aliasExpansion",
+                "CLI2::analyze findCommand",
+                "CLI2::analyze demotion",
+                "CLI2::analyze canonicalizeNames",
+                "CLI2::analyze categorizeArgs",
+            ]
+        );
+    }
+
+    #[test]
+    fn context_filter_is_injected() {
+        let mut ctx = context();
+        ctx.config.set("context", "work");
+        ctx.config.set("context.work.read", "+work or +w");
+        ctx.config.set("context.work.write", "+work");
+        ctx.config.set("verbose", "context");
+        ctx.verbosity = ["context".to_string()].into_iter().collect();
+        // 'count' reads with context.
+        parse(&mut ctx, &["task", "pro:a", "count"]).unwrap();
+        assert!(ctx.cli2.context_added);
+        assert_eq!(raws(&ctx.cli2.original_args), ["task", "(", "+work", "or", "+w", ")", "pro:a", "count"]);
+        assert!(ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).count() >= 6);
+        assert_eq!(ctx.footnotes, ["Context 'work' set. Use 'task context none' to remove."]);
+        assert!(ctx.debug_messages.iter().any(|m| m == "Applying context 'work'"));
+
+        // An ID disqualifies the read context.
+        let mut ctx2 = context();
+        ctx2.config = ctx.config.clone();
+        parse(&mut ctx2, &["task", "1", "count"]).unwrap();
+        assert!(!ctx2.cli2.context_added);
+        assert!(ctx2.debug_messages.iter().any(|m| m == "UUID/ID argument found '1', not applying context."));
+
+        // 'add' takes the write context as modifications after the command.
+        let mut ctx3 = context();
+        ctx3.config = ctx.config.clone();
+        parse(&mut ctx3, &["task", "add", "x"]).unwrap();
+        assert_eq!(raws(&ctx3.cli2.original_args), ["task", "add", "+work", "x"]);
+        assert!(find(&ctx3, "+work").has_tag("MODIFICATION"));
+    }
+
+    #[test]
+    fn prepare_filter_footnote() {
+        let mut ctx = context();
+        ctx.verbosity = ["filter".to_string()].into_iter().collect();
+        parse(&mut ctx, &["task", "+a", "export"]).unwrap();
+        with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
+        assert_eq!(ctx.footnotes, ["Filter: ( +a )"]);
     }
 }

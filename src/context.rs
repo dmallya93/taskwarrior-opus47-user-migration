@@ -47,9 +47,10 @@
 //!   registered command (as in C++) and `gc` time is added to
 //!   `time_gc_us`; task loading time accumulates in `Tdb2::time_load_us`
 //!   and is folded into `time_load_us` for the Perf line.
-//! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the full `CLI2` parser
-//!   ([`crate::cli2::Cli2`] is a bootstrap that only selects the command),
-//!   `prepareFilter`, `dump`.
+//! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the `CLI2` parser
+//!   ([`crate::cli2::Cli2`]) runs detached from the Context via
+//!   [`cli2::with_cli2`]; its `prepareFilter` desugaring passes are still
+//!   placeholders.
 //! - **Milestone 6** (reports and columns): column rendering,
 //!   `initializeColorRules` (only its
 //!   `color ()` short-circuit is ported, in [`crate::rules`]).
@@ -875,8 +876,7 @@ impl Context {
             self.cli2.add(arg);
         }
 
-        // Milestone 5 hook: the bootstrap analysis only selects the command.
-        self.cli2.analyze(&self.config, &mut self.debug_messages)?;
+        cli2::with_cli2(self, |cli2, ctx| cli2.analyze(ctx))?;
 
         // Extract a recomposed command line.
         let mut found_default = false;
@@ -1116,8 +1116,7 @@ impl Context {
             // This is something that is only needed for write commands with no other
             // filter processing.
             if c.accepts_modifications() && !c.accepts_filter() {
-                // Milestone 5 hook: no-op for now.
-                self.cli2.prepare_filter();
+                cli2::with_cli2(self, |cli2, ctx| cli2.prepare_filter(ctx))?;
             }
 
             // With rc.debug.parser == 2, there are more tree dumps than you might want,
@@ -1876,8 +1875,11 @@ mod tests {
         register(
             &mut context.commands,
             Rc::new(TestCmd {
+                // Accepts miscellaneous arguments, so `categorizeArgs`
+                // allows extra words on the test command lines.
                 meta: CommandMeta {
                     keyword: keyword.to_string(),
+                    accepts_miscellaneous: true,
                     ..CommandMeta::default()
                 },
                 behaviour,
