@@ -58,8 +58,9 @@ use crate::columns::col_urgency::ColumnUrgency;
 use crate::columns::col_uuid::ColumnUUID;
 use crate::columns::col_wait::ColumnWait;
 use crate::context::Context;
+use crate::dom;
 use crate::error::{Result, TwError};
-use crate::eval::{dom_source, Eval, FnResolver};
+use crate::eval::Eval;
 use crate::shared::configuration::Configuration;
 use crate::shared::format::format;
 use crate::shared::shared::split;
@@ -183,38 +184,15 @@ pub trait ModifyEnv {
     fn remove_dependency_id(&mut self, task: &mut Task, id: i32) -> Result<()>;
 }
 
-/// C++ `getDOM (name, Context::getContext ().currentTask, value)` as used by
-/// `domSource` when a column's `modify` evaluates its value.
-///
-/// Milestone 5 hook (DOM task): `src/dom.rs` is not ported yet, so no DOM
-/// reference resolves here (C++ `getDOM` returning `false`). Literals,
-/// operators and the named constants still evaluate exactly as in C++; only
-/// values that are DOM references (`due:1.due`, `project:2.project`) differ
-/// until the DOM port replaces this function with `dom::get`.
-fn context_get_dom(_ctx: &Context, _name: &str) -> Option<Variant> {
-    None
-}
-
 impl ModifyEnv for Context {
-    /// Builds the C++ `Eval` with `domSource` (resolved through
-    /// [`context_get_dom`]) and the current task, then forwards Eval's debug
-    /// messages to `Context::debug`, as the C++ Eval writes them there.
+    /// C++ `Eval e; e.addSource (domSource); e.evaluateInfixExpression
+    /// (value, evaluatedValue);`: the resolver is [`dom::ContextResolver`]
+    /// (`getDOM (name, Context::getContext ().currentTask, value)`, the
+    /// current task bound to this Context for virtual tags, debug output to
+    /// `Context::debug`).
     fn evaluate_dom_expression(&mut self, value: &str) -> Result<Variant> {
-        let current = self.current_task.clone();
-        let (result, messages) = {
-            let ctx: &Context = self;
-            let source = |name: &str| dom_source(name, |n| context_get_dom(ctx, n));
-            let mut resolver = match current.as_deref() {
-                Some(task) => FnResolver::with_task(source, task),
-                None => FnResolver::new(source),
-            };
-            let result = Eval::new().evaluate_infix_expression(value, &mut resolver);
-            (result, resolver.debug_messages)
-        };
-        for message in messages {
-            self.debug(&message);
-        }
-        result
+        let mut resolver = dom::ContextResolver::new(self);
+        Eval::new().evaluate_infix_expression(value, &mut resolver)
     }
 
     fn debug(&mut self, message: &str) {
@@ -547,6 +525,7 @@ mod tests {
     //! Factory contents, style/label linking, `validate` and `modify` of
     //! every column class, against a fake [`ModifyEnv`].
     use super::*;
+    use crate::eval::{dom_source, FnResolver};
     use crate::shared::datetime::Datetime;
     use crate::shared::localtime;
 

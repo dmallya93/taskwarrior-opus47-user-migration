@@ -49,8 +49,9 @@
 //!   and is folded into `time_load_us` for the Perf line.
 //! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the `CLI2` parser
 //!   ([`crate::cli2::Cli2`]) runs detached from the Context via
-//!   [`cli2::with_cli2`]; its `prepareFilter` desugaring passes are still
-//!   placeholders.
+//!   [`cli2::with_cli2`]. DOM lookups (`getDOM`, Eval's `domSource`) are
+//!   [`crate::dom`] functions taking `&mut Context`, with the contextual
+//!   task passed separately (`current_task` is an `Rc`, cloned first).
 //! - **Milestone 6** (reports and columns): column rendering,
 //!   `initializeColorRules` (only its
 //!   `color ()` short-circuit is ported, in [`crate::rules`]).

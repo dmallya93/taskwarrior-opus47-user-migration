@@ -310,7 +310,7 @@ fn precedence_and_associativity() {
     // The postfix form produced by the shunting yard.
     let e = Eval::new();
     let mut tokens = lex("1 + 2 * 3 ^ 2 ^ 2 - 4");
-    e.infix_parse(&mut tokens, &mut NoDom::new());
+    e.infix_parse(&mut tokens, &mut NoDom::new()).unwrap();
     e.infix_to_postfix(&mut tokens).unwrap();
     assert_eq!(texts(&tokens), ["1", "2", "3", "2", "2", "^", "^", "*", "+", "4", "-"]);
 
@@ -348,7 +348,7 @@ fn unary_operators() {
     // parseUnary rewrites the operators in place.
     let e = Eval::new();
     let mut tokens = lex("- 1 + + 2 - - 3");
-    e.infix_parse(&mut tokens, &mut NoDom::new());
+    e.infix_parse(&mut tokens, &mut NoDom::new()).unwrap();
     assert_eq!(texts(&tokens), ["_neg_", "1", "+", "_pos_", "2", "-", "_neg_", "3"]);
     e.infix_to_postfix(&mut tokens).unwrap();
     assert_eq!(texts(&tokens), ["1", "_neg_", "2", "_pos_", "+", "3", "_neg_", "-"]);
@@ -393,7 +393,7 @@ fn ambiguity_minus_is_binary_after_operand() {
     assert_eq!(infix("2-3").unwrap().get_string(), "2-3");
     let e = Eval::new();
     let mut tokens = lex("2 - -3");
-    e.infix_parse(&mut tokens, &mut NoDom::new());
+    e.infix_parse(&mut tokens, &mut NoDom::new()).unwrap();
     assert_eq!(texts(&tokens), ["2", "-", "_neg_", "3"]);
 }
 
