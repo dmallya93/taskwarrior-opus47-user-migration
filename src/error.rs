@@ -36,11 +36,24 @@ impl fmt::Display for TwError {
             TwError::Message(message) | TwError::Runtime(message) => f.write_str(message),
             TwError::Status(_) => Ok(()),
             TwError::Io(err) => write!(f, "{err}"),
-            TwError::TaskChampion(err) => write!(f, "{err}"),
+            TwError::TaskChampion(err) => write_taskchampion_error(f, err),
             TwError::NotImplemented(keyword) => {
                 write!(f, "Command '{keyword}' is not yet implemented.")
             }
         }
+    }
+}
+
+/// The cxx bridge's `CppError` Display (the `rust::Error::what ()` C++
+/// prints): for `Error::Other`, the default `anyhow::Error` representation
+/// only shows the "outermost" context (e.g. "Could not connect to server"),
+/// so all of the contexts are joined with `: `.
+fn write_taskchampion_error(f: &mut fmt::Formatter<'_>, err: &taskchampion::Error) -> fmt::Result {
+    if let taskchampion::Error::Other(err) = err {
+        let entire_msg = err.chain().skip(1).fold(err.to_string(), |a, b| format!("{a}: {b}"));
+        write!(f, "{entire_msg}")
+    } else {
+        write!(f, "{err}")
     }
 }
 
@@ -105,6 +118,14 @@ mod tests {
             TwError::NotImplemented("burndown".into()).to_string(),
             "Command 'burndown' is not yet implemented."
         );
+    }
+
+    #[test]
+    fn display_taskchampion_non_other() {
+        // The `Error::Other` context chain is covered by the tdb2 tests
+        // (opening a missing database).
+        let usage = TwError::TaskChampion(taskchampion::Error::Usage("bad".into()));
+        assert_eq!(usage.to_string(), "Usage Error: bad");
     }
 
     #[test]

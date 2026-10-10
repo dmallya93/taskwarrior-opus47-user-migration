@@ -32,6 +32,8 @@ tls-native-roots = ["taskchampion/tls-native-roots"]
 [dependencies]
 taskchampion = { version = "3.1", features = ["server-git"] }
 uuid = { version = "1", features = ["v4"] }
+# Current-thread runtime for the async replica API (as src/taskchampion-cpp/Cargo.toml).
+tokio = { version = "1", features = ["rt"] }
 regex = "1"
 libc = "0.2"
 unicode-width = "0.2"

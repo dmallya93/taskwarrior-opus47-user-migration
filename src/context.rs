@@ -42,7 +42,11 @@
 //!   `colorize*` functions (identity until the colour rules exist; libshared
 //!   `Color` and `Table` themselves are already ported).
 //! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
-//!   coefficients, `TDB2::open_replica`, `TDB2::gc` ([`crate::tdb2::Tdb2`]).
+//!   coefficients. `TDB2::open_replica` and `TDB2::gc`
+//!   ([`crate::tdb2::Tdb2`]) are ported: the replica is opened for every
+//!   registered command (as in C++) and `gc` time is added to
+//!   `time_gc_us`; task loading time accumulates in `Tdb2::time_load_us`
+//!   and is folded into `time_load_us` for the Perf line.
 //! - **Milestone 5** (CLI2/Filter/DOM/dispatch): the full `CLI2` parser
 //!   ([`crate::cli2::Cli2`] is a bootstrap that only selects the command),
 //!   `prepareFilter`, `dump`.
@@ -917,7 +921,6 @@ impl Context {
             // itself is read-write.
             let read_write =
                 (self.config.get_boolean("gc") && (c.needs_gc() || c.needs_recur_update())) || !c.read_only();
-            // Milestone 4 hook: `tdb2.open_replica` is a no-op for now.
             self.tdb2.open_replica(&self.data_dir, create_if_missing, read_write)?;
         }
 
@@ -1051,6 +1054,10 @@ impl Context {
         self.timer_total.stop();
         self.time_total_us += self.timer_total.total_us() as i64;
 
+        // C++ `TDB2::all_tasks` / `pending_tasks` add their load time straight
+        // to `Context::time_load_us`; Tdb2 accumulates it separately.
+        self.time_load_us += std::mem::take(&mut self.tdb2.time_load_us);
+
         let gc = if self.time_gc_us > 0 {
             self.time_gc_us - self.time_load_us
         } else {
@@ -1104,8 +1111,7 @@ impl Context {
 
             // The command know whether they need a GC or recurrence update.
             if c.needs_gc() {
-                // Milestone 4 hook: `tdb2.gc` is a no-op for now.
-                self.tdb2.gc()?;
+                self.time_gc_us += self.tdb2.gc(self.config.get_boolean("gc"))?;
             }
 
             // This is something that is only needed for write commands with no other
