@@ -18,6 +18,10 @@ name = "task"
 path = "src/main.rs"
 
 [[bin]]
+name = "calc"
+path = "src/bin/calc.rs"
+
+[[bin]]
 name = "make_tc_task"
 path = "src/bin/make_tc_task.rs"
 

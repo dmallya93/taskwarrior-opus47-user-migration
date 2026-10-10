@@ -4,14 +4,34 @@
 //!
 //! Ported in full ahead of milestone 3 (Color/Table/Variant/Eval), because
 //! `version` (milestone 1) needs `Color ("bold").colorize ()` and libshared
-//! `Table` byte-exact. Every member of the C++ class is here, including the
-//! quirks (e.g. `operator==` compares the low 32 bits only, and
-//! `upgrade24b` clears the foreground index rather than the background one
-//! when converting a background). The `libshared test/color.t.cpp` cases are
-//! ported as unit tests below.
+//! `Table` byte-exact; audited line by line against Color.cpp in milestone 3.
+//! Every member of the C++ class is here, including the quirks (e.g.
+//! `operator==` compares the low 32 bits only, `upgrade24b` clears the
+//! foreground index rather than the background one when converting a
+//! background, `code ()` emits no bold in 256/24-bit mode, and `index2truecolor`
+//! maps 8, i.e. bright black, to `0x000000`). The complete `libshared
+//! test/color.t.cpp` is ported, assertion for assertion and in order, in the
+//! tests below, with an assertion-count check (1046).
 //!
-//! C++ `throw format ("The color '{1}' is not recognized.", word)` becomes
-//! [`TwError::Message`].
+//! C++ API to Rust:
+//! - `Color ()` -> [`Color::new`] / `Color::default ()`
+//! - `Color (const std::string&)` -> [`Color::parse`] (also `str::parse`,
+//!   `TryFrom<&str>`, `TryFrom<&String>`)
+//! - `Color (unsigned long)` -> [`Color::from_value`] / `From<u64>`
+//! - `Color (color_id)` -> [`Color::from_id`] / `From<ColorId>`
+//! - `Color (fg, bg, underline, bold, bright)` -> [`Color::from_ids`]
+//! - `Color::nocolor`, `Color::red`, ... -> [`ColorId::Nocolor`], [`ColorId::Red`], ...
+//! - `operator std::string ()` -> `Display` (`to_string ()`), `From<Color> for String`
+//! - `operator int ()` -> [`Color::to_int`], `From<Color> for i32`
+//! - `colorize (input)` -> [`Color::colorize`]; `_colorize (result, input)` ->
+//!   [`Color::colorize_into`]
+//! - static `Color::colorize (input, spec)` -> [`Color::colorize_with`]
+//!   (Rust has no overloading)
+//! - `strip`, `blend`, `upgrade`, `upgrade24b`, `index2truecolor`, `code`,
+//!   `end`, `nontrivial`, `operator==` -> same names / `PartialEq`
+//!
+//! Deviation: C++ `throw format ("The color '{1}' is not recognized.", word)`
+//! becomes `Err (`[`TwError::Message`]`)` with the identical text.
 
 use std::fmt;
 
@@ -202,6 +222,9 @@ impl Color {
     /// - `colorN`   0 <= N <= 255    fg 38;5;N                    bg 48;5;N
     /// - `rgbRGB`   0 <= R,G,B <= 5  fg 38;5;16 + R*36 + G*6 + B  bg 48;5;16 + R*36 + G*6 + B
     /// - `0xRRGGBB` 0 <= R,G,B <= FF fg 38;2;R;G;B                bg 48;2;R;G;B
+    ///
+    /// Deviation: an unrecognized word is returned as `Err` instead of
+    /// thrown; the message is the C++ one, byte for byte.
     pub fn parse(spec: &str) -> Result<Self> {
         let mut this = Color::new();
 
@@ -516,6 +539,13 @@ impl Color {
     /// - 256 bg               `\033[48;5;Nm`
     /// - 24 bit fg            `\033[38;2;R;G;Bm`
     /// - 24 bit bg            `\033[48;2;R;G;Bm`
+    ///
+    /// Deviation: C++ looks the numbers up in the 256-entry `colorstring`
+    /// table, which is read out of bounds (undefined behaviour) for a
+    /// 16-color foreground index above 226 or background index above 216
+    /// (156 with bright); such values are only reachable through
+    /// `Color (unsigned long)`. Rust formats the number in decimal, which is
+    /// what the table holds for every in-range index.
     pub fn colorize_into(&self, result: &mut String, input: &str) {
         if !self.nontrivial() {
             result.push_str(input);
@@ -612,13 +642,19 @@ impl Color {
     }
 
     /// Static `Color::colorize (input, spec)`.
+    ///
+    /// Deviation: named `colorize_with` (no overloading in Rust); an
+    /// unrecognized `spec` is returned as `Err` instead of thrown.
     pub fn colorize_with(input: &str, spec: &str) -> Result<String> {
         let c = Color::parse(spec)?;
         Ok(c.colorize(input))
     }
 
     /// `Color::code`: the escape sequence(s) that start this color, without
-    /// the reset.
+    /// the reset. As in C++, bold is only emitted in 16-color mode.
+    ///
+    /// Deviation: `colorstring` out-of-range lookups, as in
+    /// [`Color::colorize_into`].
     pub fn code(&self) -> String {
         if !self.nontrivial() {
             return String::new();
@@ -674,31 +710,42 @@ impl Color {
         }
         // 16 color
         else {
-            let mut parts: Vec<String> = Vec::new();
+            let mut count = 0;
+            result.push_str("\x1b[");
+
+            let mut separator = |result: &mut String| {
+                if count > 0 {
+                    result.push(';');
+                }
+                count += 1;
+            };
 
             if self.value & COLOR_BOLD != 0 {
-                parts.push("1".into());
+                separator(&mut result);
+                result.push('1');
             }
 
             if self.value & COLOR_UNDERLINE != 0 {
-                parts.push("4".into());
+                separator(&mut result);
+                result.push('4');
             }
 
             if self.value & COLOR_INVERSE != 0 {
-                parts.push("7".into());
+                separator(&mut result);
+                result.push('7');
             }
 
             if self.value & COLOR_HASFG != 0 {
-                parts.push((29 + (self.value & COLOR_FG)).to_string());
+                separator(&mut result);
+                result.push_str(&(29 + (self.value & COLOR_FG)).to_string());
             }
 
             if self.value & COLOR_HASBG != 0 {
+                separator(&mut result);
                 let base = if self.value & COLOR_BRIGHT != 0 { 99 } else { 39 };
-                parts.push((base + ((self.value & COLOR_BG) >> 8)).to_string());
+                result.push_str(&(base + ((self.value & COLOR_BG) >> 8)).to_string());
             }
 
-            result.push_str("\x1b[");
-            result.push_str(&parts.join(";"));
             result.push('m');
         }
 
@@ -778,33 +825,30 @@ impl fmt::Display for Color {
     /// `operator std::string ()`: the color's description, e.g.
     /// `bold underline red on bright white`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut words: Vec<String> = Vec::new();
+        let sep = |description: &String| if description.is_empty() { "" } else { " " };
+
+        let mut description = String::new();
         if self.value & COLOR_BOLD != 0 {
-            words.push("bold".into());
+            description.push_str("bold");
         }
 
         if self.value & COLOR_UNDERLINE != 0 {
-            words.push("underline".into());
+            description = format!("{}{}underline", description, sep(&description));
         }
 
         if self.value & COLOR_INVERSE != 0 {
-            words.push("inverse".into());
+            description = format!("{}{}inverse", description, sep(&description));
         }
 
         if self.value & COLOR_HASFG != 0 {
-            words.push(self.fg());
+            description = format!("{}{}{}", description, sep(&description), self.fg());
         }
 
-        let mut description = words.join(" ");
-
         if self.value & COLOR_HASBG != 0 {
-            if !description.is_empty() {
-                description.push(' ');
-            }
-            description.push_str("on");
+            description = format!("{}{}on", description, sep(&description));
 
             if self.value & COLOR_BRIGHT != 0 {
-                description.push_str(" bright");
+                description = format!("{}{}bright", description, sep(&description));
             }
 
             description.push(' ');
@@ -815,164 +859,441 @@ impl fmt::Display for Color {
     }
 }
 
+impl From<Color> for String {
+    /// `(std::string) color`.
+    fn from(color: Color) -> Self {
+        color.to_string()
+    }
+}
+
+impl From<Color> for i32 {
+    /// `(int) color`.
+    fn from(color: Color) -> Self {
+        color.to_int()
+    }
+}
+
+impl From<u64> for Color {
+    /// `Color (unsigned long)`.
+    fn from(value: u64) -> Self {
+        Color::from_value(value)
+    }
+}
+
+impl From<ColorId> for Color {
+    /// `Color (color_id)`.
+    fn from(fg: ColorId) -> Self {
+        Color::from_id(fg)
+    }
+}
+
+impl std::str::FromStr for Color {
+    type Err = TwError;
+
+    /// `Color (const std::string&)`; see [`Color::parse`].
+    fn from_str(spec: &str) -> Result<Self> {
+        Color::parse(spec)
+    }
+}
+
+impl TryFrom<&str> for Color {
+    type Error = TwError;
+
+    /// `Color (const std::string&)`; see [`Color::parse`].
+    fn try_from(spec: &str) -> Result<Self> {
+        Color::parse(spec)
+    }
+}
+
+impl TryFrom<&String> for Color {
+    type Error = TwError;
+
+    /// `Color (const std::string&)`; see [`Color::parse`].
+    fn try_from(spec: &String) -> Result<Self> {
+        Color::parse(spec)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    //! Port of libshared `test/color.t.cpp`.
+    //! Line-by-line port of libshared (d899eba6) `test/color.t.cpp`.
+    //!
+    //! The C++ `UnitTest` harness is mirrored by [`UnitTest`]: every `t.is`
+    //! becomes a call with the identical message, in the same order, so each
+    //! upstream assertion has exactly one counterpart here. The run collects
+    //! all failures and then checks the number of executed assertions against
+    //! the static count of the C++ file, [`COLOR_T_ASSERTIONS`].
+    //!
+    //! Deviation: a C++ `Color (spec)` that throws would abort the program;
+    //! here it panics through `unwrap`, failing the test the same way.
     use super::*;
+    use std::fmt::Debug;
 
-    fn c(spec: &str) -> Color {
+    /// Static count of the assertions executed by color.t.cpp: 9 names + 4
+    /// upgrades + 5 blends + 4 attribute codes + 9 foregrounds + 9
+    /// backgrounds (= 40), 256 + 256 `colorN`, 6*6*6 + 6*6*6 `rgbRGB`, 1
+    /// `grey0`, 24 + 24 `grayN`, 7 24-bit, 3 `strip` + 2 `code` + 1 `end`.
+    /// Equal to its `UnitTest t (...)` plan.
+    const COLOR_T_ASSERTIONS: usize = 40 + 256 + 256 + 6 * 6 * 6 + 6 * 6 * 6 + 1 + 24 + 24 + 7 + 6;
+
+    /// The C++ `UnitTest` (test/test.cpp), recording instead of printing.
+    struct UnitTest {
+        counter: usize,
+        failures: Vec<String>,
+    }
+
+    impl UnitTest {
+        fn new() -> Self {
+            UnitTest { counter: 0, failures: Vec::new() }
+        }
+
+        fn is<A: PartialEq<E> + Debug, E: Debug>(&mut self, actual: A, expected: E, name: impl AsRef<str>) {
+            self.counter += 1;
+            if actual != expected {
+                self.failures.push(format!(
+                    "not ok {} - {}\n#   expected: {:?}\n#        got: {:?}",
+                    self.counter,
+                    name.as_ref(),
+                    expected,
+                    actual
+                ));
+            }
+        }
+    }
+
+    /// `Color (spec)`.
+    fn color(spec: &str) -> Color {
         Color::parse(spec).unwrap()
     }
 
+    /// Static `Color::colorize (input, spec)`.
     fn colorize(input: &str, spec: &str) -> String {
         Color::colorize_with(input, spec).unwrap()
     }
 
-    #[test]
-    fn names_matched_to_values() {
-        assert_eq!(c("").to_int(), Color::from_id(ColorId::Nocolor).to_int());
-        assert_eq!(c("black").to_int(), Color::from_id(ColorId::Black).to_int());
-        assert_eq!(c("red").to_int(), Color::from_id(ColorId::Red).to_int());
-        assert_eq!(c("green").to_int(), Color::from_id(ColorId::Green).to_int());
-        assert_eq!(c("yellow").to_int(), Color::from_id(ColorId::Yellow).to_int());
-        assert_eq!(c("blue").to_int(), Color::from_id(ColorId::Blue).to_int());
-        assert_eq!(c("magenta").to_int(), Color::from_id(ColorId::Magenta).to_int());
-        assert_eq!(c("cyan").to_int(), Color::from_id(ColorId::Cyan).to_int());
-        assert_eq!(c("white").to_int(), Color::from_id(ColorId::White).to_int());
-    }
+    /// `int main ()` of color.t.cpp.
+    fn color_t(t: &mut UnitTest) {
+        // Names matched to values.
+        t.is(color("").to_int(), Color::from_id(ColorId::Nocolor).to_int(), "''        == Color::nocolor");
+        t.is(color("black").to_int(), Color::from_id(ColorId::Black).to_int(), "'black'   == Color::black");
+        t.is(color("red").to_int(), Color::from_id(ColorId::Red).to_int(), "'red'     == Color::red");
+        t.is(color("green").to_int(), Color::from_id(ColorId::Green).to_int(), "'green'   == Color::green");
+        t.is(color("yellow").to_int(), Color::from_id(ColorId::Yellow).to_int(), "'yellow'  == Color::yellow");
+        t.is(color("blue").to_int(), Color::from_id(ColorId::Blue).to_int(), "'blue'    == Color::blue");
+        t.is(color("magenta").to_int(), Color::from_id(ColorId::Magenta).to_int(), "'magenta' == Color::magenta");
+        t.is(color("cyan").to_int(), Color::from_id(ColorId::Cyan).to_int(), "'cyan'    == Color::cyan");
+        t.is(color("white").to_int(), Color::from_id(ColorId::White).to_int(), "'white'   == Color::white");
 
-    #[test]
-    fn auto_upgrades() {
-        assert_eq!(c("red on color0").to_string(), "color1 on color0");
-        assert_eq!(c("color1 on black").to_string(), "color1 on color0");
-        assert_eq!(c("bold red on color0").to_string(), "bold color1 on color0");
-        assert_eq!(c("color1 on bright black").to_string(), "color1 on color8");
-    }
+        // Auto upgrades.
+        let mut c = color("red on color0");
+        t.is(c.to_string(), "color1 on color0", "upgrade red on color0 -> color1 on color0");
 
-    #[test]
-    fn blending() {
-        let mut x = c("red");
-        x.blend(&c("on white"));
-        assert_eq!(x.to_string(), "red on white");
+        c = color("color1 on black");
+        t.is(c.to_string(), "color1 on color0", "upgrade color1 on black -> color1 on color0");
 
-        let mut x = c("bold underline red");
-        x.blend(&c("on bright white"));
-        assert_eq!(x.to_string(), "bold underline red on bright white");
+        c = color("bold red on color0");
+        t.is(c.to_string(), "bold color1 on color0", "upgrade bold red on color0 -> bold color1 on color0");
+
+        c = color("color1 on bright black");
+        t.is(c.to_string(), "color1 on color8", "upgrade color1 on bright black -> color1 on color8");
+
+        // Simple blending.
+        c = color("red");
+        c.blend(&color("on white"));
+        t.is(c.to_string(), "red on white", "red + on white -> red on white");
+
+        c = color("bold underline red");
+        c.blend(&color("on bright white"));
+        t.is(
+            c.to_string(),
+            "bold underline red on bright white",
+            "bold underline red + on bright white -> bold underline red on bright white",
+        );
 
         // Blending with conflicts.
-        let mut x = c("red on white");
-        x.blend(&c("on blue"));
-        assert_eq!(x.to_string(), "red on blue");
+        c = color("red on white");
+        c.blend(&color("on blue"));
+        t.is(c.to_string(), "red on blue", "red on white + on blue -> red on blue");
 
-        let mut x = c("red on white");
-        x.blend(&c("blue on magenta"));
-        assert_eq!(x.to_string(), "blue on magenta");
+        c = color("red on white");
+        c.blend(&color("blue on magenta"));
+        t.is(c.to_string(), "blue on magenta", "red on white + blue on magenta -> blue on magenta");
 
         // Blending with upgrades.
-        let mut x = c("color1 on color0");
-        x.blend(&c("blue"));
-        assert_eq!(x.to_string(), "color4 on color0");
-    }
+        c = color("color1 on color0");
+        c.blend(&color("blue"));
+        t.is(c.to_string(), "color4 on color0", "color1 on color0 + blue -> color4 on color0");
 
-    #[test]
-    fn sixteen_color_codes() {
-        assert_eq!(colorize("foo", "red"), "\x1b[31mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "bold red"), "\x1b[1;31mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "underline red"), "\x1b[4;31mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "underline bold red"), "\x1b[1;4;31mfoo\x1b[0m");
+        // Now the dumb show of every color and its code.
+        t.is(colorize("foo", "red"), "\x1b[31mfoo\x1b[0m", "red                -> ^[[31m");
+        t.is(colorize("foo", "bold red"), "\x1b[1;31mfoo\x1b[0m", "bold red           -> ^[[1;31m");
+        t.is(colorize("foo", "underline red"), "\x1b[4;31mfoo\x1b[0m", "underline red      -> ^[[4;31m");
+        t.is(colorize("foo", "underline bold red"), "\x1b[1;4;31mfoo\x1b[0m", "underline bold red -> ^[[1;4;31m");
 
-        assert_eq!(colorize("foo", ""), "foo");
+        // 16-color foregrounds.
+        t.is(colorize("foo", ""), "foo", "''                 -> ''");
 
-        let fgs = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
-        for (i, name) in fgs.iter().enumerate() {
-            assert_eq!(colorize("foo", name), format!("\x1b[{}mfoo\x1b[0m", 30 + i), "{name}");
-            assert_eq!(
-                colorize("foo", &format!("on {name}")),
-                format!("\x1b[{}mfoo\x1b[0m", 40 + i),
-                "on {name}"
-            );
-        }
-        assert_eq!(colorize("foo", "on bright black"), "\x1b[100mfoo\x1b[0m");
-    }
+        t.is(colorize("foo", "black"), "\x1b[30mfoo\x1b[0m", "black              -> ^[[30m");
+        t.is(colorize("foo", "red"), "\x1b[31mfoo\x1b[0m", "red                -> ^[[31m");
+        t.is(colorize("foo", "green"), "\x1b[32mfoo\x1b[0m", "green              -> ^[[32m");
+        t.is(colorize("foo", "yellow"), "\x1b[33mfoo\x1b[0m", "yellow             -> ^[[33m");
+        t.is(colorize("foo", "blue"), "\x1b[34mfoo\x1b[0m", "blue               -> ^[[34m");
+        t.is(colorize("foo", "magenta"), "\x1b[35mfoo\x1b[0m", "magenta            -> ^[[35m");
+        t.is(colorize("foo", "cyan"), "\x1b[36mfoo\x1b[0m", "cyan               -> ^[[36m");
+        t.is(colorize("foo", "white"), "\x1b[37mfoo\x1b[0m", "white              -> ^[[37m");
 
-    #[test]
-    fn bold_alone() {
-        assert_eq!(colorize("task", "bold"), "\x1b[1mtask\x1b[0m");
-        assert_eq!(c("bold").to_string(), "bold");
-    }
+        // 16-color backgrounds.
+        t.is(colorize("foo", "on bright black"), "\x1b[100mfoo\x1b[0m", "on bright black    -> ^[[100m");
 
-    #[test]
-    fn two_fifty_six_color_codes() {
+        t.is(colorize("foo", "on black"), "\x1b[40mfoo\x1b[0m", "on black           -> ^[[40m");
+        t.is(colorize("foo", "on red"), "\x1b[41mfoo\x1b[0m", "on red             -> ^[[41m");
+        t.is(colorize("foo", "on green"), "\x1b[42mfoo\x1b[0m", "on green           -> ^[[42m");
+        t.is(colorize("foo", "on yellow"), "\x1b[43mfoo\x1b[0m", "on yellow          -> ^[[43m");
+        t.is(colorize("foo", "on blue"), "\x1b[44mfoo\x1b[0m", "on blue            -> ^[[44m");
+        t.is(colorize("foo", "on magenta"), "\x1b[45mfoo\x1b[0m", "on magenta         -> ^[[45m");
+        t.is(colorize("foo", "on cyan"), "\x1b[46mfoo\x1b[0m", "on cyan            -> ^[[46m");
+        t.is(colorize("foo", "on white"), "\x1b[47mfoo\x1b[0m", "on white           -> ^[[47m");
+
+        // 256-color, basic colors.
         for i in 0..256 {
-            assert_eq!(colorize("foo", &format!("color{i}")), format!("\x1b[38;5;{i}mfoo\x1b[0m"));
-            assert_eq!(colorize("foo", &format!("on color{i}")), format!("\x1b[48;5;{i}mfoo\x1b[0m"));
+            let color = format!("color{i}");
+            let codes = format!("\x1b[38;5;{i}mfoo\x1b[0m");
+            let description = format!("\x1b[38;5;{i}mfoo\x1b[0m: color{i} -> ^[[38;5;{i}m");
+
+            t.is(colorize("foo", &color), codes, description);
+        }
+
+        for i in 0..256 {
+            let color = format!("on color{i}");
+            let codes = format!("\x1b[48;5;{i}mfoo\x1b[0m");
+            let description = format!("\x1b[48;5;{i}mfoo\x1b[0m: on color{i} -> ^[[48;5;{i}m");
+
+            t.is(colorize("foo", &color), codes, description);
+        }
+
+        // RGB Color Cube.
+        for r in 0..6 {
+            for g in 0..6 {
+                for b in 0..6 {
+                    let code = 16 + (r * 36 + g * 6 + b);
+                    let color = format!("rgb{r}{g}{b}");
+                    let codes = format!("\x1b[38;5;{code}mfoo\x1b[0m");
+                    let description = format!("\x1b[38;5;{code}mfoo\x1b[0m: rgb{r}{g}{b} -> ^[[38;5;{code}m");
+
+                    t.is(colorize("foo", &color), codes, description);
+                }
+            }
         }
 
         for r in 0..6 {
             for g in 0..6 {
                 for b in 0..6 {
                     let code = 16 + (r * 36 + g * 6 + b);
-                    assert_eq!(
-                        colorize("foo", &format!("rgb{r}{g}{b}")),
-                        format!("\x1b[38;5;{code}mfoo\x1b[0m")
-                    );
-                    assert_eq!(
-                        colorize("foo", &format!("on rgb{r}{g}{b}")),
-                        format!("\x1b[48;5;{code}mfoo\x1b[0m")
-                    );
+                    let color = format!("on rgb{r}{g}{b}");
+                    let codes = format!("\x1b[48;5;{code}mfoo\x1b[0m");
+                    let description = format!("\x1b[48;5;{code}mfoo\x1b[0m: on rgb{r}{g}{b} -> ^[[48;5;{code}m");
+
+                    t.is(colorize("foo", &color), codes, description);
                 }
             }
         }
 
+        // 256-color, grays.
         // grey == gray.
-        assert_eq!(colorize("foo", "grey0"), "\x1b[38;5;232mfoo\x1b[0m");
+        t.is(colorize("foo", "grey0"), "\x1b[38;5;232mfoo\x1b[0m", "\x1b[38;5;232mfoo\x1b[0m: grey0 -> ^[[38;5;232m");
+
         for i in 0..24 {
-            assert_eq!(colorize("foo", &format!("gray{i}")), format!("\x1b[38;5;{}mfoo\x1b[0m", i + 232));
-            assert_eq!(colorize("foo", &format!("on gray{i}")), format!("\x1b[48;5;{}mfoo\x1b[0m", i + 232));
+            let color = format!("gray{i}");
+            let codes = format!("\x1b[38;5;{}mfoo\x1b[0m", i + 232);
+            let description = format!("\x1b[38;5;{}mfoo\x1b[0m: gray{} -> ^[[38;5;{}m", i + 232, i, i + 232);
+
+            t.is(colorize("foo", &color), codes, description);
         }
+
+        for i in 0..24 {
+            let color = format!("on gray{i}");
+            let codes = format!("\x1b[48;5;{}mfoo\x1b[0m", i + 232);
+            let description = format!("\x1b[48;5;{}mfoo\x1b[0m: on gray{} -> ^[[48;5;{}m", i + 232, i, i + 232);
+
+            t.is(colorize("foo", &color), codes, description);
+        }
+
+        // 24-bit color
+        t.is(
+            colorize("foo", "0x0a1b2c"),
+            "\x1b[38;2;10;27;44mfoo\x1b[0m",
+            "\x1b[38;2;10;27;44mfoo\x1b[0m: 0x0a1b2c               -> ^[[38;2;10;27;44m",
+        );
+        t.is(
+            colorize("foo", "0x0a1b2c on color127"),
+            "\x1b[38;2;10;27;44;48;2;126;0;126mfoo\x1b[0m",
+            "\x1b[38;2;10;27;44;48;2;126;0;126mfoo\x1b[0m: 0x0a1b2c on color127   -> ^[[38;2;10;27;44;48;2;126;0;126m",
+        );
+        t.is(
+            colorize("foo", "red on 0x0a1b2c"),
+            "\x1b[38;2;128;0;0;48;2;10;27;44mfoo\x1b[0m",
+            "\x1b[38;2;128;0;0;48;2;10;27;44mfoo\x1b[0m: red on 0x0a1b2c        -> ^[[38;2;128;0;0;48;2;10;27;44m",
+        );
+        t.is(
+            colorize("foo", "bold red on 0x0a1b2c"),
+            "\x1b[1;38;2;128;0;0;48;2;10;27;44mfoo\x1b[0m",
+            "\x1b[1;38;2;128;0;0;48;2;10;27;44mfoo\x1b[0m: bold on 0x0a1b2c       -> ^[[1;38;2;255;0;0;48;2;10;27;44m",
+        );
+        t.is(
+            colorize("foo", "0x0a1b2c on bright red"),
+            "\x1b[38;2;10;27;44;48;2;255;0;0mfoo\x1b[0m",
+            "\x1b[38;2;10;27;44;48;2;255;0;0mfoo\x1b[0m: 0x0a1b2c on bright red -> ^[[38;2;10;27;44;48;2;255;0;0m",
+        );
+        t.is(
+            colorize("foo", "0x010101 on grey0"),
+            "\x1b[38;2;1;1;1;48;2;10;10;10mfoo\x1b[0m",
+            "\x1b[38;2;1;1;1;48;2;10;10;10mfoo\x1b[0m: 0x010101 on grey0      -> ^[[38;2;1;1;1;48;2;10;10;10m",
+        );
+        t.is(
+            colorize("foo", "0x101010 on grey23"),
+            "\x1b[38;2;16;16;16;48;2;240;240;240mfoo\x1b[0m",
+            "\x1b[38;2;16;16;16;48;2;240;240;240mfoo\x1b[0m: 0x101010 on grey23     -> ^[[38;2;16;16;16;48;2;240;240;240m",
+        );
+
+        // std::string Color::strip (const std::string&);
+        t.is(Color::strip(""), "", "Color::strip '' -> ''");
+        t.is(Color::strip("foo"), "foo", "Color::strip 'foo' -> 'foo'");
+        t.is(Color::strip("f\x1b[1mo\x1b[0mo"), "foo", "Color::strip 'f<b>o</b>o' -> 'foo'");
+
+        // std::string Color::code () const;
+        t.is(
+            color("rgb012 on bright yellow").code(),
+            "\x1b[38;5;24m\x1b[48;5;11m",
+            "Color::code 'rgb0123 on bright yellow' --> ^[[38;5;24m^[[48;5;11m",
+        );
+        t.is(color("0x0F1E2D").code(), "\x1b[38;2;15;30;45m", "Color::code '0x0F1E2D' --> ^[[38;2;15;30;45m");
+
+        // std::string Color::end () const;
+        t.is(color("red").end(), "\x1b[0m", "Color::end --> ^[[0m");
     }
 
     #[test]
-    fn twenty_four_bit_codes() {
-        assert_eq!(colorize("foo", "0x0a1b2c"), "\x1b[38;2;10;27;44mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "0x0a1b2c on color127"), "\x1b[38;2;10;27;44;48;2;126;0;126mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "red on 0x0a1b2c"), "\x1b[38;2;128;0;0;48;2;10;27;44mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "bold red on 0x0a1b2c"), "\x1b[1;38;2;128;0;0;48;2;10;27;44mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "0x0a1b2c on bright red"), "\x1b[38;2;10;27;44;48;2;255;0;0mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "0x010101 on grey0"), "\x1b[38;2;1;1;1;48;2;10;10;10mfoo\x1b[0m");
-        assert_eq!(colorize("foo", "0x101010 on grey23"), "\x1b[38;2;16;16;16;48;2;240;240;240mfoo\x1b[0m");
+    fn color_t_cpp() {
+        let mut t = UnitTest::new();
+        color_t(&mut t);
+        assert!(
+            t.failures.is_empty(),
+            "{} of {} assertions failed:\n{}",
+            t.failures.len(),
+            t.counter,
+            t.failures.join("\n")
+        );
+        assert_eq!(t.counter, COLOR_T_ASSERTIONS, "number of assertions executed");
+    }
+
+    // Rust-only tests below (not part of color.t.cpp).
+
+    #[test]
+    fn bold_alone() {
+        assert_eq!(colorize("task", "bold"), "\x1b[1mtask\x1b[0m");
+        assert_eq!(color("bold").to_string(), "bold");
+        assert_eq!(color("bold").code(), "\x1b[1m");
     }
 
     #[test]
-    fn strip() {
-        assert_eq!(Color::strip(""), "");
-        assert_eq!(Color::strip("foo"), "foo");
-        assert_eq!(Color::strip("f\x1b[1mo\x1b[0mo"), "foo");
+    fn attribute_only_and_inverse() {
+        assert_eq!(colorize("x", "inverse"), "\x1b[7mx\x1b[0m");
+        assert_eq!(colorize("x", "bold underline inverse red on bright green"), "\x1b[1;4;7;31;102mx\x1b[0m");
+        assert_eq!(color("bold underline inverse red on bright green").code(), "\x1b[1;4;7;31;102m");
+        assert_eq!(color("bold underline inverse red on bright green").to_string(), "bold underline inverse red on bright green");
+        // "bright" without a background: C++ emits an empty SGR sequence.
+        assert_eq!(colorize("x", "bright"), "\x1b[mx\x1b[0m");
+        assert_eq!(color("bright").to_string(), "");
+        // Bold is not emitted by code () in 256/24-bit mode.
+        assert_eq!(color("bold underline color3").code(), "\x1b[4m\x1b[38;5;3m");
+        assert_eq!(color("inverse 0x010203 on 0x040506").code(), "\x1b[7m\x1b[38;2;1;2;3m\x1b[48;2;4;5;6m");
+        assert_eq!(color("0x0a1b2c on 0xFFFFFF").to_string(), "0x0a1b2c on 0xffffff");
+        assert_eq!(color("  RED   On  Blue ").to_string(), "red on blue");
+        assert_eq!(color("none").to_int(), 0);
     }
 
     #[test]
-    fn code_and_end() {
-        assert_eq!(c("rgb012 on bright yellow").code(), "\x1b[38;5;24m\x1b[48;5;11m");
-        assert_eq!(c("0x0F1E2D").code(), "\x1b[38;2;15;30;45m");
-        assert_eq!(c("red").end(), "\x1b[0m");
-        assert_eq!(Color::new().end(), "");
-        assert_eq!(Color::new().code(), "");
+    fn strtol_quirks() {
+        // strtol stops at the first non-digit and returns 0 for no digits.
+        assert_eq!(color("grey").to_string(), "color232");
+        assert_eq!(color("grayx").to_string(), "color232");
+        assert_eq!(color("color").to_string(), "color0");
+        assert_eq!(color("rgb+12").to_string(), "color24");
+        assert_eq!(color("0x").to_string(), "0x000000");
     }
 
     #[test]
     fn unrecognized() {
-        for bad in ["purple", "gray24", "rgb600", "rgb12", "color256", "0x1000000"] {
+        for bad in ["purple", "gray24", "gray-1", "rgb600", "rgb12", "rgb1234", "color256", "color-1", "0x1000000"] {
             let err = Color::parse(bad).unwrap_err();
             assert_eq!(err.to_string(), format!("The color '{bad}' is not recognized."));
         }
         assert_eq!(Color::parse("Purple").unwrap_err().to_string(), "The color 'purple' is not recognized.");
+        assert_eq!(Color::colorize_with("x", "red on mauve").unwrap_err().to_string(), "The color 'mauve' is not recognized.");
     }
 
     #[test]
     fn value_constructor_masks() {
         assert_eq!(Color::from_value(0).value(), 0);
         assert_eq!(Color::from_value(COLOR_HASFG | 2 | COLOR_24BIT_BG).value(), COLOR_HASFG | 2);
+        assert_eq!(
+            Color::from_value(COLOR_24BIT | COLOR_HASFG | COLOR_256 | 0x123456).value(),
+            COLOR_24BIT | COLOR_HASFG | 0x123456
+        );
         assert!(!Color::default().nontrivial());
-        assert_eq!(Color::from_ids(ColorId::Red, ColorId::Blue, true, true, true).to_string(), "bold underline red on bright blue");
+        assert_eq!(
+            Color::from_ids(ColorId::Red, ColorId::Blue, true, true, true).to_string(),
+            "bold underline red on bright blue"
+        );
+        assert_eq!(Color::from_ids(ColorId::Nocolor, ColorId::Nocolor, true, false, false).code(), "\x1b[4m");
+    }
+
+    #[test]
+    fn equality_and_blend_short_circuit() {
+        // operator== compares the low 32 bits only.
+        assert_eq!(color("0x000001 on 0x00ff00"), color("0x000001 on 0x0000ff"));
+        assert_ne!(color("0x000001"), color("0x000001 on 0x0000ff"));
+        let mut c = color("red");
+        c.blend(&Color::new());
+        assert_eq!(c.to_string(), "red");
+        c.blend(&color("red"));
+        assert_eq!(c.to_string(), "red");
+    }
+
+    #[test]
+    fn upgrades_and_truecolor() {
+        let mut c = color("red on bright blue");
+        c.upgrade();
+        assert_eq!(c.to_string(), "color1 on color12");
+        c.upgrade24b();
+        // As in C++: the 256-color background index (12 = 0x0c) is left in
+        // bits 8-15, inside the 24-bit foreground.
+        assert_eq!(c.to_string(), "0x800c00 on 0x0000ff");
+        assert_eq!(Color::index2truecolor(1), 0x80_0000);
+        assert_eq!(Color::index2truecolor(8), 0);
+        assert_eq!(Color::index2truecolor(15), 0xFF_FFFF);
+        assert_eq!(Color::index2truecolor(16), 0);
+        assert_eq!(Color::index2truecolor(231), 0xD2_D2D2);
+        assert_eq!(Color::index2truecolor(255), 0xF0_F0F0);
+    }
+
+    #[test]
+    fn colorize_into_appends() {
+        let mut out = String::from(">");
+        color("red").colorize_into(&mut out, "a");
+        Color::new().colorize_into(&mut out, "b");
+        assert_eq!(out, ">\x1b[31ma\x1b[0mb");
+    }
+
+    #[test]
+    fn conversions() {
+        let c: Color = "bold red".parse().unwrap();
+        assert_eq!(String::from(c), "bold red");
+        assert_eq!(Color::try_from("on blue").unwrap().to_string(), "on blue");
+        assert_eq!(Color::try_from(&String::from("green")).unwrap().to_string(), "green");
+        assert!("nope".parse::<Color>().is_err());
+        assert_eq!(Color::from(ColorId::Red), Color::from_id(ColorId::Red));
+        assert_eq!(Color::from(COLOR_HASFG | 3).to_string(), "green");
+        assert_eq!(i32::from(color("red")), (COLOR_HASFG | 2) as i32);
     }
 }

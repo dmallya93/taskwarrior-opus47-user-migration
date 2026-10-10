@@ -3,13 +3,17 @@
 //! Translated from GothenburgBitFactory/libshared at commit d899eba6.
 //!
 //! Ported in full ahead of milestone 3 (Color/Table/Variant/Eval), because
-//! `version` (milestone 1) renders two one-column tables byte-exactly. Every
-//! member of the C++ class is here; the `libshared test/table.t.cpp` cases
-//! are ported as unit tests below.
+//! `version` (milestone 1) renders two one-column tables byte-exactly, and
+//! audited line by line against the C++ in milestone 3. Every member of the
+//! C++ class is here. `libshared test/table.t.cpp` is ported, assertion-count
+//! checked, in `table_tests.rs`, together with byte-exact comparisons against
+//! the output of the compiled C++ `Table::render`.
 //!
-//! Deviation: C++ `render` reads past the end of a column's header lines
-//! when headers wrap to different heights (undefined behaviour); here the
-//! missing line renders as blank header padding.
+//! The C++ overloads map to: `add (col)` -> [`Table::add`], `add (col,
+//! alignLeft, wrap)` -> [`Table::add_with`]; `set (row, col, string[,
+//! color])` -> [`Table::set`] / [`Table::set_colored`], `set (row, col,
+//! int[, color])` -> [`Table::set_int`] / [`Table::set_int_colored`],
+//! `set (row, col, color)` -> [`Table::set_color`].
 
 use crate::shared::color::Color;
 use crate::shared::format::{left_justify, obfuscate_text, right_justify};
@@ -241,6 +245,15 @@ impl Table {
     }
 
     /// `Table::render`.
+    ///
+    /// Deviation: two inputs are undefined behaviour in the C++, and render
+    /// deterministically here:
+    /// - headers wrapping to different heights: the C++ reads
+    ///   `headers[c][i]` past the end of the shorter column's lines; here the
+    ///   missing line renders as blank (header-colored) padding;
+    /// - `overage == 0` with every minimal width 0 but some ideal width
+    ///   non-zero: the C++ leaves `widths` empty and indexes it; here the
+    ///   minimal widths (all 0) are used.
     // The loops index several parallel per-column vectors, as the C++ does.
     #[allow(clippy::needless_range_loop)]
     pub fn render(&mut self) -> String {
@@ -325,8 +338,9 @@ impl Table {
             }
             widths
         } else {
-            // C++ leaves `widths` empty here (overage == 0 == sum_minimal) and
-            // then indexes it; every minimal width is 0, so use those.
+            // Deviation (see above): C++ leaves `widths` empty here
+            // (overage == 0 == sum_minimal) and then indexes it; every minimal
+            // width is 0, so use those.
             minimal.clone()
         };
 
@@ -370,7 +384,7 @@ impl Table {
                 if headers[c].len() < max_lines - i {
                     out.push_str(&blank);
                 } else {
-                    // See the module documentation for this deviation.
+                    // Deviation (see above): C++ reads past the end here.
                     out.push_str(headers[c].get(i).unwrap_or(&blank));
                 }
             }
@@ -524,175 +538,5 @@ impl Table {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Port of libshared `test/table.t.cpp`, plus exact-output checks.
-    use super::*;
-    use crate::shared::color::ColorId;
-
-    fn c(spec: &str) -> Color {
-        Color::parse(spec).unwrap()
-    }
-
-    #[test]
-    fn string_grid_lines() {
-        // Create colors.
-        let header_color = Color::from_ids(ColorId::Yellow, ColorId::Nocolor, false, false, false);
-        let odd_color = c("on gray1");
-        let even_color = c("on gray0");
-
-        // Now render a string-only grid.
-        let single_cell = c("bold white on red");
-
-        let mut t1 = Table::new();
-        t1.width(80);
-        t1.left_margin(4);
-        t1.extra_padding(0);
-        t1.intra_padding(1);
-        t1.color_header(header_color);
-        t1.color_odd(odd_color);
-        t1.color_even(even_color);
-        t1.intra_color_odd(odd_color);
-        t1.intra_color_even(even_color);
-
-        t1.add_with("Header1", true, true);
-        t1.add_with("Header2", true, true);
-        t1.add_with("Header3", false, true);
-
-        let row = t1.add_row();
-        t1.set(row, 0, "top left");
-        t1.set(row, 1, "top center");
-        t1.set(row, 2, "top right");
-
-        let row = t1.add_row();
-        t1.set_colored(row, 0, "bottom left", single_cell);
-        t1.set(
-            row,
-            1,
-            "bottom center, containing sufficient text that \
-             wrapping will occur because it exceeds all \
-             reasonable values for default width.  Even in a \
-             very wide terminal window.  Just look at the \
-             lengths we must go to, to get passing unit tests \
-             and not flaky tests.",
-        );
-        t1.set(row, 2, "bottom right");
-
-        let out = t1.render();
-        assert!(t1.lines() > 4, "Table::lines > 4\n{out}");
-    }
-
-    #[test]
-    fn with_color_toggle() {
-        let single_cell = c("bold white on red");
-
-        // Test color behavior - with color enabled (default)
-        let mut t3 = Table::new();
-        t3.width(80);
-        t3.add_with("Header", true, true);
-        let row = t3.add_row();
-        t3.set_colored(row, 0, "cell with color", single_cell);
-        assert!(t3.render().contains("\x1b["), "Colored output contains ANSI escape codes");
-
-        // Test color behavior - with color disabled
-        let mut t4 = Table::new();
-        t4.width(80);
-        t4.with_color(false); // Disable color
-        t4.add_with("Header", true, true);
-        let row = t4.add_row();
-        t4.set_colored(row, 0, "cell without color", single_cell);
-        let out = t4.render();
-        assert!(!out.contains("\x1b["), "Uncolored output does not contain ANSI escape codes");
-        assert_eq!(out, "Header\n------------------\ncell without color\n");
-    }
-
-    #[test]
-    fn chessboard() {
-        let mut t2 = Table::new();
-        t2.width(32);
-        t2.left_margin(4);
-        t2.extra_padding(0);
-        t2.intra_padding(0);
-
-        for _ in 0..8 {
-            t2.add_with("", true, true);
-        }
-
-        let blue = c("on bright blue");
-        let white = c("on bright white");
-
-        for row in 0..8 {
-            t2.add_row();
-
-            for col in 0..8 {
-                if (row + col) % 2 != 0 {
-                    t2.set_colored(row, col, "  ", blue);
-                } else {
-                    t2.set_colored(row, col, "  ", white);
-                }
-            }
-        }
-
-        let out = t2.render();
-        let lines: Vec<&str> = out.lines().collect();
-        // Empty headers render no header line; one line per row.
-        assert_eq!(lines.len(), 8);
-        let w = "\x1b[107m  \x1b[0m";
-        let b = "\x1b[104m  \x1b[0m";
-        assert_eq!(lines[0], format!("    {w}{b}{w}{b}{w}{b}{w}{b}"));
-        assert_eq!(lines[1], format!("    {b}{w}{b}{w}{b}{w}{b}{w}"));
-    }
-
-    #[test]
-    fn single_empty_header_column_wraps_and_trims() {
-        let mut t = Table::new();
-        t.width(20);
-        t.add("");
-        let row = t.add_row();
-        t.set(row, 0, "one two three four five six seven");
-        assert_eq!(t.render(), "one two three four\nfive six seven\n");
-        assert_eq!(t.lines(), 2);
-        assert_eq!(t.rows(), 1);
-    }
-
-    #[test]
-    fn narrow_width_uses_minimal() {
-        let mut t = Table::new();
-        t.width(0);
-        t.add("");
-        let row = t.add_row();
-        t.set(row, 0, "aa bbbb c");
-        assert_eq!(t.render(), "aa\nbbbb\nc\n");
-    }
-
-    #[test]
-    fn alignment_padding_and_truncation() {
-        let mut t = Table::new();
-        t.width(80);
-        t.left_margin(2);
-        t.extra_padding(1);
-        t.add_with("Name", true, true);
-        t.add_with("Count", false, true);
-        for (name, count) in [("a", 1), ("bb", 22), ("ccc", 333)] {
-            let row = t.add_row();
-            t.set(row, 0, name);
-            t.set_int(row, 1, count);
-        }
-        assert_eq!(t.render(), "   Name Count\n   a        1\n   bb      22\n   ccc    333\n");
-
-        t.truncate_rows(2);
-        assert_eq!(t.render(), "   Name Count\n   a        1\n   bb      22\n");
-        t.truncate_lines(2);
-        assert_eq!(t.render(), "   Name Count\n   a        1\n");
-    }
-
-    #[test]
-    fn row_oddness() {
-        let mut t = Table::new();
-        t.add("x");
-        assert_eq!(t.add_row(), 0);
-        assert_eq!(t.add_row_even(), 1);
-        assert_eq!(t.add_row_odd(), 2);
-        assert_eq!(t.add_row(), 3);
-        assert_eq!(t.oddness, [true, false, true, false]);
-    }
-}
+#[path = "table_tests.rs"]
+mod tests;

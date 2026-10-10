@@ -37,7 +37,8 @@
 //! - **Milestone 3** (Color/Table/Variant/Eval): `Variant::*` statics
 //!   (including the `Variant::dateFormat` half of `Lexer::dateFormat =
 //!   Variant::dateFormat`),
-//!   `Eval::getOperators` / `getBinaryOperators` entities, and the
+//!   `Eval::getOperators` / `getBinaryOperators` entities (done, via
+//!   [`Eval::get_operators`] / [`Eval::get_binary_operators`]), and the
 //!   `colorize*` functions (identity until the colour rules exist; libshared
 //!   `Color` and `Table` themselves are already ported).
 //! - **Milestone 4** (Task model and TDB2): `Task::*` statics and urgency
@@ -72,6 +73,7 @@ use crate::cli2::{self, Cli2};
 use crate::columns::column::Column;
 use crate::commands::command::{self, Registry};
 use crate::error::{Result, TwError};
+use crate::eval::Eval;
 use crate::hooks::Hooks;
 use crate::lexer::Lexer;
 use crate::recur;
@@ -86,6 +88,7 @@ use crate::shared::timer::Timer;
 use crate::task::Task;
 use crate::tdb2::Tdb2;
 use crate::version::{Version, COMMIT, PACKAGE_STRING};
+use crate::variant::Variant;
 
 /// C++ `std::map<std::string, Column*>` as held by `Context::columns`.
 pub type ColumnRegistry = BTreeMap<String, Rc<dyn Column>>;
@@ -839,8 +842,13 @@ impl Context {
             self.cli2.entity("modifier", modifier_name);
         }
 
-        // Milestone 3 hook: `Eval::getOperators ()` -> "operator" entities and
-        // `Eval::getBinaryOperators ()` -> "binary_operator" entities.
+        for op in Eval::get_operators() {
+            self.cli2.entity("operator", &op);
+        }
+
+        for op in Eval::get_binary_operators() {
+            self.cli2.entity("binary_operator", &op);
+        }
 
         ////////////////////////////////////////////////////////////////////////
         //
@@ -927,7 +935,8 @@ impl Context {
 
     /// The C++ `catch` clauses of `initialize` and `run`: queues the message
     /// and returns the status. `throw std::string` and `rust::Error` give 2,
-    /// `throw int` gives 4.
+    /// `throw int` gives 4, `catch (...)` (`std::runtime_error`, i.e.
+    /// [`TwError::Runtime`]) queues "Unknown error. Please report." and gives 3.
     ///
     /// Rust-only variants: `NotImplemented` (a stub command) is a message
     /// error like `throw std::string`; `Io` is reported like the libshared
@@ -941,6 +950,11 @@ impl Context {
             TwError::Message(_) | TwError::TaskChampion(_) | TwError::NotImplemented(_) | TwError::Io(_) => {
                 self.error(&err.to_string());
                 2
+            }
+            // catch (...): e.g. the std::runtime_error of an invalid regex.
+            TwError::Runtime(_) => {
+                self.error("Unknown error. Please report.");
+                3
             }
         }
     }
@@ -1373,12 +1387,14 @@ impl Context {
         // Milestone 4 hook: Task::defaultProject / defaultDue / defaultScheduled
         // from default.project / default.due / default.scheduled.
 
-        // Milestone 3/4 hooks: Task::searchCaseSensitive =
-        // Variant::searchCaseSensitive = search.case.sensitive; Task::regex =
-        // Variant::searchUsingRegex = regex.
-
+        // C++ `Task::searchCaseSensitive = Variant::searchCaseSensitive =
+        // search.case.sensitive`. Milestone 4 hook: the Task half.
+        Variant::set_search_case_sensitive(self.config.get_boolean("search.case.sensitive"));
+        // C++ `Task::regex = Variant::searchUsingRegex = regex`.
+        // Milestone 4 hook: the Task half.
+        Variant::set_search_using_regex(self.config.get_boolean("regex"));
         // C++ `Lexer::dateFormat = Variant::dateFormat = dateformat`.
-        // Milestone 3 hook: the Variant::dateFormat half.
+        Variant::set_date_format(&self.config.get("dateformat"));
         Lexer::set_date_format(&self.config.get("dateformat"));
 
         let week_start = Datetime::day_of_week_str(&self.config.get("weekstart"));
@@ -1820,6 +1836,11 @@ mod tests {
         add_cmd(&mut context, "status", Behaviour::Fail(|| TwError::Status(9)));
         add_cmd(
             &mut context,
+            "runtime",
+            Behaviour::Fail(|| TwError::Runtime("Parenthesis is not closed.".to_string())),
+        );
+        add_cmd(
+            &mut context,
             "stub",
             Behaviour::Fail(|| TwError::NotImplemented("stub".to_string())),
         );
@@ -2206,6 +2227,11 @@ mod tests {
         init(&mut context, &["task", "stub"]);
         let (rc, _, stderr) = run(&mut context);
         assert_eq!((rc, stderr.as_str()), (2, "Command 'stub' is not yet implemented.\n"));
+
+        let mut context = self::context();
+        init(&mut context, &["task", "runtime"]);
+        let (rc, _, stderr) = run(&mut context);
+        assert_eq!((rc, stderr.as_str()), (3, "Unknown error. Please report.\n"));
     }
 
     #[test]
@@ -2264,6 +2290,21 @@ mod tests {
     }
 
     #[test]
+    fn initialize_registers_operator_entities() {
+        let f = fixture();
+        write(&format!("{}/.taskrc", f.home), "");
+        let mut context = context();
+        let (status, _, _) = init(&mut context, &["task", "alpha"]);
+        assert_eq!(status, 0);
+        assert_eq!(context.cli2.entities["operator"], Eval::get_operators());
+        assert_eq!(context.cli2.entities["operator"].len(), 26);
+        assert_eq!(context.cli2.entities["binary_operator"], Eval::get_binary_operators());
+        assert_eq!(context.cli2.entities["binary_operator"].len(), 21);
+        assert!(context.cli2.entities["binary_operator"].iter().any(|o| o == "_hastag_"));
+        assert!(!context.cli2.entities["binary_operator"].iter().any(|o| o == "_neg_"));
+    }
+
+    #[test]
     fn static_initialization_sets_match_length() {
         let f = fixture();
         write(&format!("{}/.taskrc", f.home), "abbreviation.minimum=4\n");
@@ -2285,6 +2326,9 @@ mod tests {
             cli2::set_minimum_match_length(3);
             Lexer::set_minimum_match_length(3);
             Lexer::set_date_format("");
+            Variant::set_search_case_sensitive(true);
+            Variant::set_search_using_regex(true);
+            Variant::set_date_format("");
             Datetime::set_weekstart(1);
             Datetime::set_iso_enabled(true);
             Datetime::set_standalone_date_enabled(true);
@@ -2299,13 +2343,16 @@ mod tests {
         let _statics = StaticsGuard;
         write(
             &format!("{}/.taskrc", f.home),
-            "abbreviation.minimum=5\ndateformat=D.M.Y\nweekstart=Monday\ndate.iso=0\n",
+            "abbreviation.minimum=5\ndateformat=D.M.Y\nweekstart=Monday\ndate.iso=0\nsearch.case.sensitive=0\nregex=0\n",
         );
         let mut configured = context();
         let (status, _, _) = init(&mut configured, &["task", "alpha"]);
         assert_eq!(status, 0);
         assert_eq!(Lexer::minimum_match_length(), 5);
         assert_eq!(Lexer::date_format(), "D.M.Y");
+        assert_eq!(Variant::date_format(), "D.M.Y");
+        assert!(!Variant::search_case_sensitive());
+        assert!(!Variant::search_using_regex());
         assert_eq!(Datetime::weekstart(), 1);
         assert!(!Datetime::iso_enabled());
         assert!(!Datetime::standalone_date_enabled());
@@ -2320,6 +2367,9 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(Lexer::minimum_match_length(), 2);
         assert_eq!(Lexer::date_format(), "Y-M-D");
+        assert_eq!(Variant::date_format(), "Y-M-D");
+        assert!(Variant::search_case_sensitive());
+        assert!(Variant::search_using_regex());
         assert_eq!(Datetime::weekstart(), 0);
         assert!(Datetime::iso_enabled());
         assert!(!Datetime::standalone_date_enabled());

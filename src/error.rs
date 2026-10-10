@@ -14,6 +14,11 @@ pub enum TwError {
     Message(String),
     /// `throw int`: an exit status with no message.
     Status(i32),
+    /// `throw std::runtime_error (what)` (libshared `RX::compile` rethrowing a
+    /// `std::regex_error`): no Taskwarrior `catch` clause names it, so it
+    /// reaches `catch (...)` ("Unknown error. Please report."). Carries
+    /// `what ()`, which Taskwarrior never prints.
+    Runtime(String),
     /// An I/O failure.
     Io(std::io::Error),
     /// An error reported by the taskchampion replica.
@@ -28,7 +33,7 @@ pub type Result<T> = std::result::Result<T, TwError>;
 impl fmt::Display for TwError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TwError::Message(message) => f.write_str(message),
+            TwError::Message(message) | TwError::Runtime(message) => f.write_str(message),
             TwError::Status(_) => Ok(()),
             TwError::Io(err) => write!(f, "{err}"),
             TwError::TaskChampion(err) => write!(f, "{err}"),
@@ -44,7 +49,7 @@ impl std::error::Error for TwError {
         match self {
             TwError::Io(err) => Some(err),
             TwError::TaskChampion(err) => Some(err),
-            TwError::Message(_) | TwError::Status(_) | TwError::NotImplemented(_) => None,
+            TwError::Message(_) | TwError::Status(_) | TwError::Runtime(_) | TwError::NotImplemented(_) => None,
         }
     }
 }
@@ -85,6 +90,13 @@ mod tests {
     #[test]
     fn display_status_is_empty() {
         assert_eq!(TwError::Status(2).to_string(), "");
+    }
+
+    #[test]
+    fn display_runtime_is_what() {
+        let err = TwError::Runtime("Parenthesis is not closed.".into());
+        assert_eq!(err.to_string(), "Parenthesis is not closed.");
+        assert!(std::error::Error::source(&err).is_none());
     }
 
     #[test]
