@@ -951,7 +951,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 21] = [
+    const PORTED: [&str; 22] = [
         "_config",
         "_get",
         "_ids",
@@ -970,6 +970,7 @@ mod tests {
         "count",
         "export",
         "ids",
+        "information",
         "log",
         "uuids",
         "version",
@@ -1209,6 +1210,7 @@ mod tests {
                     | "_zshuuids"
                     | "_unique"
                     | "_urgency"
+                    | "information"
                     | "_zshattributes"
             ) {
                 // These read the replica (or, for `_zshattributes`, the column

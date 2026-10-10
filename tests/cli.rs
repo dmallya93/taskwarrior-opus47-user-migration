@@ -767,16 +767,16 @@ fn id_without_command_assumes_information() {
     let output = env.task(&["rc.verbose=default", "1"]);
     assert_eq!(
         stderr(&output),
-        "No command specified - assuming 'information'.\nCommand 'information' is not yet implemented.\n"
+        "No command specified - assuming 'information'.\n"
     );
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(1));
 
     // The header needs the 'default' verbosity token; a UUID also counts.
     for args in [&["1", "3"][..], &["a1b2c3d4-0000-4000-8000-000000000000"][..]] {
         let output = env.task(args);
         assert_eq!(
             stderr(&output),
-            env.override_headers() + "Command 'information' is not yet implemented.\n",
+            env.override_headers() + "No matches.\n",
             "{args:?}"
         );
     }
@@ -1500,4 +1500,39 @@ fn urgency_per_task_and_no_match() {
     let output = env.task(&["99", "_urgency"]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+}
+
+#[test]
+fn information_tables_and_no_match() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "one", "+x", "project:P", "due:2030-01-01"]).2, 0);
+    assert_eq!(quiet(&env, &["add", "two", "depends:1"]).2, 0);
+    let (out, err, rc) = quiet(&env, &["rc.dateformat.info=Y-M-D", "1", "information"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Name                  Value");
+    assert!(lines[1].starts_with("--------------------- ---"), "{out}");
+    assert_eq!(lines[2], "ID                    1");
+    assert_eq!(lines[3], "Description           one");
+    assert_eq!(lines[4], "Status                Pending");
+    assert_eq!(lines[5], "Project               P");
+    assert_eq!(lines[6], "This task is blocking 2 two");
+    assert!(lines.contains(&"Due                   2030-01-01"), "{out}");
+    assert!(lines.contains(&"Tags                  x"), "{out}");
+    assert!(lines.contains(&"Virtual tags          BLOCKING PENDING PROJECT READY TAGGED UNBLOCKED"), "{out}");
+    // Urgency breakdown and journal.
+    assert!(lines.contains(&"    project       1 *    1 =      1"), "{out}");
+    assert!(lines.contains(&"    blocking      1 *    8 =      8"), "{out}");
+    assert!(lines.contains(&"                               12.2"), "{out}");
+    assert!(out.contains("Date       Modification\n---------- "), "{out}");
+    assert!(out.contains("Description set to 'one'."), "{out}");
+    assert!(out.contains("Due set to '2030-01-01'."), "{out}");
+    assert!(out.contains("Tag 'x' added."), "{out}");
+    // rc.journal.info=off drops the journal table.
+    let (out, _, _) = quiet(&env, &["rc.journal.info=off", "1", "information"]);
+    assert!(!out.contains("Modification"), "{out}");
+    // Abbreviated keyword; nothing selected: footnote and exit status 1.
+    let output = env.task(&["rc.verbose=footnote", "99", "info"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), "No matches.\n".to_string()));
 }
