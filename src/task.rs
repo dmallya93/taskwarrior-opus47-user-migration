@@ -1817,7 +1817,9 @@ impl Task {
         // Tag- and project-specific coefficients.
         Task::with_coefficients(|coefficients| {
             for (key, &coefficient) in coefficients {
-                if coefficient.abs() <= EPSILON {
+                // C++ `if (fabs (var.second) > epsilon)`: a NaN coefficient
+                // (`strtod ("nan")`) is not greater, so it is skipped too.
+                if coefficient.is_nan() || coefficient.abs() <= EPSILON {
                     continue;
                 }
 
@@ -4379,6 +4381,27 @@ mod urgency_tests {
         let mut t = Task::new();
         t.set("due", "1");
         assert_eq!(user_terms(&t), 0.0);
+    }
+
+    #[test]
+    fn user_terms_skip_nan_coefficients() {
+        let _guard = CoefficientsGuard;
+        // C++ `fabs (NaN) > epsilon` is false, so a NaN coefficient (from
+        // `strtod ("nan")`) never contributes.
+        coefficients(&[
+            ("urgency.user.tag.x.coefficient", f32::NAN),
+            ("urgency.user.project.p.coefficient", f32::NAN),
+            ("urgency.user.keyword.k.coefficient", f32::NAN),
+            ("urgency.uda.u.coefficient", f32::NAN),
+            ("urgency.uda.v.coefficient", 2.0),
+        ]);
+        let mut t = Task::new();
+        t.add_tag("x");
+        t.set("project", "p");
+        t.set("description", "k");
+        t.set("u", "1");
+        t.set("v", "1");
+        assert_eq!(user_terms(&t), 2.0);
     }
 
     #[test]
