@@ -6,7 +6,11 @@
 //! typed getters and setters, the virtual-tag predicates, tags, annotations,
 //! dependency attributes, `encode`/`decode`, and `parseTC` (the
 //! `Task (rust::Box<tc::TaskData>)` constructor) over the native
-//! [`taskchampion::TaskData`].
+//! [`taskchampion::TaskData`], urgency ([`Task::urgency`], every coefficient
+//! term, the user tag/project/keyword/UDA coefficients and
+//! `urgency.inherit`, in C++ `float`/`double` evaluation order), and the
+//! later-milestone stubs [`Task::modify`] / [`Task::substitute`] (milestone
+//! 5) and [`Task::diff`] (milestone 7).
 //!
 //! API mapping:
 //! * C++ statics are thread-local getter/setter pairs on [`Task`]
@@ -1681,6 +1685,416 @@ impl Task {
     }
 }
 
+/// C++ `static const float epsilon = 0.000001;` (a double literal narrowed
+/// to `float`).
+const EPSILON: f32 = 0.000001_f64 as f32;
+
+/// C++ `std::max (a, b)` for floats: `(a < b) ? b : a` (keeps `a` when the
+/// comparison is false, e.g. with NaN), unlike [`f32::max`].
+fn cpp_max(a: f32, b: f32) -> f32 {
+    if a < b {
+        b
+    } else {
+        a
+    }
+}
+
+/// C++ `s.substr (pos, len)` for the urgency key parsing: `len` is a
+/// `size_t` that may have wrapped (e.g. `end - 21` when `end < 21`), so it is
+/// clamped to the rest of the string. Callers guarantee `pos <= s.len ()`
+/// and that `pos` / `pos + len` lie on character boundaries (they follow
+/// ASCII prefixes or the position of an ASCII `.`).
+fn cpp_substr(s: &str, pos: usize, len: usize) -> &str {
+    let rest = &s[pos..];
+    if len >= rest.len() {
+        rest
+    } else {
+        &rest[..len]
+    }
+}
+
+/// C++ `s.substr (pos, lit.size ()) == lit` for the urgency key prefixes,
+/// compared bytewise (as C++ does), so a multi-byte character straddling
+/// `pos + lit.len ()` cannot cause a slicing panic. Requires `pos <= s.len ()`.
+fn cpp_substr_is(s: &str, pos: usize, lit: &str) -> bool {
+    s.as_bytes()[pos..].starts_with(lit.as_bytes())
+}
+
+/// C++ `value += cond ? (float_term * float_coefficient) : 0.0;`: the
+/// conditional has type `double` (because of the `0.0` literal), so the sum
+/// is formed in double and narrowed back to `float`.
+fn add_term(value: f32, term: impl FnOnce() -> f32, coefficient: f32) -> f32 {
+    let addend: f64 = if coefficient.abs() > EPSILON { (term() * coefficient) as f64 } else { 0.0 };
+    (value as f64 + addend) as f32
+}
+
+impl Task {
+    ////////////////////////////////////////////////////////////////////////////
+    // Urgency.
+
+    /// C++ `float Task::urgency_c () const`.
+    ///
+    /// Urgency is defined as a polynomial, the value of which is calculated in
+    /// this function, according to:
+    ///
+    /// ```text
+    ///   U = A.t  + B.t  + C.t  ...
+    ///          a      b      c
+    ///
+    ///   U       = urgency
+    ///   A       = coefficient for term a
+    ///   t sub a = numeric scale from 0 -> 1, with 1 being the highest
+    ///             urgency, derived from one task attribute and mapped
+    ///             to the numeric scale
+    /// ```
+    ///
+    /// See rfc31-urgency.txt for full details. The arithmetic mirrors the C++
+    /// `float`/`double` promotions exactly, so results are bit-identical.
+    ///
+    /// `ctx` supplies `rc.urgency.inherit`, the environment for `hasTag`
+    /// (virtual tags in `urgency.user.tag.<TAG>.coefficient`) and the
+    /// replica for [`Task::urgency_inherit`].
+    ///
+    /// # Errors
+    /// Only from [`Task::urgency_inherit`] (replica access, or an invalid
+    /// status on a pending task where C++ `getStatus` throws).
+    pub fn urgency_c(&self, ctx: &mut Context) -> Result<f32> {
+        let mut value: f32 = 0.0;
+        value = add_term(value, || self.urgency_project(), Task::urgency_project_coefficient());
+        value = add_term(value, || self.urgency_active(), Task::urgency_active_coefficient());
+        value = add_term(value, || self.urgency_scheduled(), Task::urgency_scheduled_coefficient());
+        value = add_term(value, || self.urgency_waiting(), Task::urgency_waiting_coefficient());
+        value = add_term(value, || self.urgency_blocked(), Task::urgency_blocked_coefficient());
+        value = add_term(value, || self.urgency_annotations(), Task::urgency_annotations_coefficient());
+        value = add_term(value, || self.urgency_tags(), Task::urgency_tags_coefficient());
+        value = add_term(value, || self.urgency_due(), Task::urgency_due_coefficient());
+        value = add_term(value, || self.urgency_blocking(), Task::urgency_blocking_coefficient());
+        value = add_term(value, || self.urgency_age(), Task::urgency_age_coefficient());
+
+        value = self.urgency_user_terms(value, ctx);
+
+        if self.is_blocking && ctx.config.get_boolean("urgency.inherit") {
+            let prev = value;
+            value = cpp_max(value, self.urgency_inherit(ctx)?);
+
+            // This is a hackish way of making sure parent tasks are sorted above
+            // child tasks.  For reports that hide blocked tasks, this is not needed.
+            if prev <= value {
+                value = (value as f64 + 0.01) as f32;
+            }
+        }
+
+        Ok(value)
+    }
+
+    /// The tag-, project-, keyword- and UDA-specific coefficients of
+    /// `urgency_c`, added to `value` in `Task::coefficients` (sorted key)
+    /// order:
+    /// * `urgency.user.project.<project>.coefficient`: the project or any of
+    ///   its sub-projects (`<project>.`-prefixed);
+    /// * `urgency.user.tag.<tag>.coefficient`: `hasTag (<tag>)`, including
+    ///   virtual tags;
+    /// * `urgency.user.keyword.<keyword>.coefficient`: the description
+    ///   contains `<keyword>`;
+    /// * `urgency.uda.<name>.coefficient`: the attribute is present;
+    /// * `urgency.uda.<name>.<value>.coefficient`: the attribute equals
+    ///   `<value>`.
+    ///
+    /// `.coefficient` is found anywhere in the key (C++ `find`), and the
+    /// `substr` lengths wrap exactly as the C++ `size_t` arithmetic does.
+    fn urgency_user_terms(&self, mut value: f32, env: &mut dyn TaskEnv) -> f32 {
+        let task_project_name = self.get("project");
+        // Tag- and project-specific coefficients.
+        Task::with_coefficients(|coefficients| {
+            for (key, &coefficient) in coefficients {
+                if coefficient.abs() <= EPSILON {
+                    continue;
+                }
+
+                if key.starts_with("urgency.user.") {
+                    // urgency.user.project.<project>.coefficient
+                    if cpp_substr_is(key, 13, "project.") {
+                        if let Some(end) = key.find(".coefficient") {
+                            let project = cpp_substr(key, 21, end.wrapping_sub(21));
+
+                            if task_project_name == project
+                                || task_project_name.starts_with(&format!("{project}."))
+                            {
+                                value += coefficient;
+                            }
+                        }
+                    }
+
+                    // urgency.user.tag.<tag>.coefficient
+                    if cpp_substr_is(key, 13, "tag.") {
+                        if let Some(end) = key.find(".coefficient") {
+                            let tag = cpp_substr(key, 17, end.wrapping_sub(17));
+
+                            if self.has_tag(tag, env) {
+                                value += coefficient;
+                            }
+                        }
+                    }
+
+                    // urgency.user.keyword.<keyword>.coefficient
+                    if cpp_substr_is(key, 13, "keyword.") {
+                        if let Some(end) = key.find(".coefficient") {
+                            let keyword = cpp_substr(key, 21, end.wrapping_sub(21));
+
+                            if self.get_ref("description").contains(keyword) {
+                                value += coefficient;
+                            }
+                        }
+                    }
+                } else if key.starts_with("urgency.uda.") {
+                    // urgency.uda.<name>.coefficient
+                    // urgency.uda.<name>.<value>.coefficient
+                    if let Some(end) = key.find(".coefficient") {
+                        let uda = cpp_substr(key, 12, end.wrapping_sub(12));
+                        match uda.find('.') {
+                            None => {
+                                // urgency.uda.<name>.coefficient
+                                if self.has(uda) {
+                                    value += coefficient;
+                                }
+                            }
+                            Some(dot) => {
+                                // urgency.uda.<name>.<value>.coefficient
+                                let (name, wanted) = (&uda[..dot], &uda[dot + 1..]);
+                                if self.get_ref(name) == wanted {
+                                    value += coefficient;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        value
+    }
+
+    /// C++ `float Task::urgency ()`: the cached [`Task::urgency_c`], recomputed
+    /// only when `recalc_urgency` is set.
+    ///
+    /// Returns `Result` (unlike the C++ `float`) because `urgency.inherit`
+    /// reads the replica through `ctx.tdb2`.
+    ///
+    /// # Errors
+    /// As [`Task::urgency_c`]; the cache is left untouched on error.
+    pub fn urgency(&mut self, ctx: &mut Context) -> Result<f32> {
+        if self.recalc_urgency {
+            self.urgency_value = self.urgency_c(ctx)?;
+
+            // Return the sum of all terms.
+            self.recalc_urgency = false;
+        }
+
+        Ok(self.urgency_value)
+    }
+
+    /// C++ `float Task::urgency_inherit () const`: the highest urgency among
+    /// the pending tasks this task blocks (`getBlockedTasks`), `-FLT_MAX`
+    /// when there are none. Each blocked task is a copy whose urgency is
+    /// computed afresh, recursively inheriting along the chain.
+    ///
+    /// # Errors
+    /// As [`Task::get_blocked_tasks`].
+    pub fn urgency_inherit(&self, ctx: &mut Context) -> Result<f32> {
+        let mut v = f32::MIN; // -FLT_MAX
+        // Calling getBlockedTasks is rather expensive.
+        // It is called recursively for each dependency in the chain here.
+        for mut task in self.get_blocked_tasks(&mut ctx.tdb2)? {
+            // Find highest urgency in all blocked tasks.
+            v = cpp_max(v, task.urgency(ctx)?);
+        }
+
+        Ok(v)
+    }
+
+    /// C++ `float Task::urgency_project () const`.
+    pub fn urgency_project(&self) -> f32 {
+        if self.has("project") {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    /// C++ `float Task::urgency_active () const`.
+    pub fn urgency_active(&self) -> f32 {
+        if self.has("start") {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    /// C++ `float Task::urgency_scheduled () const`: scheduled in the past.
+    pub fn urgency_scheduled(&self) -> f32 {
+        self.urgency_scheduled_at(localtime::time_now())
+    }
+
+    /// [`Task::urgency_scheduled`] with `time (nullptr)` supplied.
+    fn urgency_scheduled_at(&self, now: i64) -> f32 {
+        if self.has("scheduled") && self.get_date("scheduled") < now {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    /// C++ `float Task::urgency_waiting () const`.
+    pub fn urgency_waiting(&self) -> f32 {
+        if self.is_waiting() {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    /// C++ `float Task::urgency_blocked () const`: a task is blocked only if
+    /// the task it depends upon is pending/waiting.
+    pub fn urgency_blocked(&self) -> f32 {
+        if self.is_blocked {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    /// C++ `float Task::urgency_annotations () const`.
+    pub fn urgency_annotations(&self) -> f32 {
+        if self.annotation_count >= 3 {
+            1.0
+        } else if self.annotation_count == 2 {
+            0.9_f64 as f32
+        } else if self.annotation_count == 1 {
+            0.8_f64 as f32
+        } else {
+            0.0
+        }
+    }
+
+    /// C++ `float Task::urgency_tags () const`.
+    pub fn urgency_tags(&self) -> f32 {
+        match self.get_tag_count() {
+            0 => 0.0,
+            1 => 0.8_f64 as f32,
+            2 => 0.9_f64 as f32,
+            _ => 1.0,
+        }
+    }
+
+    /// C++ `float Task::urgency_due () const`.
+    ///
+    /// ```text
+    ///     Past                  Present                              Future
+    ///     Overdue               Due                                     Due
+    ///
+    ///     -7 -6 -5 -4 -3 -2 -1  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 days
+    ///
+    /// <-- 1.0                         linear                            0.2 -->
+    ///     capped                                                        capped
+    /// ```
+    pub fn urgency_due(&self) -> f32 {
+        self.urgency_due_at(&Datetime::new())
+    }
+
+    /// [`Task::urgency_due`] with `Datetime now` supplied.
+    fn urgency_due_at(&self, now: &Datetime) -> f32 {
+        if self.has("due") {
+            let due = Datetime::from_epoch(self.get_date("due"));
+
+            // Map a range of 21 days to the value 0.2 - 1.0
+            // C++: float days_overdue = (now - due) / 86400.0;  (time_t / double)
+            let days_overdue: f32 = ((now - &due) as f64 / 86400.0) as f32;
+            return if days_overdue as f64 >= 7.0 {
+                1.0 // < 1 wk ago
+            } else if days_overdue as f64 >= -14.0 {
+                (((days_overdue as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32
+            } else {
+                0.2_f64 as f32 // > 2 wks
+            };
+        }
+
+        0.0
+    }
+
+    /// C++ `float Task::urgency_age () const`.
+    pub fn urgency_age(&self) -> f32 {
+        self.urgency_age_at(&Datetime::new())
+    }
+
+    /// [`Task::urgency_age`] with `Datetime now` supplied.
+    fn urgency_age_at(&self, now: &Datetime) -> f32 {
+        if !self.has("entry") {
+            return 1.0;
+        }
+
+        let entry = Datetime::from_epoch(self.get_date("entry"));
+        // C++: int age = (now - entry) / 86400;  (time_t division, in days)
+        let age = ((now - &entry) / 86400) as i32;
+
+        let age_max = Task::urgency_age_max();
+        // `age > urgencyAgeMax` compares int and float in float.
+        if age_max == 0.0 || age as f32 > age_max {
+            return 1.0;
+        }
+
+        // C++: return (1.0 * age / Task::urgencyAgeMax);  (double, narrowed)
+        (1.0 * age as f64 / age_max as f64) as f32
+    }
+
+    /// C++ `float Task::urgency_blocking () const`.
+    pub fn urgency_blocking(&self) -> f32 {
+        if self.is_blocking {
+            return 1.0;
+        }
+
+        0.0
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Later-milestone stubs.
+
+    /// C++ `void Task::modify (modType type, bool text_required = false)`:
+    /// applies the command-line modifications in the parse tree to this task.
+    ///
+    /// Restored by milestone 5 (needs Eval, DOM and CLI2). Nothing calls it
+    /// yet.
+    ///
+    /// # Errors
+    /// Always `TwError::NotImplemented("Task::modify")` until milestone 5.
+    pub fn modify(&mut self, _ctx: &mut Context, _mod_type: ModType, _text_required: bool) -> Result<()> {
+        Err(TwError::NotImplemented("Task::modify".into()))
+    }
+
+    /// C++ `void Task::substitute (const std::string& from, const std::string&
+    /// to, const std::string& flags)`: applies a `/from/to/flags`
+    /// substitution to the description and annotations.
+    ///
+    /// Restored by milestone 5 (needs Eval, DOM and CLI2). Nothing calls it
+    /// yet.
+    ///
+    /// # Errors
+    /// Always `TwError::NotImplemented("Task::substitute")` until milestone 5.
+    pub fn substitute(&mut self, _from: &str, _to: &str, _flags: &str) -> Result<()> {
+        Err(TwError::NotImplemented("Task::substitute".into()))
+    }
+
+    /// C++ `std::string Task::diff (const Task& after) const`: summarizes the
+    /// differences to `after` for display, in the future tense.
+    ///
+    /// Restored by milestone 7. Nothing calls it yet.
+    ///
+    /// # Errors
+    /// Always `TwError::NotImplemented("Task::diff")` until milestone 7.
+    pub fn diff(&self, _after: &Task) -> Result<String> {
+        Err(TwError::NotImplemented("Task::diff".into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2984,5 +3398,658 @@ mod validate_tests {
         let mut out = Vec::new();
         dependency_chain_on_complete_to(&mut f.ctx, &t3, &mut out).unwrap();
         assert!(out.is_empty());
+    }
+}
+
+/// Tests for urgency (the coefficient polynomial, the user coefficients and
+/// `urgency.inherit`) and the later-milestone stubs.
+#[cfg(test)]
+mod urgency_tests {
+    use super::*;
+    use crate::tdb2;
+    use crate::test_util::env_lock;
+    use tempfile::TempDir;
+
+    const DAY: i64 = 86400;
+
+    /// Resets the urgency coefficient thread-local statics when dropped, so
+    /// later assertions in the same thread see the defaults.
+    struct CoefficientsGuard;
+
+    impl Drop for CoefficientsGuard {
+        fn drop(&mut self) {
+            set_all_coefficients(0.0);
+            Task::set_urgency_age_max(0.0);
+            Task::set_coefficients(BTreeMap::new());
+        }
+    }
+
+    fn set_all_coefficients(value: f32) {
+        Task::set_urgency_project_coefficient(value);
+        Task::set_urgency_active_coefficient(value);
+        Task::set_urgency_scheduled_coefficient(value);
+        Task::set_urgency_waiting_coefficient(value);
+        Task::set_urgency_blocked_coefficient(value);
+        Task::set_urgency_annotations_coefficient(value);
+        Task::set_urgency_tags_coefficient(value);
+        Task::set_urgency_due_coefficient(value);
+        Task::set_urgency_blocking_coefficient(value);
+        Task::set_urgency_age_coefficient(value);
+    }
+
+    fn coefficients(pairs: &[(&str, f32)]) {
+        Task::set_coefficients(pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect());
+    }
+
+    /// A Context whose replica lives in a temporary data directory. Fields
+    /// drop in declaration order: the TempDir is removed before the lock is
+    /// released.
+    struct Fixture {
+        ctx: Context,
+        _dir: TempDir,
+        _coefficients: CoefficientsGuard,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    fn fixture() -> Fixture {
+        // Context::new reads $HOME; serialize with env-mutating tests.
+        let lock = env_lock();
+        let dir = TempDir::new().unwrap();
+        let mut ctx = Context::new();
+        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        Fixture { ctx, _dir: dir, _coefficients: CoefficientsGuard, _lock: lock }
+    }
+
+    fn user_terms(t: &Task) -> f32 {
+        t.urgency_user_terms(0.0, &mut NullEnv)
+    }
+
+    #[test]
+    fn epsilon_and_max() {
+        assert_eq!(EPSILON, 0.000001_f64 as f32);
+        assert_eq!(cpp_max(1.0, 2.0), 2.0);
+        assert_eq!(cpp_max(2.0, 1.0), 2.0);
+        // std::max keeps the first argument when the comparison is false.
+        assert!(cpp_max(f32::NAN, 1.0).is_nan());
+        assert_eq!(cpp_max(1.0, f32::NAN), 1.0);
+        assert_eq!(cpp_substr("abcdef", 2, 2), "cd");
+        assert_eq!(cpp_substr("abcdef", 2, usize::MAX), "cdef");
+        assert_eq!(cpp_substr("abcdef", 6, 3), "");
+        assert!(cpp_substr_is("abcdef", 2, "cd"));
+        assert!(!cpp_substr_is("abcdef", 4, "efg"));
+        assert!(cpp_substr_is("abcdef", 6, ""));
+    }
+
+    #[test]
+    fn term_project_active_blocked_blocking() {
+        let mut t = Task::new();
+        assert_eq!(t.urgency_project(), 0.0);
+        assert_eq!(t.urgency_active(), 0.0);
+        assert_eq!(t.urgency_blocked(), 0.0);
+        assert_eq!(t.urgency_blocking(), 0.0);
+        t.set("project", "home");
+        t.set("start", "1700000000");
+        t.is_blocked = true;
+        t.is_blocking = true;
+        assert_eq!(t.urgency_project(), 1.0);
+        assert_eq!(t.urgency_active(), 1.0);
+        assert_eq!(t.urgency_blocked(), 1.0);
+        assert_eq!(t.urgency_blocking(), 1.0);
+        // An empty value still counts as present (C++ `has`).
+        let mut t = Task::new();
+        t.set("project", "");
+        assert_eq!(t.urgency_project(), 1.0);
+    }
+
+    #[test]
+    fn term_scheduled() {
+        let now = 1_700_000_000;
+        let mut t = Task::new();
+        assert_eq!(t.urgency_scheduled_at(now), 0.0);
+        t.set_int("scheduled", now - 1);
+        assert_eq!(t.urgency_scheduled_at(now), 1.0);
+        t.set_int("scheduled", now);
+        assert_eq!(t.urgency_scheduled_at(now), 0.0);
+        t.set_int("scheduled", now + 1);
+        assert_eq!(t.urgency_scheduled_at(now), 0.0);
+        // Against the real clock.
+        t.set_int("scheduled", localtime::time_now() - DAY);
+        assert_eq!(t.urgency_scheduled(), 1.0);
+        t.set_int("scheduled", localtime::time_now() + DAY);
+        assert_eq!(t.urgency_scheduled(), 0.0);
+    }
+
+    #[test]
+    fn term_waiting() {
+        let mut t = Task::new();
+        t.set("status", "pending");
+        assert_eq!(t.urgency_waiting(), 0.0);
+        t.set_int("wait", localtime::time_now() + DAY);
+        assert_eq!(t.urgency_waiting(), 1.0);
+        t.set_int("wait", localtime::time_now() - DAY);
+        assert_eq!(t.urgency_waiting(), 0.0);
+        t.set_int("wait", localtime::time_now() + DAY);
+        t.set("status", "completed");
+        assert_eq!(t.urgency_waiting(), 0.0);
+    }
+
+    #[test]
+    fn term_annotations() {
+        let mut t = Task::new();
+        assert_eq!(t.urgency_annotations(), 0.0);
+        t.set("annotation_1700000001", "a");
+        assert_eq!(t.urgency_annotations(), 0.8_f32);
+        t.set("annotation_1700000002", "b");
+        assert_eq!(t.urgency_annotations(), 0.9_f32);
+        t.set("annotation_1700000003", "c");
+        assert_eq!(t.urgency_annotations(), 1.0);
+        t.set("annotation_1700000004", "d");
+        assert_eq!(t.urgency_annotations(), 1.0);
+        // Driven by annotation_count, not by the attributes.
+        t.annotation_count = 0;
+        assert_eq!(t.urgency_annotations(), 0.0);
+    }
+
+    #[test]
+    fn term_tags() {
+        let mut t = Task::new();
+        assert_eq!(t.urgency_tags(), 0.0);
+        t.add_tag("a");
+        assert_eq!(t.urgency_tags(), 0.8_f32);
+        t.add_tag("b");
+        assert_eq!(t.urgency_tags(), 0.9_f32);
+        t.add_tag("c");
+        assert_eq!(t.urgency_tags(), 1.0);
+        t.add_tag("d");
+        assert_eq!(t.urgency_tags(), 1.0);
+    }
+
+    #[test]
+    fn term_due() {
+        let now = Datetime::from_epoch(1_700_000_000);
+        let n = now.to_epoch();
+        let mut t = Task::new();
+        assert_eq!(t.urgency_due_at(&now), 0.0);
+
+        let due = |t: &mut Task, at: i64| {
+            t.set_int("due", at);
+            t.urgency_due_at(&now)
+        };
+        // >= 7 days overdue: capped at 1.0.
+        assert_eq!(due(&mut t, n - 7 * DAY), 1.0);
+        assert_eq!(due(&mut t, n - 30 * DAY), 1.0);
+        // Due now: (14 * 0.8 / 21) + 0.2 = 0.7333...
+        assert_eq!(due(&mut t, n), ((14.0_f64 * 0.8 / 21.0) + 0.2) as f32);
+        assert!((due(&mut t, n) - 0.733_333_3).abs() < 1e-6);
+        // 3.5 days overdue: (17.5 * 0.8 / 21) + 0.2 = 0.8666...
+        assert_eq!(due(&mut t, n - 302_400), 0.866_666_7_f32);
+        // Exactly 14 days in the future is still on the linear part.
+        assert_eq!(due(&mut t, n + 14 * DAY), ((0.0_f64 * 0.8 / 21.0) + 0.2) as f32);
+        // Beyond two weeks: capped at 0.2.
+        assert_eq!(due(&mut t, n + 14 * DAY + 1), 0.2_f32);
+        assert_eq!(due(&mut t, n + 100 * DAY), 0.2_f32);
+        // One second overdue: days_overdue is narrowed to float first.
+        let days = (1.0_f64 / 86400.0) as f32;
+        assert_eq!(due(&mut t, n - 1), (((days as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32);
+        // Just under 7 days stays linear.
+        let days = ((7 * DAY - 1) as f64 / 86400.0) as f32;
+        assert_eq!(due(&mut t, n - 7 * DAY + 1), (((days as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32);
+
+        // Against the real clock.
+        t.set_int("due", localtime::time_now() - 30 * DAY);
+        assert_eq!(t.urgency_due(), 1.0);
+        t.set_int("due", localtime::time_now() + 30 * DAY);
+        assert_eq!(t.urgency_due(), 0.2_f32);
+    }
+
+    #[test]
+    fn term_age() {
+        let _guard = CoefficientsGuard;
+        let now = Datetime::from_epoch(1_700_000_000);
+        let n = now.to_epoch();
+        let mut t = Task::new();
+        // No entry: 1.0.
+        assert_eq!(t.urgency_age_at(&now), 1.0);
+
+        // urgencyAgeMax == 0: 1.0.
+        t.set_int("entry", n - 10 * DAY - 5);
+        assert_eq!(t.urgency_age_at(&now), 1.0);
+
+        Task::set_urgency_age_max(365.0);
+        // 10 days (integer division) / 365.
+        assert_eq!(t.urgency_age_at(&now), 0.027_397_26_f32);
+        assert_eq!(t.urgency_age_at(&now), (1.0 * 10.0_f64 / 365.0) as f32);
+        // Less than a day old: 0.
+        t.set_int("entry", n - DAY + 1);
+        assert_eq!(t.urgency_age_at(&now), 0.0);
+        // Exactly the maximum is not "older than".
+        t.set_int("entry", n - 365 * DAY);
+        assert_eq!(t.urgency_age_at(&now), 1.0);
+        t.set_int("entry", n - 366 * DAY);
+        assert_eq!(t.urgency_age_at(&now), 1.0);
+        // In the future: time_t division truncates toward zero.
+        t.set_int("entry", n + DAY / 2);
+        assert_eq!(t.urgency_age_at(&now), 0.0);
+        t.set_int("entry", n + DAY + DAY / 2);
+        assert_eq!(t.urgency_age_at(&now), (-1.0_f64 / 365.0) as f32);
+
+        // A fractional maximum compares in float.
+        Task::set_urgency_age_max(9.5);
+        t.set_int("entry", n - 9 * DAY);
+        assert_eq!(t.urgency_age_at(&now), (9.0_f64 / 9.5) as f32);
+        t.set_int("entry", n - 10 * DAY);
+        assert_eq!(t.urgency_age_at(&now), 1.0);
+
+        // Against the real clock.
+        Task::set_urgency_age_max(365.0);
+        t.set_int("entry", localtime::time_now() - 400 * DAY);
+        assert_eq!(t.urgency_age(), 1.0);
+    }
+
+    #[test]
+    fn user_tag_coefficients() {
+        let _guard = CoefficientsGuard;
+        coefficients(&[
+            ("urgency.user.tag.next.coefficient", 15.0),
+            ("urgency.user.tag.later.coefficient", -2.5),
+            ("urgency.user.tag.ACTIVE.coefficient", 0.5),
+            ("urgency.user.tag.tiny.coefficient", 0.000_000_1),
+            ("urgency.user.tag.weight.next", 100.0),
+        ]);
+        let mut t = Task::new();
+        assert_eq!(user_terms(&t), 0.0);
+        t.add_tag("next");
+        assert_eq!(user_terms(&t), 15.0);
+        t.add_tag("later");
+        assert_eq!(user_terms(&t), 12.5);
+        // Virtual tags are matched through hasTag.
+        t.set("start", "1700000000");
+        assert_eq!(user_terms(&t), 13.0);
+        // Coefficients within epsilon of zero are ignored.
+        t.add_tag("tiny");
+        assert_eq!(user_terms(&t), 13.0);
+        // Keys without ".coefficient" are ignored.
+        t.add_tag("weight");
+        assert_eq!(user_terms(&t), 13.0);
+
+        // The first ".coefficient" ends the name.
+        coefficients(&[("urgency.user.tag.a.coefficient.coefficient", 1.0)]);
+        let mut t = Task::new();
+        t.add_tag("a");
+        assert_eq!(user_terms(&t), 1.0);
+    }
+
+    #[test]
+    fn user_project_coefficients() {
+        let _guard = CoefficientsGuard;
+        coefficients(&[("urgency.user.project.home.coefficient", 5.0)]);
+        let mut t = Task::new();
+        assert_eq!(user_terms(&t), 0.0);
+        for (project, expected) in
+            [("home", 5.0), ("home.garden", 5.0), ("home.garden.shed", 5.0), ("homework", 0.0), ("work.home", 0.0), ("Home", 0.0)]
+        {
+            t.set("project", project);
+            assert_eq!(user_terms(&t), expected, "project {project}");
+        }
+
+        // A sub-project coefficient matches only that branch; both apply.
+        coefficients(&[
+            ("urgency.user.project.home.coefficient", 5.0),
+            ("urgency.user.project.home.garden.coefficient", 1.5),
+        ]);
+        t.set("project", "home.garden");
+        assert_eq!(user_terms(&t), 6.5);
+        t.set("project", "home.kitchen");
+        assert_eq!(user_terms(&t), 5.0);
+
+        // C++ `end - 21` wraps for "urgency.user.project.coefficient", making
+        // the project name "coefficient".
+        coefficients(&[("urgency.user.project.coefficient", 3.0)]);
+        t.set("project", "coefficient");
+        assert_eq!(user_terms(&t), 3.0);
+        t.set("project", "home");
+        assert_eq!(user_terms(&t), 0.0);
+    }
+
+    #[test]
+    fn user_keyword_coefficients() {
+        let _guard = CoefficientsGuard;
+        coefficients(&[
+            ("urgency.user.keyword.urgent.coefficient", 4.0),
+            ("urgency.user.keyword.call.coefficient", 1.25),
+        ]);
+        let mut t = Task::new();
+        assert_eq!(user_terms(&t), 0.0);
+        t.set("description", "something urgent");
+        assert_eq!(user_terms(&t), 4.0);
+        t.set("description", "call the plumber, urgently");
+        assert_eq!(user_terms(&t), 5.25);
+        // Case-sensitive substring match.
+        t.set("description", "Urgent");
+        assert_eq!(user_terms(&t), 0.0);
+
+        // An empty keyword matches every description (C++ `find ("")`).
+        coefficients(&[("urgency.user.keyword..coefficient", 2.0)]);
+        let t = Task::new();
+        assert_eq!(user_terms(&t), 2.0);
+    }
+
+    #[test]
+    fn uda_coefficients() {
+        let _guard = CoefficientsGuard;
+        coefficients(&[
+            ("urgency.uda.estimate.coefficient", 1.5),
+            ("urgency.uda.priority.H.coefficient", 6.0),
+            ("urgency.uda.priority.M.coefficient", 3.9),
+            ("urgency.uda.priority.L.coefficient", 1.8),
+        ]);
+        let mut t = Task::new();
+        assert_eq!(user_terms(&t), 0.0);
+        t.set("estimate", "");
+        assert_eq!(user_terms(&t), 1.5);
+        t.remove("estimate");
+        t.set("priority", "H");
+        assert_eq!(user_terms(&t), 6.0);
+        t.set("priority", "M");
+        assert_eq!(user_terms(&t), 3.9_f32);
+        t.set("priority", "L");
+        assert_eq!(user_terms(&t), 1.8_f32);
+        t.set("priority", "h");
+        assert_eq!(user_terms(&t), 0.0);
+        t.set("estimate", "3");
+        t.set("priority", "H");
+        assert_eq!(user_terms(&t), 1.5_f32 + 6.0_f32);
+
+        // A dotted value: only the first dot separates name and value.
+        coefficients(&[("urgency.uda.size.x.l.coefficient", 2.0)]);
+        let mut t = Task::new();
+        t.set("size", "x.l");
+        assert_eq!(user_terms(&t), 2.0);
+
+        // C++ `end - 12` wraps for "urgency.uda.coefficient": the attribute
+        // "coefficient" must be present.
+        coefficients(&[("urgency.uda.coefficient", 1.0)]);
+        let mut t = Task::new();
+        assert_eq!(user_terms(&t), 0.0);
+        t.set("coefficient", "x");
+        assert_eq!(user_terms(&t), 1.0);
+
+        // Non-ASCII keys compare bytewise (no slicing panic): the multi-byte
+        // character straddles byte 21 / 17 of the prefix checks.
+        coefficients(&[
+            ("urgency.user.project\u{e9}.coefficient", 9.0),
+            ("urgency.user.tag\u{e9}.coefficient", 9.0),
+            ("urgency.user.keyword\u{e9}.coefficient", 9.0),
+            ("urgency.user.tag.\u{e9}t\u{e9}.coefficient", 2.0),
+            ("urgency.uda.\u{e9}.\u{e9}.coefficient", 3.0),
+        ]);
+        let mut t = Task::new();
+        t.add_tag("\u{e9}t\u{e9}");
+        t.set("\u{e9}", "\u{e9}");
+        assert_eq!(user_terms(&t), 5.0);
+
+        // Neither "urgency.user." nor "urgency.uda.": ignored.
+        coefficients(&[("urgency.due.coefficient", 9.0), ("urgency.uda", 9.0)]);
+        let mut t = Task::new();
+        t.set("due", "1");
+        assert_eq!(user_terms(&t), 0.0);
+    }
+
+    #[test]
+    fn user_terms_add_in_key_order() {
+        let _guard = CoefficientsGuard;
+        // Sorted: urgency.uda.* < urgency.user.keyword.* < urgency.user.project.* < urgency.user.tag.*
+        coefficients(&[
+            ("urgency.user.tag.x.coefficient", 0.1),
+            ("urgency.user.project.p.coefficient", 0.2),
+            ("urgency.user.keyword.k.coefficient", 0.3),
+            ("urgency.uda.u.coefficient", 1e8),
+        ]);
+        let mut t = Task::new();
+        t.add_tag("x");
+        t.set("project", "p");
+        t.set("description", "k");
+        t.set("u", "1");
+        let mut expected: f32 = 0.0;
+        for c in [1e8_f32, 0.3, 0.2, 0.1] {
+            expected += c;
+        }
+        assert_eq!(user_terms(&t), expected);
+        // Starting value is carried through.
+        assert_eq!(t.urgency_user_terms(1.0, &mut NullEnv), {
+            let mut v: f32 = 1.0;
+            for c in [1e8_f32, 0.3, 0.2, 0.1] {
+                v += c;
+            }
+            v
+        });
+    }
+
+    #[test]
+    fn urgency_c_terms_and_coefficients() {
+        let mut f = fixture();
+        set_all_coefficients(0.0);
+
+        let mut t = Task::new();
+        t.set("description", "x");
+        assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), 0.0);
+
+        // Each term only contributes its own coefficient.
+        type Setter = fn(f32);
+        let cases: [(Setter, &str, &str, f32); 6] = [
+            (Task::set_urgency_project_coefficient, "project", "p", 1.0),
+            (Task::set_urgency_active_coefficient, "start", "1700000000", 4.0),
+            (Task::set_urgency_scheduled_coefficient, "scheduled", "1", 5.0),
+            (Task::set_urgency_due_coefficient, "due", "1", 12.0),
+            (Task::set_urgency_tags_coefficient, "tag_a", "", 1.0 * 0.8_f32),
+            (Task::set_urgency_annotations_coefficient, "annotation_1", "a", 1.0 * 0.8_f32),
+        ];
+        for (setter, attribute, value, expected) in cases {
+            let mut t = Task::new();
+            t.set(attribute, value);
+            set_all_coefficients(0.0);
+            // Without its coefficient the term does not count.
+            assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), 0.0, "{attribute}");
+            setter(if attribute.starts_with("tag") || attribute.starts_with("annotation") {
+                1.0
+            } else {
+                expected
+            });
+            assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), expected, "{attribute}");
+        }
+
+        set_all_coefficients(0.0);
+        let mut t = Task::new();
+        t.is_blocked = true;
+        Task::set_urgency_blocked_coefficient(-5.0);
+        assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), -5.0);
+        t.is_blocked = false;
+        t.is_blocking = true;
+        Task::set_urgency_blocking_coefficient(8.0);
+        // urgency.inherit defaults to off.
+        assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), 8.0);
+
+        set_all_coefficients(0.0);
+        let mut t = Task::new();
+        t.set("status", "pending");
+        t.set_int("wait", localtime::time_now() + DAY);
+        Task::set_urgency_waiting_coefficient(-3.0);
+        assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), -3.0);
+
+        set_all_coefficients(0.0);
+        let t = Task::new();
+        Task::set_urgency_age_coefficient(2.0);
+        // No entry: age term 1.0.
+        assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn full_urgency_hand_computed() {
+        let mut f = fixture();
+        // The default rc coefficients, as Context::staticInitialization sets them.
+        Task::set_urgency_project_coefficient(1.0);
+        Task::set_urgency_active_coefficient(4.0);
+        Task::set_urgency_scheduled_coefficient(5.0);
+        Task::set_urgency_waiting_coefficient(-3.0);
+        Task::set_urgency_blocked_coefficient(-5.0);
+        Task::set_urgency_annotations_coefficient(1.0);
+        Task::set_urgency_tags_coefficient(1.0);
+        Task::set_urgency_due_coefficient(12.0);
+        Task::set_urgency_blocking_coefficient(8.0);
+        Task::set_urgency_age_coefficient(2.0);
+        Task::set_urgency_age_max(365.0);
+        coefficients(&[
+            ("urgency.user.tag.next.coefficient", 15.0),
+            ("urgency.uda.priority.H.coefficient", 6.0),
+            ("urgency.uda.priority.M.coefficient", 3.9),
+            ("urgency.uda.priority.L.coefficient", 1.8),
+            ("urgency.user.project.home.coefficient", 2.5),
+            ("urgency.user.keyword.fix.coefficient", 0.7),
+        ]);
+
+        let mut t = Task::new();
+        t.set("description", "fix the fence");
+        t.set("status", "pending");
+        t.set("project", "home.garden");
+        t.set("start", "1700000000");
+        t.set("scheduled", "1");
+        t.set("annotation_1700000001", "a");
+        t.set("annotation_1700000002", "b");
+        t.add_tag("a");
+        t.add_tag("b");
+        t.add_tag("c");
+        t.set_int("due", localtime::time_now() - 30 * DAY);
+        t.set("priority", "H");
+
+        // project 1 + active 4 + scheduled 5 + annotations 0.9 + tags 1 +
+        // due 12 + age (no entry) 2 + uda 6 + keyword 0.7 + project 2.5,
+        // summed in float: 35.099998 (0x420c6666).
+        let u = t.urgency(&mut f.ctx).unwrap();
+        assert_eq!(u.to_bits(), 0x420c_6666);
+        assert!(!t.recalc_urgency);
+        assert_eq!(t.urgency_value, u);
+
+        // Cached until something changes.
+        Task::set_urgency_project_coefficient(100.0);
+        assert_eq!(t.urgency(&mut f.ctx).unwrap(), u);
+        t.recalc_urgency = true;
+        // Project term first: 100 + 4 + 5 + ... = 134.09999 (0x43061999).
+        assert_eq!(t.urgency(&mut f.ctx).unwrap().to_bits(), 0x4306_1999);
+        Task::set_urgency_project_coefficient(1.0);
+        // Setting an attribute flags a recalculation (next tag: +15).
+        t.add_tag("next");
+        assert!(t.recalc_urgency);
+        // ... + 15 (tag next, after the uda/keyword/project terms) = 50.1
+        // (0x42486666).
+        assert_eq!(t.urgency(&mut f.ctx).unwrap().to_bits(), 0x4248_6666);
+
+        // A minimal task: 0 terms except age (no entry) = 2.0; with an entry
+        // 73 days old: 2.0 * (73 / 365) = 0.4.
+        let mut t = Task::new();
+        t.set("description", "x");
+        assert_eq!(t.urgency(&mut f.ctx).unwrap(), 2.0);
+        let mut t = Task::new();
+        t.set_int("entry", localtime::time_now() - 73 * DAY - 60);
+        assert_eq!(t.urgency(&mut f.ctx).unwrap(), (73.0_f64 / 365.0) as f32 * 2.0);
+    }
+
+    fn pending(ctx: &mut Context, uuid: &str) -> Task {
+        ctx.tdb2.pending_tasks().unwrap().iter().find(|t| t.get_ref("uuid") == uuid).unwrap().clone()
+    }
+
+    #[test]
+    fn inherit_through_blocked_chain() {
+        let mut f = fixture();
+        set_all_coefficients(0.0);
+        Task::set_urgency_blocked_coefficient(-5.0);
+        Task::set_urgency_blocking_coefficient(8.0);
+        coefficients(&[("urgency.user.tag.hot.coefficient", 20.0)]);
+
+        // c depends on b depends on a: a blocks b, b blocks c.
+        let mut a = Task::new();
+        a.set("description", "a");
+        tdb2::add(&mut f.ctx, &mut a).unwrap();
+        let mut b = Task::new();
+        b.set("description", "b");
+        tdb2::add(&mut f.ctx, &mut b).unwrap();
+        let mut c = Task::new();
+        c.set("description", "c");
+        c.add_tag("hot");
+        tdb2::add(&mut f.ctx, &mut c).unwrap();
+        b.add_dependency(&mut f.ctx, &a.get("uuid")).unwrap();
+        tdb2::modify(&mut f.ctx, &mut b).unwrap();
+        c.add_dependency(&mut f.ctx, &b.get("uuid")).unwrap();
+        tdb2::modify(&mut f.ctx, &mut c).unwrap();
+
+        let mut a = pending(&mut f.ctx, &a.get("uuid"));
+        let mut b = pending(&mut f.ctx, &b.get("uuid"));
+        let mut c = pending(&mut f.ctx, &c.get("uuid"));
+        assert!(a.is_blocking && !a.is_blocked);
+        assert!(b.is_blocking && b.is_blocked);
+        assert!(!c.is_blocking && c.is_blocked);
+
+        // Without inheritance: c = -5 + 20, b = -5 + 8, a = 8.
+        assert_eq!(c.clone().urgency(&mut f.ctx).unwrap(), 15.0);
+        assert_eq!(b.clone().urgency(&mut f.ctx).unwrap(), 3.0);
+        assert_eq!(a.clone().urgency(&mut f.ctx).unwrap(), 8.0);
+        // urgency_inherit itself does not depend on rc.urgency.inherit.
+        assert_eq!(b.urgency_inherit(&mut f.ctx).unwrap(), 15.0);
+        assert_eq!(a.urgency_inherit(&mut f.ctx).unwrap(), 3.0);
+        // Nothing blocked: -FLT_MAX.
+        assert_eq!(c.urgency_inherit(&mut f.ctx).unwrap(), -f32::MAX);
+
+        f.ctx.config.set("urgency.inherit", "1");
+        // c blocks nothing: unchanged.
+        assert_eq!(c.urgency(&mut f.ctx).unwrap(), 15.0);
+        // b: max (3, 15) + 0.01 = 15.01 (0x417028f6).
+        let ub = b.urgency(&mut f.ctx).unwrap();
+        assert_eq!(ub, (15.0_f64 + 0.01) as f32);
+        assert_eq!(ub.to_bits(), 0x4170_28f6);
+        // a: inherits b's (recomputed) urgency: max (8, 15.01) + 0.01
+        // = 15.02 (0x417051ec).
+        let ua = a.urgency(&mut f.ctx).unwrap();
+        assert_eq!(ua, (ub as f64 + 0.01) as f32);
+        assert_eq!(ua.to_bits(), 0x4170_51ec);
+
+        // When the task's own urgency is higher it keeps it, plus 0.01.
+        coefficients(&[]);
+        let mut a = pending(&mut f.ctx, &a.get("uuid"));
+        let mut b = pending(&mut f.ctx, &b.get("uuid"));
+        // c = -5; b = max (3, -5) + 0.01; a = max (8, b) + 0.01.
+        assert_eq!(b.urgency(&mut f.ctx).unwrap(), (3.0_f64 + 0.01) as f32);
+        assert_eq!(a.urgency(&mut f.ctx).unwrap(), (8.0_f64 + 0.01) as f32);
+
+        // Inheritance needs is_blocking: a task not flagged as blocking is
+        // not looked up.
+        let mut a = pending(&mut f.ctx, &a.get("uuid"));
+        a.is_blocking = false;
+        Task::set_urgency_blocking_coefficient(0.0);
+        assert_eq!(a.urgency(&mut f.ctx).unwrap(), 0.0);
+
+        // A completed blocked task no longer contributes.
+        coefficients(&[("urgency.user.tag.hot.coefficient", 20.0)]);
+        Task::set_urgency_blocking_coefficient(8.0);
+        let mut c = pending(&mut f.ctx, &c.get("uuid"));
+        c.set_status(Status::Deleted);
+        tdb2::modify(&mut f.ctx, &mut c).unwrap();
+        let mut b = pending(&mut f.ctx, &b.get("uuid"));
+        assert!(!b.is_blocking && b.is_blocked);
+        // b is still blocked by a but no longer blocking: -5 only.
+        assert_eq!(b.urgency(&mut f.ctx).unwrap(), -5.0);
+    }
+
+    #[test]
+    fn later_milestone_stubs() {
+        let mut f = fixture();
+        let mut t = Task::new();
+        assert!(matches!(
+            t.modify(&mut f.ctx, ModType::Replace, false),
+            Err(TwError::NotImplemented(ref s)) if s == "Task::modify"
+        ));
+        assert!(matches!(
+            t.substitute("a", "b", "g"),
+            Err(TwError::NotImplemented(ref s)) if s == "Task::substitute"
+        ));
+        assert!(matches!(t.diff(&Task::new()), Err(TwError::NotImplemented(ref s)) if s == "Task::diff"));
     }
 }
