@@ -148,6 +148,7 @@ fn tag_filters() {
     let mut f = Fixture::new(&["+alpha", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "four"]));
 
+    drop(f);
     let mut f = Fixture::new(&["-alpha", "project:home", "count"]);
     assert_eq!(f.subset(), ["three"]);
 }
@@ -158,18 +159,22 @@ fn virtual_tags_see_the_context() {
     assert_eq!(f.subset(), ["three"]);
     assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 1 tasks [all tasks]"]);
 
+    drop(f);
     let mut f = Fixture::new(&["+DELETED", "count"]);
     assert_eq!(f.subset(), ["four"]);
 
     // +PENDING on the original command line: pending only.
+    drop(f);
     let mut f = Fixture::new(&["+PENDING", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "two"]));
     assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 2 tasks [pending only]"]);
 
+    drop(f);
     let mut f = Fixture::new(&["+WAITING", "count"]);
     assert_eq!(f.subset(), ["five"]);
 
     // UDA/priority-based virtual tags read the Context's column registry.
+    drop(f);
     let mut f = Fixture::new(&["+PRIORITY", "count"]);
     assert_eq!(f.subset(), ["two"]);
 }
@@ -181,6 +186,7 @@ fn id_filters_are_pending_only() {
     assert!(Filter::new().pending_only(&f.ctx));
     assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 1 tasks [pending only]"]);
 
+    drop(f);
     let mut f = Fixture::new(&["1-2", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "two"]));
 }
@@ -192,6 +198,7 @@ fn uuid_filters_scan_all_tasks() {
     assert!(!Filter::new().pending_only(&f.ctx));
     assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 1 tasks [all tasks]"]);
 
+    drop(f);
     let mut f = Fixture::new(&[UUID_ONE, "count"]);
     assert_eq!(f.subset(), ["one"]);
 }
@@ -203,10 +210,12 @@ fn or_filters_scan_all_tasks() {
     assert!(!Filter::new().pending_only(&f.ctx));
 
     // An ID with 'or' is not pending only either.
+    drop(f);
     let mut f = Fixture::new(&["1", "or", "project:home", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "three"]));
     assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 2 tasks [all tasks]"]);
 
+    drop(f);
     let mut f = Fixture::new(&["status:pending", "xor", "project:home", "count"]);
     assert_eq!(f.subset(), sorted(&["two", "three"]));
     assert!(!Filter::new().pending_only(&f.ctx));
@@ -215,19 +224,23 @@ fn or_filters_scan_all_tasks() {
 #[test]
 fn status_filters() {
     let mut f = Fixture::new(&["status:pending", "count"]);
-    assert_eq!(f.subset(), sorted(&["one", "two", "five"]));
+    // 'five' has a future wait date, so its status is 'waiting'.
+    assert_eq!(f.subset(), sorted(&["one", "two"]));
     assert!(Filter::new().pending_only(&f.ctx));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 3 tasks [pending only]"]);
+    assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 2 tasks [pending only]"]);
 
+    drop(f);
     let mut f = Fixture::new(&["status:completed", "count"]);
     assert_eq!(f.subset(), ["three"]);
     assert!(!Filter::new().pending_only(&f.ctx));
 
+    drop(f);
     let mut f = Fixture::new(&["status:waiting", "count"]);
-    assert!(Filter::new().pending_only(&f.ctx));
-    let _ = f.subset();
+    assert!(!Filter::new().pending_only(&f.ctx), "still one undesugared pair before prepareFilter");
+    assert_eq!(f.subset(), ["five"]);
     assert!(Filter::new().pending_only(&f.ctx));
 
+    drop(f);
     let mut f = Fixture::new(&["status:recurring", "count"]);
     let _ = f.subset();
     assert!(Filter::new().pending_only(&f.ctx));
@@ -240,17 +253,20 @@ fn pending_only_rules() {
     assert!(!Filter::new().pending_only(&f.ctx));
 
     // An attribute filter without status, ID or +PENDING/+ACTIVE.
+    drop(f);
     let mut f = Fixture::new(&["project:home", "count"]);
     let _ = f.subset();
     assert!(!Filter::new().pending_only(&f.ctx));
 
     // +ACTIVE comes from the original arguments.
+    drop(f);
     let mut f = Fixture::new(&["+ACTIVE", "count"]);
     assert!(Filter::new().pending_only(&f.ctx), "read from _original_args");
     assert_eq!(f.subset(), Vec::<String>::new());
     assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 0 tasks [pending only]"]);
 
     // When GC is off, there are no shortcuts.
+    drop(f);
     let mut f = Fixture::new(&["rc.gc=0", "1", "count"]);
     assert_eq!(f.subset(), ["one"]);
     assert!(!Filter::new().pending_only(&f.ctx));
@@ -299,6 +315,7 @@ fn safety_refuses_unfiltered_write_commands() {
     assert!(f.debug_with("Filtered ").is_empty());
 
     // Allowed, but no confirmation: prevented.
+    drop(f);
     let mut f = Fixture::new(&["rc.confirmation=0", "modify"]);
     let err = Filter::new().safety(&f.ctx).unwrap_err();
     assert_eq!(err.to_string(), "Command prevented from running.");
@@ -318,6 +335,7 @@ fn safety_allows_read_only_or_filtered_commands() {
     let f = Fixture::new(&["rc.allow.empty.filter=0", "count"]);
     Filter::new().safety(&f.ctx).unwrap();
 
+    drop(f);
     let mut f = Fixture::new(&["rc.allow.empty.filter=0", "2", "modify"]);
     assert_eq!(f.subset(), ["two"]);
     Filter::new().safety(&f.ctx).unwrap();
@@ -329,10 +347,14 @@ fn eval_debug_output_with_debug_parser_3() {
     let mut f = Fixture::new(&["rc.debug.parser=3", "project:home", "count"]);
     let _ = f.subset();
     let prefix = "\x1b[1;37;42mFILTER\x1b[0m ";
-    assert_eq!(f.debug_with(&format!("{prefix}Infix ")).len(), 1);
+    assert_eq!(f.debug_with(&format!("{prefix}Infix        ")).len(), 1);
     assert_eq!(f.debug_with(&format!("{prefix}Infix parsed")).len(), 1);
     assert_eq!(f.debug_with(&format!("{prefix}Postfix")).len(), 1);
+    // As in C++, eval.debug (false) only comes after the loops, so every
+    // per-task evaluation (5 tasks) logs as well.
+    assert!(f.debug_with("Eval identifier source 'project'").len() >= 5, "{:?}", f.ctx.debug_messages);
 
+    drop(f);
     let mut f = Fixture::new(&["rc.debug.parser=2", "project:home", "count"]);
     let _ = f.subset();
     assert!(f.debug_with(prefix).is_empty());
@@ -346,6 +368,7 @@ fn errors_propagate() {
     let mut output = Vec::new();
     assert!(Filter::new().subset(&mut f.ctx, &mut output).is_err());
 
+    drop(f);
     let mut f = Fixture::new(&["(", "project:home", "count"]);
     let input = f.ctx.tdb2.all_tasks().unwrap();
     assert!(Filter::new().subset_of(&mut f.ctx, &input, &mut output).is_err());
@@ -356,10 +379,12 @@ fn dom_references_see_the_current_task() {
     let mut f = Fixture::new(&["description.startswith:t", "count"]);
     assert_eq!(f.subset(), sorted(&["two", "three"]));
 
+    drop(f);
     let mut f = Fixture::new(&["id", "==", "2", "count"]);
     assert_eq!(f.subset(), ["two"]);
 
     // A reference to another task by ID loads it through TDB2.
+    drop(f);
     let mut f = Fixture::new(&["project", "==", "1.project", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "three"]));
 }
