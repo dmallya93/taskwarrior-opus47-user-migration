@@ -28,8 +28,9 @@ import time
 
 import pytest
 
-WORKSPACE = os.environ.get("WORKSPACE_DIR", "/l2l/workspace")
-TARGET_REPO = os.path.join(WORKSPACE, "taskwarrior-opus47-user-migration")
+# Repo root is three levels above this file (.mcode/functional-tests/4/).
+TARGET_REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+WORKSPACE = os.environ.get("WORKSPACE_DIR", os.path.dirname(TARGET_REPO))
 SIDE = os.environ.get("FT_SIDE", "target")
 TASK_BIN = os.environ.get("FT_TASK_BIN", os.path.join(TARGET_REPO, "target/release/task"))
 MAKE_BIN = os.environ.get("FT_MAKE_TC_TASK_BIN",
