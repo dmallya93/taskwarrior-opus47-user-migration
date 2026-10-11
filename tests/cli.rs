@@ -3092,3 +3092,116 @@ fn delete_recurring_child_with_and_without_siblings() {
     assert!(export(&env, &["status:pending"]).is_empty());
     assert!(export(&env, &["status:recurring"]).is_empty());
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdStart.cpp: start
+
+#[test]
+fn start_feedback_already_started_and_exit_codes() {
+    let env = Env::new("confirmation=off\nverbose=affected,project\n");
+    quiet(&env, &["add", "one", "project:home"]);
+
+    let output = env.task(&["1", "start"]);
+    assert_eq!(stdout(&output), "Starting task 1 'one'.\nStarted 1 task.\n");
+    assert_eq!(
+        stderr(&output),
+        "Project 'home' is 0% complete (1 task remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &[]);
+    assert!(tasks[0].get("start").is_some());
+
+    let output = env.task(&["1", "start"]);
+    assert_eq!(
+        stdout(&output),
+        "Task 1 'one' already started.\nStarted 0 tasks.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = env.task(&["99", "start"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "No tasks specified.\n");
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn start_journal_annotation_reopens_completed_and_bulk_quit() {
+    let env = Env::new("journal.time=on\nbulk=2\nconfirmation=on\nverbose=affected\n");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+
+    let output = task_input(&env, &["1-2", "start"], "quit\n");
+    let out = stdout(&output);
+    assert!(out.starts_with("This command will alter 2 tasks.\n"), "{out}");
+    assert!(
+        out.ends_with("Start task 1 'one'? (yes/no/all/quit) Task not started.\nStarted 0 tasks.\n"),
+        "{out}"
+    );
+    assert_eq!(output.status.code(), Some(1));
+
+    quiet(&env, &["rc.confirmation=off", "2", "done"]);
+    let uuid = export(&env, &["status:completed"])[0]["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (out, _, code) = quiet(
+        &env,
+        &["rc.verbose=affected", "rc.confirmation=off", &uuid, "start"],
+    );
+    // Like C++, the reopened task keeps id 0, so the short UUID is shown.
+    assert_eq!(
+        out,
+        format!("Starting task {} 'two'.\nStarted 1 task.\n", &uuid[..8])
+    );
+    assert_eq!(code, 0);
+    let tasks = export(&env, &["2"]);
+    assert_eq!(tasks[0]["status"], "pending");
+    assert_eq!(tasks[0]["annotations"][0]["description"], "Started task");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdStop.cpp: stop
+
+#[test]
+fn stop_feedback_not_started_journal_and_exit_codes() {
+    let env = Env::new("confirmation=off\nverbose=affected\njournal.time=on\n");
+    quiet(&env, &["add", "one", "start:now"]);
+    quiet(&env, &["add", "two"]);
+
+    let output = env.task(&["1", "stop"]);
+    assert_eq!(stdout(&output), "Stopping task 1 'one'.\nStopped 1 task.\n");
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &["1"]);
+    assert!(tasks[0].get("start").is_none());
+    assert_eq!(tasks[0]["annotations"][0]["description"], "Stopped task");
+
+    let output = env.task(&["1-2", "stop"]);
+    assert_eq!(
+        stdout(&output),
+        "This command will alter 2 tasks.\nTask 1 'one' not started.\nTask 2 'two' not started.\nStopped 0 tasks.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = env.task(&["99", "stop"]);
+    assert_eq!(stderr(&output), "No tasks specified.\n");
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn stop_declined_permission() {
+    let env = Env::new("confirmation=on\nbulk=2\nverbose=affected\n");
+    quiet(&env, &["add", "one", "start:now"]);
+    quiet(&env, &["add", "two", "start:now"]);
+    let output = task_input(&env, &["1-2", "stop"], "no\nno\n");
+    let out = stdout(&output);
+    assert!(
+        out.contains("Stop task 1 'one'? (yes/no/all/quit) Task not stopped.\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("Stop task 2 'two'? (yes/no/all/quit) Task not stopped.\nStopped 0 tasks.\n"),
+        "{out}"
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(export(&env, &["+ACTIVE"]).len(), 2);
+}
