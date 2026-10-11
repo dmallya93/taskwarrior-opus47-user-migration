@@ -12,7 +12,8 @@
 //! term, the user tag/project/keyword/UDA coefficients and
 //! `urgency.inherit`, in C++ `float`/`double` evaluation order), the
 //! command-line modification [`Task::modify`] / [`Task::substitute`], and
-//! the later-milestone stub [`Task::diff`] (milestone 7).
+//! the change summary [`Task::diff`] (which takes the column registry and
+//! configuration that C++ `renderAttribute` reads from the Context).
 //!
 //! API mapping:
 //! * C++ statics are thread-local getter/setter pairs on [`Task`]
@@ -45,16 +46,17 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::rc::Rc;
 
-use crate::columns::column::MODIFICATION_LABEL;
+use crate::columns::column::{ColumnRegistry, MODIFICATION_LABEL};
 use crate::context::Context;
-use crate::feedback::{feedback_reserved_tags, feedback_special_tags};
+use crate::feedback::{feedback_reserved_tags, feedback_special_tags, render_attribute};
 use crate::shared::datetime::Datetime;
 use crate::shared::format::{format, stream_double};
 use crate::shared::json::{self, JType, JsonValue};
 use crate::lexer::{Lexer, Type as LexerType};
 use crate::shared::rx::RX;
 use crate::shared::localtime;
-use crate::shared::shared::{find_bytes_from, join, split, str_replace};
+use crate::shared::configuration::Configuration;
+use crate::shared::shared::{find_bytes_from, join, list_diff, split, str_replace};
 use crate::variant::VariantTask;
 use crate::{Result, TwError};
 
@@ -2462,17 +2464,101 @@ impl Task {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // Later-milestone stubs.
+    /// C++ `std::string Task::diff (const Task& after) const`: compares this
+    /// task to `after` and summarizes the differences for display, in the
+    /// future tense ("Foo will be set to ..").
+    ///
+    /// `columns` and `config` are what C++ `renderAttribute` reads from
+    /// `Context::getContext ()` (the column registry and `rc.dateformat`).
+    pub fn diff(&self, after: &Task, columns: &ColumnRegistry, config: &Configuration) -> String {
+        // Attributes are all there is, so figure the different attribute names
+        // between this (before) and after.
+        let before_atts: Vec<String> = self.data.keys().cloned().collect();
+        let after_atts: Vec<String> = after.data.keys().cloned().collect();
 
-    /// C++ `std::string Task::diff (const Task& after) const`: summarizes the
-    /// differences to `after` for display, in the future tense.
-    ///
-    /// Restored by milestone 7. Nothing calls it yet.
-    ///
-    /// # Errors
-    /// Always `TwError::NotImplemented("Task::diff")` until milestone 7.
-    pub fn diff(&self, _after: &Task) -> Result<String> {
-        Err(TwError::NotImplemented("Task::diff".into()))
+        let (before_only, after_only) = list_diff(&before_atts, &after_atts);
+
+        // Now start generating a description of the differences.
+        let mut out = String::new();
+        for name in &before_only {
+            if Task::is_annotation_attr(name) {
+                out += "  - ";
+                out += &format("Annotation {1} will be removed.", &[name]);
+                out += "\n";
+            } else if Task::is_tag_attr(name) {
+                out += "  - ";
+                out += &format("Tag {1} will be removed.", &[&Task::attr2tag(name)]);
+                out += "\n";
+            } else if Task::is_dep_attr(name) {
+                out += "  - ";
+                out += &format("Dependency on {1} will be removed.", &[&Task::attr2dep(name)]);
+                out += "\n";
+            } else if name == "depends" || name == "tags" {
+                // do nothing for legacy attributes
+            } else {
+                out += "  - ";
+                out += &format("{1} will be deleted.", &[&Lexer::uc_first(name)]);
+                out += "\n";
+            }
+        }
+
+        for name in &after_only {
+            if Task::is_annotation_attr(name) {
+                out += &format("Annotation of {1} will be added.\n", &[&after.get(name)]);
+            } else if Task::is_tag_attr(name) {
+                out += &format("Tag {1} will be added.\n", &[&Task::attr2tag(name)]);
+            } else if Task::is_dep_attr(name) {
+                out += &format("Dependency on {1} will be added.\n", &[&Task::attr2dep(name)]);
+            } else if name == "depends" || name == "tags" {
+                // do nothing for legacy attributes
+            } else {
+                out += "  - ";
+                out += &format(
+                    "{1} will be set to '{2}'.",
+                    &[
+                        &Lexer::uc_first(name),
+                        &render_attribute(columns, config, name, &after.get(name), ""),
+                    ],
+                );
+                out += "\n";
+            }
+        }
+
+        for name in &before_atts {
+            // Ignore UUID differences, and find values that changed, but are not also
+            // in the beforeOnly and afterOnly lists, which have been handled above..
+            if name != "uuid"
+                && self.get(name) != after.get(name)
+                && !before_only.contains(name)
+                && !after_only.contains(name)
+            {
+                if name == "depends" || name == "tags" {
+                    // do nothing for legacy attributes
+                } else if Task::is_tag_attr(name) || Task::is_dep_attr(name) {
+                    // ignore new attributes
+                } else if Task::is_annotation_attr(name) {
+                    out += &format("Annotation will be changed to {1}.\n", &[&after.get(name)]);
+                } else {
+                    out += "  - ";
+                    out += &format(
+                        "{1} will be changed from '{2}' to '{3}'.",
+                        &[
+                            &Lexer::uc_first(name),
+                            &render_attribute(columns, config, name, &self.get(name), ""),
+                            &render_attribute(columns, config, name, &after.get(name), ""),
+                        ],
+                    );
+                    out += "\n";
+                }
+            }
+        }
+
+        // Shouldn't just say nothing.
+        if out.is_empty() {
+            out += "  - No changes will be made.\n";
+        }
+
+        out
     }
 }
 
@@ -4037,6 +4123,99 @@ mod tests {
         assert_eq!(u.id, 9);
         assert_eq!(u.get("description"), "hello");
     }
+
+    fn diff_plain(before: &Task, after: &Task) -> String {
+        before.diff(after, &ColumnRegistry::new(), &Configuration::new())
+    }
+
+    #[test]
+    fn diff_no_changes() {
+        let mut t = Task::new();
+        t.set("description", "x");
+        assert_eq!(diff_plain(&t, &t.clone()), "  - No changes will be made.\n");
+        assert_eq!(diff_plain(&Task::new(), &Task::new()), "  - No changes will be made.\n");
+    }
+
+    #[test]
+    fn diff_plain_attributes() {
+        let mut before = Task::new();
+        before.set("zero", "0");
+        before.set_int("one", 1);
+        before.set_int("two", 2);
+        before.set("uuid", "a");
+
+        let mut after = Task::new();
+        after.set("zero", "00");
+        after.set_int("two", 2);
+        after.set_int("three", 3);
+        after.set("uuid", "b");
+
+        // beforeOnly, then afterOnly, then changed values; uuid is ignored.
+        assert_eq!(
+            diff_plain(&before, &after),
+            "  - One will be deleted.\n  - Three will be set to '3'.\n  - Zero will be changed from '0' to '00'.\n"
+        );
+    }
+
+    #[test]
+    fn diff_tags_dependencies_annotations() {
+        let mut before = Task::new();
+        before.set("tag_old", "x");
+        before.set("dep_1111", "x");
+        before.set("annotation_100", "gone");
+        before.set("annotation_200", "first");
+        before.set("tags", "old");
+        before.set("depends", "1111");
+        before.set("tag_same", "x");
+
+        let mut after = Task::new();
+        after.set("tag_new", "x");
+        after.set("dep_2222", "x");
+        after.set("annotation_300", "added");
+        after.set("annotation_200", "second");
+        after.set("tags", "new");
+        after.set("depends", "2222");
+        after.set("tag_same", "y");
+
+        assert_eq!(
+            diff_plain(&before, &after),
+            concat!(
+                "  - Annotation annotation_100 will be removed.\n",
+                "  - Dependency on 1111 will be removed.\n",
+                "  - Tag old will be removed.\n",
+                "Annotation of added will be added.\n",
+                "Dependency on 2222 will be added.\n",
+                "Tag new will be added.\n",
+                "Annotation will be changed to second.\n",
+            )
+        );
+    }
+
+    #[test]
+    fn diff_renders_dates_with_dateformat() {
+        let mut config = Configuration::new();
+        config.set("dateformat", "Y-M-D");
+        let mut columns = ColumnRegistry::new();
+        crate::columns::column::factory_all(&mut columns, &config).unwrap();
+        let day = |epoch: i64| Datetime::from_epoch(epoch).to_string("Y-M-D");
+        let mut before = Task::new();
+        before.set("due", "1700000000");
+        let mut after = Task::new();
+        after.set("due", "1700100000");
+        after.set("scheduled", "1700000000");
+        after.set("project", "1700000000");
+        let text = before.diff(&after, &columns, &config);
+        // Date columns render with rc.dateformat; other values are verbatim.
+        assert_eq!(
+            text,
+            format!(
+                "  - Project will be set to '1700000000'.\n  - Scheduled will be set to '{}'.\n  - Due will be changed from '{}' to '{}'.\n",
+                day(1700000000),
+                day(1700000000),
+                day(1700100000)
+            )
+        );
+    }
 }
 
 /// Tests for validation and dependencies (the Context-bound part of Task)
@@ -5113,11 +5292,6 @@ mod urgency_tests {
         assert_eq!(b.urgency(&mut f.ctx).unwrap(), -5.0);
     }
 
-    #[test]
-    fn later_milestone_stubs() {
-        let t = Task::new();
-        assert!(matches!(t.diff(&Task::new()), Err(TwError::NotImplemented(ref s)) if s == "Task::diff"));
-    }
 }
 
 #[cfg(test)]

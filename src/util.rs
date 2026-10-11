@@ -341,12 +341,10 @@ mod tests {
         }
     }
 
-    /// Assertions of util_test.cpp ported here: 1 `Task::operator==`
-    /// ("Detected changes"), 4 `indentProject` + 9 `nontrivial`. Not ported
-    /// here (they test functions deferred to later milestones): the other 5
-    /// `Task::diff` assertions (`Task::diff` is restored by milestone 7) and
-    /// the 3 `checked_add_datetime` assertions (recur.cpp, milestone 7).
-    const UTIL_TEST_ASSERTIONS: usize = 14;
+    /// Assertions of util_test.cpp ported here: 6 `Task::diff` /
+    /// `Task::operator==`, 4 `indentProject` + 9 `nontrivial`. Not ported
+    /// here: the 3 `checked_add_datetime` assertions (recur.cpp, milestone 7).
+    const UTIL_TEST_ASSERTIONS: usize = 19;
 
     #[test]
     fn util_test_cpp() {
@@ -363,9 +361,25 @@ mod tests {
         right.set_int("two", 2);
         right.set_int("three", 3);
 
-        // `left.diff (right)` (milestone 7) is not computed here; the
-        // `operator==` assertion does not depend on it.
+        let right_again = right.clone();
+
+        // The C++ test runs on a default (uninitialized) Context: no columns
+        // and an empty configuration.
+        let columns = crate::columns::column::ColumnRegistry::new();
+        let config = crate::shared::configuration::Configuration::new();
+
+        let mut output = left.diff(&right, &columns, &config);
         t.ok(!(left == right), "Detected changes");
+        t.ok(
+            output.contains("Zero will be changed from '0' to '00'"),
+            "Detected change zero:0 -> zero:00",
+        );
+        t.ok(output.contains("One will be deleted"), "Detected deletion one:1 ->");
+        t.ok(!output.contains("Two"), "Detected no change two:2 -> two:2");
+        t.ok(output.contains("Three will be set to '3'"), "Detected addition -> three:3");
+
+        output = right.diff(&right_again, &columns, &config);
+        t.ok(output.contains("No changes will be made"), "No changes detected");
 
         // std::vector<std::string> indentProject (const std::string&, const std::string whitespace="  ",
         // char delimiter='.');
