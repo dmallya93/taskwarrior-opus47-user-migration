@@ -999,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 67] = [
+    const PORTED: [&str; 68] = [
         "_columns",
         "_config",
         "_context",
@@ -1032,6 +1032,7 @@ mod tests {
         "count",
         "delete",
         "denotate",
+        "diagnostics",
         "done",
         "duplicate",
         "edit",
@@ -1374,10 +1375,12 @@ mod tests {
                     | "_tags"
                     | "udas"
                     | "news"
+                    | "diagnostics"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds;
-                // `news` waits on stdin and rewrites the rc file); covered in
+                // `news` waits on stdin and rewrites the rc file; `diagnostics`
+                // stats the rc file and data directory); covered in
                 // their own unit tests and end to end in tests/cli.rs.
                 continue;
             }

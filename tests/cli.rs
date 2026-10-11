@@ -188,16 +188,17 @@ fn no_command_with_empty_default_command() {
 
 #[test]
 fn stub_command_is_not_implemented() {
-    // `diagnostics` is still an unported stub. The dispatch path itself is
-    // also covered by a test-only stub command in the Context unit tests
+    // `logo` is still an unported stub. The dispatch path itself is also
+    // covered by a test-only stub command in the Context unit tests
     // (`stub_command_dispatch_reports_not_implemented`), which keeps working
-    // once every command is ported.
+    // once every command is ported. Remove this test when the last stub
+    // command is ported.
     let env = Env::new("");
-    let output = env.task(&["diagnostics"]);
+    let output = env.task(&["logo"]);
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        env.override_headers() + "Command 'diagnostics' is not yet implemented.\n"
+        env.override_headers() + "Command 'logo' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -209,6 +210,72 @@ fn no_override_headers_without_taskrc_taskdata() {
     let output = env.command(&["calc"]).output().unwrap();
     assert_eq!(stderr(&output), "No expression to evaluate.\n");
     assert_eq!(output.status.code(), Some(2));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdDiagnostics.cpp: diagnostics
+
+#[test]
+fn diagnostics_reports_build_configuration_hooks_and_tests() {
+    let env = Env::new("editor=edlin\ndefaultwidth=80\ndefaultheight=24\n");
+    let output = env.task(&["diag"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let out = stdout(&output);
+    let rc = env.rc().display().to_string();
+    let data = env.data().display().to_string();
+    assert!(out.starts_with("\ntask 3.5.0\n   Platform: "), "{out}");
+    assert!(out.contains("\n\nCompiler\n    Version: rustc "), "{out}");
+    assert!(out.contains(" +time_t64\n Compliance: C++17\n\nBuild Features\n"), "{out}");
+    assert!(out.contains("\n Build type: "), "{out}");
+    assert!(
+        out.contains(&format!("\n\nConfiguration\n       File: {rc} (found), ")),
+        "{out}"
+    );
+    assert!(out.contains(&format!("\n       Data: {data} (found), dir, mode 40")), "{out}");
+    assert!(out.contains(&format!("\n     TASKRC: {rc}\n   TASKDATA: {data}\n")), "{out}");
+    assert!(out.contains("\n  rc.editor: edlin\nHooks\n     System: Disabled\n"), "{out}");
+    assert!(
+        out.ends_with(
+            "             (-none-)\n\nTests\n   Terminal: 120x30\n \
+             Broken ref: Scanned 0 tasks for broken references:\n             \
+             No broken references found\n\n"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("\x1b[1m"));
+}
+
+#[test]
+fn diagnostics_bold_only_with_forced_colour() {
+    let env = Env::new("");
+    let plain = stdout(&env.task(&["rc.color:off", "diag"]));
+    assert!(!plain.contains("\x1b[1m"), "{plain}");
+    let forced = stdout(&env.task(&["rc._forcecolor:on", "diag"]));
+    assert!(forced.starts_with("\n\x1b[1mtask 3.5.0\x1b[0m\n"), "{forced:?}");
+    assert!(forced.contains("\x1b[1mTests\x1b[0m\n"), "{forced:?}");
+}
+
+#[test]
+fn diagnostics_reports_broken_references() {
+    let env = Env::new("");
+    let missing = "00000000-0000-0000-0000-000000000009";
+    let task = "00000000-0000-0000-0000-000000000001";
+    env.write(
+        "in.json",
+        &format!(
+            r#"[{{"uuid":"{task}","description":"x","status":"pending","entry":"20240101T000000Z","depends":["{missing}"]}}]"#
+        ),
+    );
+    let output = env.task(&["import", env.path("in.json").to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let out = stdout(&env.task(&["diag"]));
+    assert!(
+        out.ends_with(&format!(
+            " Broken ref: Scanned 1 tasks for broken references:\n             \
+             Task {task} depends on nonexistent task: {missing}\n\n"
+        )),
+        "{out}"
+    );
 }
 
 ////////////////////////////////////////////////////////////////////////////////

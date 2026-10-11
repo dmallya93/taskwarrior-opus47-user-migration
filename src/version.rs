@@ -30,6 +30,24 @@ pub const PACKAGE_URL: &str = "https://taskwarrior.org/";
 /// set in the build environment is used, if any (e.g. by packagers).
 pub const COMMIT: Option<&str> = option_env!("TASK_COMMIT");
 
+/// Rust stand-in for the C++ `__VERSION__` compiler macro: the first line of
+/// `rustc --version` for the compiler that built this binary (`build.rs`).
+pub const RUSTC_VERSION: &str = env!("TASK_RUSTC_VERSION");
+
+/// Rust stand-in for `CMAKE_VERSION`: the first line of `cargo --version`
+/// for the cargo that ran the build (`build.rs`).
+pub const CARGO_VERSION: &str = env!("TASK_CARGO_VERSION");
+
+/// The target triple this binary was built for (`build.rs`).
+pub const TARGET: &str = env!("TASK_TARGET");
+
+/// Rust stand-in for `CMAKE_BUILD_TYPE`: the cargo profile (`release`,
+/// `debug`) of the build (`build.rs`).
+pub const PROFILE: &str = env!("TASK_PROFILE");
+
+/// The enabled cargo features, comma separated, sorted (`build.rs`).
+pub const FEATURES: &str = env!("TASK_FEATURES");
+
 /// A Taskwarrior version of the form `major.minor.patch`.
 ///
 /// An invalid version (C++ default constructor, or a failed parse) has all
