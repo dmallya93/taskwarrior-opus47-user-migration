@@ -1026,6 +1026,8 @@ mod tests {
         "log",
         "modify",
         "reports",
+        "start",
+        "stop",
         "uuids",
         "version",
     ];
@@ -1285,6 +1287,8 @@ mod tests {
                     | "modify"
                     | "done"
                     | "delete"
+                    | "start"
+                    | "stop"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
