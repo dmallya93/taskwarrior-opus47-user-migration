@@ -1226,6 +1226,7 @@ mod tests {
                     | "information"
                     | "_zshattributes"
                     | "_columns"
+                    | "modify"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
