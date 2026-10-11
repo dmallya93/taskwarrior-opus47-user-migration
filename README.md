@@ -30,22 +30,38 @@ instead of the bundled ones.
 
 ## Testing
 
+### CI gates
+
+Every gate must be green before a change lands:
+
+| Gate | Command |
+|---|---|
+| Release build | `cargo build --release` |
+| Unit and integration tests | `cargo test` |
+| Lint | `cargo clippy --all-targets -- -D warnings` |
+| Full acceptance suite | `scripts/run-acceptance.sh --strict` |
+| License policy | `cargo deny check licenses` (policy in `deny.toml`; permissive licenses only) |
+
 ```sh
-cargo test                                   # unit tests (#[cfg(test)] modules)
-cargo clippy --all-targets -- -D warnings    # lint gate
-cargo deny check licenses                    # license gate (deny.toml)
+cargo build --release        # -> target/release/task, target/release/make_tc_task
+cargo test
+cargo clippy --all-targets -- -D warnings
+TW_REFERENCE_DIR=../taskwarrior-opus47-dmallya93 scripts/run-acceptance.sh --no-build --strict -j 8 -t 120
+cargo deny check licenses
 ```
 
+### Acceptance harness
+
 The acceptance gate is the original Taskwarrior Python (`test/*.test.py`) and
-bash TAP (`tw-*.test.sh`) suites, run against `target/release/task` with
+bash TAP (`test/*.test.sh`) suites, run against `target/release/task` with
 `TASK_USE_PATH=1` and `target/release` on `PATH`. Results are written to
 `acceptance-results/`.
 
 ```sh
-scripts/run-acceptance.sh                         # build, then run all 148 files
-scripts/run-acceptance.sh --no-build -j 4         # skip build, 4 files in parallel
+scripts/run-acceptance.sh                         # build, then run every discovered file (148)
+scripts/run-acceptance.sh --no-build -j 8         # skip build, 8 files in parallel
 scripts/run-acceptance.sh version.test.py 'tw-*.test.sh'   # subset (names/globs)
-scripts/run-acceptance.sh --strict                # final gate: nonzero on any failure
+scripts/run-acceptance.sh --strict                # final gate: exit 1 on any registered failure
 ```
 
 The reference repo defaults to `../taskwarrior-opus47-dmallya93` (override with
@@ -56,10 +72,68 @@ The reference repo defaults to `../taskwarrior-opus47-dmallya93` (override with
 `configure_file` does. `CMAKE_BINARY_DIR` is set to `acceptance-results/work`,
 which holds the `src/task` and `test/make_tc_task` symlinks. `CMAKE_SOURCE_DIR` is
 set to the reference repo root. Each file's output goes to
-`acceptance-results/logs/<file>.log`, and the results are written to
-`summary.txt` and `summary.json`: pass, fail, timeout, skip, and xfail/xpass
-for files on the reference `WILL_FAIL` list, with TAP case counts. Without
-`--strict`, the script exits nonzero only on harness errors.
+`acceptance-results/logs/<file>.log`. `summary.txt` and `summary.json` record:
+
+- the files discovered in the reference `test/` directory (`*.test.py`,
+  `tw-*.test.sh`, other `*.test.sh`) and how many of them are registered with
+  CTest in `test/CMakeLists.txt` (the `pythonTests` and `shell_SRCS` lists);
+- one row per file (pass, fail, timeout, skip, plus xfail/xpass for files on a
+  `WILL_FAIL` list), with TAP case counts: pass, fail, skip (`ok ... # skip`)
+  and xfail (`not ok ... # TODO`, i.e. `@unittest.expectedFailure`);
+- every in-file `@unittest.expectedFailure` / `skip` / `skipIf` / `skipUnless`
+  marker (and any `skipTest()`/`SkipTest`), with file, line, test, condition
+  and reason, plus per-file observed xfail/skip counts next to the marker counts;
+- totals for all files and for the CTest-registered files, and the gate verdict.
+
+Files that exist in `test/` but are not registered with CTest still run and are
+reported, tagged `[UNREGISTERED: not gated]`. `--strict` mirrors `ctest`: it
+gates only the registered files, and it exits 1 if any of them fails or times
+out, or if a `WILL_FAIL` file passes. Without `--strict` the script exits 0
+once the harness has run. In both modes it exits 2 on a harness error (missing
+reference dir, `python3` or binaries, a failed build, or a failed summary).
+
+### Acceptance results
+
+Final run (`scripts/run-acceptance.sh --no-build -j 8 -t 120`, `--strict`
+exits 0):
+
+| Scope | Files | File result | Cases |
+|---|---|---|---|
+| CTest-registered (the gate) | 147 (125 `pythonTests` + 22 `shell_SRCS`) | 146 pass, 1 skip, 0 fail | 1180 pass, 0 fail, 12 skip, 6 xfail (100.00% of cases run) |
+| All discovered | 148 (126 `*.test.py` + 22 `tw-*.test.sh`, no other `*.test.sh`) | 146 pass, 1 skip, 1 fail | 1184 pass, 2 fail, 13 skip, 7 xfail (99.83%) |
+
+Notes:
+
+- **`template.test.py`** is the only failing file, and it is not listed in the
+  reference `test/CMakeLists.txt`. It is the upstream template for new tests
+  and contains deliberately broken cases: `test_fail_other` asserts
+  `"I like to code" == "I like\nto code\n"`, and `test_version` calls `.decode`
+  on a `str`. It fails against any binary, the C++ one included. It accounts
+  for the 1 failing file, the 2 failing cases, and 1 of the skips and 1 of the
+  xfails in the "all discovered" row.
+- **WILL_FAIL inconsistency.** The spec tracks tests "marked WILL_FAIL in
+  test/CMakeLists.txt", but the reference CMakeLists declares no `WILL_FAIL`
+  properties, so that list is empty. The harness says this in the summary and
+  uses the in-file Python markers as the expected-failure list instead. It
+  still parses `set_tests_properties(... WILL_FAIL ...)` in case the reference
+  ever adds any.
+- **In-file markers.** There are 27 markers in 10 files: 7
+  `@unittest.expectedFailure` and 20 skip-type markers. Among the registered
+  files, all 6 `expectedFailure` cases report `# TODO` (xfail): 2 in
+  `dependencies.test.py`, 3 in `filter.test.py` and 1 in `quotes.test.py`.
+  None passes unexpectedly. The 12 registered skips are 9
+  `datetime-negative.test.py` cases (`@unittest.skip`, upstream #2996), one
+  `dependencies.test.py` case ("Skipping due to undeterminism"), plus the two
+  below. The `skipIf` markers in `calc.test.py` (calc binary missing),
+  `color.rules.test.py` (Cygwin/FreeBSD) and `search.test.py` (Cygwin) do not
+  trigger on Linux, so those tests run and pass.
+- **`taskrc.test.py`** is reported as a skipped file because its only test,
+  `test_default_taskrc`, is unconditionally `@unittest.skip("taskrc generation
+  requires a tty - see #3751")` upstream.
+- **`diag.test.py`**: `test_diagnostics` is skipped by
+  `skipIf(getattr(platform, "dist", None) == None or ...)`. `platform.dist` was
+  removed in Python 3.8, so the condition is always true on a modern Python,
+  and the reference skips the test as well.
 
 ## Layout
 
