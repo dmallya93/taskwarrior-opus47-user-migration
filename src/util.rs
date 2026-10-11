@@ -342,9 +342,9 @@ mod tests {
     }
 
     /// Assertions of util_test.cpp ported here: 6 `Task::diff` /
-    /// `Task::operator==`, 4 `indentProject` + 9 `nontrivial`. Not ported
-    /// here: the 3 `checked_add_datetime` assertions (recur.cpp, milestone 7).
-    const UTIL_TEST_ASSERTIONS: usize = 19;
+    /// `Task::operator==`, 4 `indentProject`, 9 `nontrivial` and 3
+    /// `checked_add_datetime` (recur.cpp).
+    const UTIL_TEST_ASSERTIONS: usize = 22;
 
     #[test]
     fn util_test_cpp() {
@@ -402,6 +402,13 @@ mod tests {
         t.ok(nontrivial("a   "), "nontrivial 'a   ' -> true");
         t.ok(nontrivial("  \t\ta"), "nontrivial '  \\t\\ta' -> true");
         t.ok(nontrivial("a\t\t  "), "nontrivial 'a\\t\\t  ' -> true");
+
+        // std::optional<Datetime> checked_add_datetime (Datetime& base, time_t delta);
+        let dt = crate::shared::datetime::Datetime::from_epoch(1_234_526_400);
+        let max = crate::shared::datetime::Datetime::from_epoch(i64::MAX);
+        t.ok(crate::recur::checked_add_datetime(&dt, 10).is_some(), "small delta");
+        t.ok(crate::recur::checked_add_datetime(&dt, 0x1_0000_0000).is_none(), "delta > 32bit");
+        t.ok(crate::recur::checked_add_datetime(&max, 1).is_none(), "huge base time");
 
         assert!(t.failures.is_empty(), "{}", t.failures.join("\n"));
         assert_eq!(t.counter, UTIL_TEST_ASSERTIONS, "number of assertions executed");

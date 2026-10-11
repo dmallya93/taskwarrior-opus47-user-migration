@@ -52,12 +52,9 @@
 //! taking `&mut Context`, with the contextual task passed separately
 //! (`current_task` is an `Rc`, cloned first).
 //!
-//! The call sites for subsystems owned by later milestones exist and are
-//! called at the C++ places; their bodies are documented no-ops (milestone 5
-//! Design Decision 3, option 1):
-//!
-//! - **Milestone 7**: `handleUntil` / `handleRecurrence`
-//!   ([`crate::recur`]).
+//! `handleUntil` / `handleRecurrence` are [`crate::recur::handle_until`] /
+//! [`crate::recur::handle_recurrence`], called from `dispatch` at the C++
+//! place.
 //!
 //! Hooks (`Hooks::initialize` / `onLaunch` / `onExit`) are
 //! [`crate::hooks::Hooks`] associated functions taking the Context.
@@ -1118,7 +1115,6 @@ impl Context {
             }
 
             if c.needs_recur_update() && self.config.get_boolean("gc") {
-                // Milestone 7 recurrence (`recur.cpp`): no-ops for now.
                 recur::handle_until(self)?;
                 recur::handle_recurrence(self)?;
             }

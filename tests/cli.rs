@@ -1131,9 +1131,12 @@ fn count_skips_recurring_templates() {
     ] {
         assert_eq!(quiet(&env, args).2, 0);
     }
-    assert_eq!(quiet(&env, &["count"]).0, "3\n");
+    // `count` runs handleRecurrence first: the template's first instance is
+    // created (pending), the template itself is never counted.
+    assert_eq!(quiet(&env, &["count"]).0, "4\n");
     assert_eq!(quiet(&env, &["+tag", "count"]).0, "1\n");
-    assert_eq!(quiet(&env, &["status:pending", "count"]).0, "2\n");
+    assert_eq!(quiet(&env, &["status:pending", "count"]).0, "3\n");
+    assert_eq!(quiet(&env, &["parent.any:", "count"]).0, "1\n");
     assert_eq!(quiet(&env, &["status:recurring", "count"]).0, "0\n");
     assert_eq!(quiet(&env, &["/o/", "count"]).0, "2\n");
 }
@@ -2105,4 +2108,17 @@ fn on_exit_hook_reads_the_changed_tasks_and_rejects_json() {
         env.override_headers() + "Hook Error: Expected 0 JSON task(s), found 1, in hook script: on-exit\n"
     );
     assert_eq!(output.status.code(), Some(4));
+}
+
+#[test]
+fn until_expires_tasks_before_reports() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "gone", "until:now-1h"]).2, 0);
+    assert_eq!(quiet(&env, &["add", "kept", "until:now+1h"]).2, 0);
+    // `count` runs handleUntil first: the expired task is deleted. (An
+    // unfiltered count includes deleted tasks, as in C++.)
+    assert_eq!(quiet(&env, &["count"]).0, "2\n");
+    assert_eq!(quiet(&env, &["status:pending", "count"]).0, "1\n");
+    assert_eq!(quiet(&env, &["status:deleted", "count"]).0, "1\n");
+    assert_eq!(quiet(&env, &["status:deleted", "_unique", "description"]).0, "gone\n");
 }

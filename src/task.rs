@@ -317,7 +317,7 @@ fn c_string(text: &str) -> CString {
 }
 
 /// C `strtol (s.c_str (), nullptr, 10)` (`long` is 64-bit on LP64).
-fn c_strtol(text: &str) -> i64 {
+pub(crate) fn c_strtol(text: &str) -> i64 {
     let text = c_string(text);
     // SAFETY: `text` is a valid NUL-terminated string and a null `endptr` is
     // permitted.
