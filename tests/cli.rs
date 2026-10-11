@@ -188,11 +188,11 @@ fn no_command_with_empty_default_command() {
 #[test]
 fn stub_command_is_not_implemented() {
     let env = Env::new("");
-    let output = env.task(&["prepend", "x"]);
+    let output = env.task(&["calendar"]);
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        env.override_headers() + "Command 'prepend' is not yet implemented.\n"
+        env.override_headers() + "Command 'calendar' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -201,10 +201,10 @@ fn stub_command_is_not_implemented() {
 fn no_override_headers_without_taskrc_taskdata() {
     let env = Env::new("");
     std::fs::copy(env.rc(), env.home().join(".taskrc")).unwrap();
-    let output = env.command(&["prepend", "x"]).output().unwrap();
+    let output = env.command(&["calendar"]).output().unwrap();
     assert_eq!(
         stderr(&output),
-        "Command 'prepend' is not yet implemented.\n"
+        "Command 'calendar' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
