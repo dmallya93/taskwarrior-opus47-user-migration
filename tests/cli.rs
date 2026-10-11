@@ -3770,3 +3770,101 @@ fn sync_configuration_errors() {
         assert_eq!(output.status.code(), Some(2), "{overrides:?}");
     }
 }
+
+#[test]
+fn purge_confirmation_dependencies_and_feedback() {
+    let env = Env::new("confirmation=on\nverbose=affected,footnote\n");
+    quiet(&env, &["rc.confirmation=off", "add", "one"]);
+    quiet(&env, &["rc.confirmation=off", "add", "two", "depends:1"]);
+
+    // Only deleted tasks are purgeable.
+    let output = task_input(&env, &["1", "purge"], "");
+    assert_eq!(stdout(&output), "Purged 0 tasks.\n");
+    assert_eq!(
+        stderr(&output),
+        "No deleted tasks specified. Maybe you forgot to delete tasks first?\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let uuid = export(&env, &["1"])[0]["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    quiet(&env, &["rc.confirmation=off", "1", "delete"]);
+
+    // Declining keeps the task, exit code unchanged.
+    let output = task_input(&env, &[&uuid, "purge"], "no\n");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Permanently remove task {} 'one'? (yes/no) Purged 0 tasks.\n",
+            &uuid[..8]
+        )
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = task_input(&env, &[&uuid, "purge"], "yes\n");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Permanently remove task {} 'one'? (yes/no) Purged 1 task.\n",
+            &uuid[..8]
+        )
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["description"], "two");
+    assert!(tasks[0].get("depends").is_none(), "{:?}", tasks[0]);
+
+    // Nothing matched.
+    let output = task_input(&env, &[&uuid, "purge"], "");
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "No tasks specified.\n");
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn purge_recurrence_template_children() {
+    let env = Env::new("confirmation=off\nverbose=affected\n");
+    quiet(&env, &["add", "rec", "due:tomorrow", "recur:daily"]);
+    quiet(&env, &["list"]);
+    let parent = export(&env, &["status:recurring"])[0]["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    quiet(&env, &["rc.recurrence.confirmation=no", &parent, "delete"]);
+
+    // A pending child blocks the purge.
+    let output = env.task(&[&parent, "purge"]);
+    assert!(
+        stderr(&output).starts_with("Task 'rec' is a recurrence template. Its child task "),
+        "{}",
+        stderr(&output)
+    );
+    assert_ne!(output.status.code(), Some(0));
+
+    quiet(
+        &env,
+        &[
+            "rc.recurrence=off",
+            "rc.recurrence.confirmation=no",
+            "status:pending",
+            "delete",
+        ],
+    );
+    let output = task_input(
+        &env,
+        &["rc.recurrence.confirmation=prompt", &parent, "purge"],
+        "no\n",
+    );
+    assert!(stdout(&output).ends_with(
+        "Task 'rec' is a recurrence template. All its 1 deleted children tasks will be purged as well. Continue? (yes/no) "
+    ), "{}", stdout(&output));
+    assert_eq!(stderr(&output), "Purge operation aborted.\n");
+
+    let output = env.task(&["rc.recurrence.confirmation=yes", &parent, "purge"]);
+    assert_eq!(stdout(&output), "Purged 2 tasks.\n");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(export(&env, &["rc.recurrence=off"]).len(), 0);
+}

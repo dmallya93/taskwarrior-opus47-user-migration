@@ -192,3 +192,164 @@ impl Command for CmdPurge {
         Ok(rc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+
+    const PENDING: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const GONE: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+    const GONE2: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+    const PARENT: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    const CHILD1: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+    const CHILD2: &str = "bbbbbbbb-0000-4000-8000-000000000003";
+
+    /// A pending task depending on a deleted task, a second deleted task,
+    /// and a deleted recurrence template with two deleted children.
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"pending","status":"pending","entry":"20260101T000000Z","depends":"aaaaaaaa-0000-4000-8000-000000000002"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000002","description":"gone","status":"deleted","entry":"20260101T000000Z","end":"20260102T000000Z"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000003","description":"gone2","status":"deleted","entry":"20260101T000000Z","end":"20260102T000000Z"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000001","description":"rec","status":"deleted","entry":"20260101T000000Z","end":"20260102T000000Z","due":"20260101T000000Z","recur":"daily","mask":"XX"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000002","description":"rec","status":"deleted","entry":"20260101T000000Z","end":"20260102T000000Z","due":"20260101T000000Z","recur":"daily","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"0"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000003","description":"rec","status":"deleted","entry":"20260101T000000Z","end":"20260102T000000Z","due":"20260102T000000Z","recur":"daily","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"1"}"#,
+    ];
+
+    fn fixture(rc_lines: &str, args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, &format!("confirmation=off\n{rc_lines}"), args)
+    }
+
+    fn exists(f: &mut CommandFixture, uuid: &str) -> bool {
+        f.ctx.tdb2.get_by_uuid(uuid).unwrap().is_some()
+    }
+
+    #[test]
+    fn purges_deleted_task_and_removes_dependency() {
+        let mut f = fixture("", &[GONE, "purge"]);
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 0);
+        assert!(!exists(&mut f, GONE));
+        assert!(!f.task(PENDING).has_dependency(GONE));
+        assert!(exists(&mut f, GONE2));
+    }
+
+    #[test]
+    fn no_tasks_specified() {
+        let mut f = fixture("", &["99", "purge"]);
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 1);
+        assert_eq!(f.ctx.footnotes, vec!["No tasks specified.".to_string()]);
+    }
+
+    #[test]
+    fn non_deleted_task_is_not_purged() {
+        let mut f = fixture("", &[PENDING, "purge"]);
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 0);
+        assert!(exists(&mut f, PENDING));
+        assert_eq!(
+            f.ctx.footnotes,
+            vec!["No deleted tasks specified. Maybe you forgot to delete tasks first?".to_string()]
+        );
+    }
+
+    #[test]
+    fn confirmation_declined_keeps_task() {
+        let mut f = fixture("confirmation=on\n", &[GONE, "purge"]);
+        begin_console_override("no\n");
+        let rc = f.run(&CmdPurge::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 0);
+        assert_eq!(shown, "Permanently remove task aaaaaaaa 'gone'? (yes/no) ");
+        assert!(exists(&mut f, GONE));
+        assert!(f.task(PENDING).has_dependency(GONE));
+    }
+
+    #[test]
+    fn confirmation_accepted_purges() {
+        let mut f = fixture("confirmation=on\n", &[GONE, "purge"]);
+        begin_console_override("yes\n");
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 0);
+        end_console_override();
+        assert!(!exists(&mut f, GONE));
+    }
+
+    #[test]
+    fn template_purges_children_with_confirmation_yes() {
+        let mut f = fixture("recurrence.confirmation=yes\n", &[PARENT, "purge"]);
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 0);
+        for uuid in [PARENT, CHILD1, CHILD2] {
+            assert!(!exists(&mut f, uuid), "{uuid}");
+        }
+    }
+
+    #[test]
+    fn template_prompt_accepted_purges_children() {
+        let mut f = fixture("recurrence.confirmation=prompt\n", &[PARENT, "purge"]);
+        begin_console_override("yes\n");
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 0);
+        let shown = end_console_override();
+        assert_eq!(
+            shown,
+            "Task 'rec' is a recurrence template. All its 2 deleted children tasks will be purged as well. Continue? (yes/no) "
+        );
+        for uuid in [PARENT, CHILD1, CHILD2] {
+            assert!(!exists(&mut f, uuid), "{uuid}");
+        }
+    }
+
+    #[test]
+    fn template_prompt_declined_aborts() {
+        let mut f = fixture("recurrence.confirmation=prompt\n", &[PARENT, "purge"]);
+        begin_console_override("no\n");
+        let err = f.run(&CmdPurge::new()).unwrap_err();
+        end_console_override();
+        assert_eq!(err.to_string(), "Purge operation aborted.");
+        for uuid in [PARENT, CHILD1, CHILD2] {
+            assert!(exists(&mut f, uuid), "{uuid}");
+        }
+    }
+
+    #[test]
+    fn template_confirmation_no_aborts() {
+        let mut f = fixture("recurrence.confirmation=no\n", &[PARENT, "purge"]);
+        let err = f.run(&CmdPurge::new()).unwrap_err();
+        assert_eq!(err.to_string(), "Purge operation aborted.");
+        assert!(exists(&mut f, PARENT));
+    }
+
+    #[test]
+    fn template_with_pending_child_cannot_be_purged() {
+        let mut f = fixture("recurrence.confirmation=yes\n", &[PARENT, "purge"]);
+        let mut child = f.task(CHILD2);
+        child.set_status(Status::Pending);
+        child.remove("end");
+        tdb2::modify(&mut f.ctx, &mut child).unwrap();
+        let id = f.task(CHILD2).identifier(true);
+        let err = f.run(&CmdPurge::new()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Task 'rec' is a recurrence template. Its child task {id} must be deleted before it can be purged."
+            )
+        );
+        assert!(exists(&mut f, PARENT));
+        assert!(exists(&mut f, CHILD1));
+    }
+
+    #[test]
+    fn bulk_quit_purges_nothing_further() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &[GONE, GONE2, "purge"]);
+        begin_console_override("quit\n");
+        assert_eq!(f.run(&CmdPurge::new()).unwrap(), 0);
+        let shown = end_console_override();
+        // One prompt only (in filter order); `quit` refuses the rest.
+        assert!(
+            shown.starts_with("Permanently remove task aaaaaaaa 'gone")
+                && shown.ends_with("'? (yes/no/all/quit) ")
+                && shown.matches('?').count() == 1,
+            "{shown:?}"
+        );
+        assert!(exists(&mut f, GONE));
+        assert!(exists(&mut f, GONE2));
+    }
+}
