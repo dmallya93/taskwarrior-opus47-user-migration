@@ -56,9 +56,11 @@
 //! called at the C++ places; their bodies are documented no-ops (milestone 5
 //! Design Decision 3, option 1):
 //!
-//! - **Milestone 7**: `Hooks::initialize` / `onLaunch` / `onExit`
-//!   ([`crate::hooks::Hooks`]), `handleUntil` / `handleRecurrence`
+//! - **Milestone 7**: `handleUntil` / `handleRecurrence`
 //!   ([`crate::recur`]).
+//!
+//! Hooks (`Hooks::initialize` / `onLaunch` / `onExit`) are
+//! [`crate::hooks::Hooks`] associated functions taking the Context.
 //!
 //! Per-task colour rules (`rules.cpp` `autoColorize`) are not part of
 //! Context: they are rendered by [`crate::view_task::ViewTask`], which calls
@@ -918,8 +920,7 @@ impl Context {
         //
         ////////////////////////////////////////////////////////////////////////
 
-        // Milestone 7 hook: `hooks.initialize` is a no-op for now.
-        self.hooks.initialize()?;
+        Hooks::initialize(self)?;
 
         Ok(())
     }
@@ -1034,10 +1035,9 @@ impl Context {
 
     /// The body of the C++ `run` `try` block.
     fn run_steps(&mut self, output: &mut String) -> Result<i32> {
-        // Milestone 7 hook: `hooks.onLaunch` / `onExit` are no-ops for now.
-        self.hooks.on_launch()?;
+        Hooks::on_launch(self)?;
         let rc = self.dispatch(output)?;
-        self.hooks.on_exit()?; // No chance to update data.
+        Hooks::on_exit(self)?; // No chance to update data.
 
         self.timer_total.stop();
         self.time_total_us += self.timer_total.total_us() as i64;
@@ -1118,7 +1118,7 @@ impl Context {
             }
 
             if c.needs_recur_update() && self.config.get_boolean("gc") {
-                // Milestone 7 hooks: no-ops for now.
+                // Milestone 7 recurrence (`recur.cpp`): no-ops for now.
                 recur::handle_until(self)?;
                 recur::handle_recurrence(self)?;
             }

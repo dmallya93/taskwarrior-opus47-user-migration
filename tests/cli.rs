@@ -6,7 +6,7 @@
 //! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
 //! `ids`/`uuids` family, `_unique` and `_zshattributes`, and the milestone 6
 //! report stack (custom reports, `sort.cpp`, `setHeaderUnderline` and the
-//! column factory).
+//! column factory), and the milestone 7 hook scripts (`Hooks.cpp`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -2038,4 +2038,71 @@ fn report_without_labels_uses_column_labels() {
          -- ------- ---- ------- ----   -----------\n \
          1 P       t    Pending x    y one\n"
     );
+}
+
+/// Writes an executable `/bin/sh` hook script `<tmp>/hooks/<name>`.
+fn hook_script(env: &Env, name: &str, body: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = env.path("hooks");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn hooks_env(env_rc: &str) -> Env {
+    let env = Env::new(env_rc);
+    let rc = std::fs::read_to_string(env.rc()).unwrap().replace("hooks=off\n", "");
+    let hooks = env.path("hooks");
+    env.write("test.rc", &format!("{rc}hooks=on\nhooks.location={}\n", hooks.display()));
+    env
+}
+
+#[test]
+fn on_add_hook_modifies_the_task_and_gives_feedback() {
+    let env = hooks_env("");
+    hook_script(&env, "on-add", "read line; echo \"$line\" | sed 's/\"first\"/\"changed\"/'; echo 'hook says hi'");
+    let output = env.task(&["add", "first"]);
+    assert_eq!(stdout(&output), "Created task 1.\n");
+    assert_eq!(stderr(&output), env.override_headers() + "hook says hi\n");
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["_get", "1.description"]);
+    assert_eq!(stdout(&output), "changed\n");
+}
+
+#[test]
+fn failing_on_launch_hook_stops_with_status_4() {
+    let env = hooks_env("");
+    hook_script(&env, "on-launch", "echo 'not today'; exit 1");
+    let output = env.task(&["add", "first"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), env.override_headers() + "not today\n");
+    assert_eq!(output.status.code(), Some(4));
+
+    // Nothing was added.
+    std::fs::remove_file(env.path("hooks/on-launch")).unwrap();
+    let output = env.task(&["count"]);
+    assert_eq!(stdout(&output), "0\n");
+}
+
+#[test]
+fn on_exit_hook_reads_the_changed_tasks_and_rejects_json() {
+    let env = hooks_env("");
+    hook_script(&env, "on-exit", "while read line; do echo \"$line\" | grep -q '\"description\":\"first\"' && echo saw first; done");
+    let output = env.task(&["add", "first"]);
+    assert_eq!(stdout(&output), "Created task 1.\n");
+    assert_eq!(stderr(&output), env.override_headers() + "saw first\n");
+    assert_eq!(output.status.code(), Some(0));
+
+    // JSON output from on-exit is an error, status 4; the command output is
+    // still printed, as in C++ `Context::run`.
+    hook_script(&env, "on-exit", "echo '{\"a\":1}'");
+    let output = env.task(&["count"]);
+    assert_eq!(stdout(&output), "1\n");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "Hook Error: Expected 0 JSON task(s), found 1, in hook script: on-exit\n"
+    );
+    assert_eq!(output.status.code(), Some(4));
 }

@@ -43,6 +43,7 @@ use taskchampion::storage::AccessMode;
 use taskchampion::{Operation as TcOperation, Operations, Replica, SqliteStorage, Status as TcStatus, TaskData, Uuid, WorkingSet};
 
 use crate::context::Context;
+use crate::hooks::Hooks;
 use crate::shared::format::format;
 use crate::shared::fs::Path;
 use crate::shared::shared::close_enough;
@@ -996,7 +997,7 @@ pub fn add(ctx: &mut Context, task: &mut Task) -> Result<()> {
     let tcuuid = uuid_from_string(task.get_ref("uuid"))?;
 
     // run hooks for this new task
-    ctx.hooks.on_add(task)?;
+    Hooks::on_add(ctx, task)?;
 
     ctx.tdb2.commit_add(task, tcuuid, ops)
 }
@@ -1016,8 +1017,8 @@ pub fn modify(ctx: &mut Context, task: &mut Task) -> Result<()> {
     // invoke the hook and allow it to modify the task before updating
     let original = ctx.tdb2.get_by_uuid(&uuid)?;
     let found_original = original.is_some();
-    let original = original.unwrap_or_default();
-    ctx.hooks.on_modify(&original, task)?;
+    let mut original = original.unwrap_or_default();
+    Hooks::on_modify(ctx, &mut original, task)?;
 
     ctx.tdb2.commit_modify(task, &uuid, &original, found_original, ops)
 }
