@@ -883,8 +883,6 @@ mod tests {
         "context",
         "count",
         "delete",
-        "done",
-        "delete",
         "denotate",
         "diagnostics",
         "done",
@@ -1231,6 +1229,8 @@ mod tests {
                     | "_zshattributes"
                     | "_columns"
                     | "modify"
+                    | "done"
+                    | "delete"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
