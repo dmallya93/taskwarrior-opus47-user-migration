@@ -999,9 +999,10 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 63] = [
+    const PORTED: [&str; 65] = [
         "_columns",
         "_config",
+        "_context",
         "_get",
         "_ids",
         "_projects",
@@ -1027,6 +1028,7 @@ mod tests {
         "colors",
         "columns",
         "config",
+        "context",
         "count",
         "delete",
         "denotate",
@@ -1279,6 +1281,21 @@ mod tests {
                     err.to_string(),
                     "Specify the name of a config variable to modify."
                 );
+                assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "context" {
+                // Without words and without contexts, `context` lists nothing
+                // and fails like C++.
+                let err = all[keyword].execute(&mut context, &mut output).unwrap_err();
+                assert_eq!(err.to_string(), "No contexts defined.");
+                assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "_context" {
+                // No contexts are defined: nothing to list.
+                let rc = all[keyword].execute(&mut context, &mut output).unwrap();
+                assert_eq!(rc, 0);
                 assert_eq!(output, "");
                 continue;
             }

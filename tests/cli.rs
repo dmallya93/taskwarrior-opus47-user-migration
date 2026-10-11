@@ -4891,3 +4891,208 @@ fn show_all_and_config_errors() {
         "{out}"
     );
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdContext.cpp, CLI2::addContext, Context::getTaskContext
+
+#[test]
+fn context_define_set_list_show_delete() {
+    let env = Env::new("confirmation=off\n");
+    let ok = |args: &[&str], expected: &str| {
+        let output = env.task(args);
+        assert_eq!(stderr(&output), env.override_headers(), "{args:?}");
+        assert_eq!(stdout(&output), expected, "{args:?}");
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+    };
+    let fails = |args: &[&str], message: &str| {
+        let output = env.task(args);
+        assert_eq!(stdout(&output), "", "{args:?}");
+        assert_eq!(
+            stderr(&output),
+            env.override_headers() + message + "\n",
+            "{args:?}"
+        );
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    };
+
+    fails(&["context"], "No contexts defined.");
+    fails(&["context", "list"], "No contexts defined.");
+    fails(
+        &["context", "define", "home"],
+        "Both context name and its definition must be provided.",
+    );
+    fails(
+        &["context", "define", "none", "+x"],
+        "The name 'none' is reserved and not allowed to use as a context name.",
+    );
+    ok(
+        &["context", "define", "home", "project:Home"],
+        "Context 'home' defined (read, write). Use 'task context home' to activate.\n",
+    );
+    ok(
+        &["context", "define", "either", "+a", "or", "+b"],
+        "The filter '+a or +b' is not a valid modification string, because it contains the 'OR' operator.\n\
+         As such, value for the write context cannot be set (context will not apply on task add / task log).\n\n\
+         Please use 'task config context.either.write <default mods>' to set default attribute values for new tasks in this context manually.\n\n\
+         Context 'either' defined (read only). Use 'task context either' to activate.\n",
+    );
+    let rc = rc_text(&env);
+    assert!(
+        rc.contains("context.home.read=project:Home\ncontext.home.write=project:Home\n"),
+        "{rc}"
+    );
+    assert!(rc.contains("context.either.read=+a or +b\n"), "{rc}");
+    assert!(!rc.contains("context.either.write"), "{rc}");
+
+    fails(&["context", "nope"], "Context 'nope' not found.");
+    ok(
+        &["context", "home"],
+        "Context 'home' set. Use 'task context none' to remove.\n",
+    );
+    // Helper commands print no override headers.
+    let output = env.task(&["_context"]);
+    assert_eq!(
+        (stdout(&output).as_str(), stderr(&output).as_str()),
+        ("either\nhome\n", "")
+    );
+    assert_eq!(output.status.code(), Some(0));
+    ok(
+        &["context", "show"],
+        "Context 'home' with \n\n* read filter: 'project:Home'\n* write filter: 'project:Home'\n\nis currently applied.\n",
+    );
+    let table = "\n\x1b[4mName  \x1b[0m \x1b[4mType \x1b[0m \x1b[4mDefinition  \x1b[0m \x1b[4mActive\x1b[0m\n\
+                 either read  +a or +b     no\n       write              no\n\
+                 home   read  project:Home yes\n       write project:Home yes\n\n";
+    ok(&["context", "list"], table);
+    ok(
+        &["context"],
+        &format!("{table}Use 'task context none' to unset the current context.\n"),
+    );
+
+    ok(&["context", "none"], "Context unset.\n");
+    fails(&["context", "none"], "Context not unset.");
+    ok(&["context", "show"], "No context is currently applied.\n");
+
+    ok(
+        &["context", "home"],
+        "Context 'home' set. Use 'task context none' to remove.\n",
+    );
+    ok(&["context", "delete", "home"], "Context 'home' deleted.\n");
+    let rc = rc_text(&env);
+    assert!(
+        !rc.contains("context.home") && !rc.contains("context=home"),
+        "{rc}"
+    );
+    fails(&["context", "delete", "home"], "Context 'home' not found.");
+    fails(
+        &["context", "delete"],
+        "Context name needs to be specified.",
+    );
+    fails(
+        &["_context", "x"],
+        "The '_context' command does not allow 'x'.",
+    );
+}
+
+#[test]
+fn context_confirmation_prompts() {
+    let env = Env::new("confirmation=on\n");
+    // No pending tasks: the filter matches nothing, so that is confirmed too.
+    let output = config_task(&env, &["context", "define", "h", "+x"], "no\n");
+    assert_eq!(
+        stdout(&output),
+        "The filter '+x' matches 0 pending tasks. Do you wish to continue? (yes/no) "
+    );
+    let header = format!("TASKRC override: {}\n", env.rc().display());
+    assert_eq!(
+        stderr(&output),
+        format!("{header}Context definition aborted.\n")
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    let output = config_task(&env, &["context", "define", "h", "+x"], "yes\nyes\nno\n");
+    assert_eq!(
+        stdout(&output),
+        "The filter '+x' matches 0 pending tasks. Do you wish to continue? (yes/no) \
+         Are you sure you want to add 'context.h.read' with a value of '+x'? (yes/no) \
+         Are you sure you want to add 'context.h.write' with a value of '+x'? (yes/no) \
+         Context 'h' defined (read only). Use 'task context h' to activate.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = config_task(&env, &["context", "delete", "h"], "no\n");
+    assert_eq!(
+        stdout(&output),
+        "Do you want to delete context 'h'? (yes/no) "
+    );
+    assert_eq!(
+        stderr(&output),
+        format!("{header}Context 'h' not deleted.\n")
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(rc_text(&env).contains("context.h.read=+x"));
+}
+
+#[test]
+fn context_filter_and_write_context_application() {
+    let env = Env::new("confirmation=off\nverbose=nothing\n");
+    let quiet = |args: &[&str]| {
+        let output = env.task(args);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+        stdout(&output)
+    };
+    quiet(&["add", "other", "project:Other"]);
+    quiet(&["context", "define", "home", "project:Home"]);
+    // Old-style context.<name> definitions are read contexts.
+    quiet(&["config", "context.legacy", "+old"]);
+    quiet(&["context", "home"]);
+
+    // Write context: applied to add and log modifications.
+    quiet(&["add", "inside"]);
+    quiet(&["log", "logged"]);
+    let export = quiet(&["export", "all"]);
+    let mut projects: Vec<&str> = export
+        .lines()
+        .filter_map(|l| l.split("\"project\":\"").nth(1))
+        .map(|p| p.split('"').next().unwrap())
+        .collect();
+    projects.sort();
+    assert_eq!(projects, ["Home", "Home", "Other"], "{export}");
+
+    // Read context: a filter for reports, with the context footnote (count
+    // includes the completed task).
+    let output = env.task(&["rc.verbose=footnote,context", "count"]);
+    assert_eq!(stdout(&output), "2\n");
+    assert_eq!(
+        stderr(&output),
+        "Context 'home' set. Use 'task context none' to remove.\n"
+    );
+    // Without the `context` verbosity token there is no footnote.
+    let output = env.task(&["rc.verbose=footnote", "count"]);
+    assert_eq!(
+        (stdout(&output).as_str(), stderr(&output).as_str()),
+        ("2\n", "")
+    );
+
+    // An ID or UUID bypasses the read context.
+    let output = env.task(&["rc.verbose=footnote,context", "1", "count"]);
+    assert_eq!(stdout(&output), "1\n");
+    assert_eq!(stderr(&output), "");
+    let output = env.task(&["rc.verbose=footnote,context", "1-2", "count"]);
+    assert_eq!(stdout(&output), "2\n");
+
+    // The legacy definition is used as the read context; it has no write
+    // context, so add is unaffected.
+    quiet(&["context", "legacy"]);
+    assert_eq!(quiet(&["count"]), "0\n");
+    quiet(&["add", "plain"]);
+    assert_eq!(quiet(&["_get", "3.project", "3.tags"]), " \n");
+
+    quiet(&["context", "none"]);
+    assert_eq!(quiet(&["count"]), "4\n");
+}
