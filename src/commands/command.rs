@@ -951,7 +951,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 25] = [
+    const PORTED: [&str; 26] = [
         "_columns",
         "_config",
         "_get",
@@ -974,6 +974,7 @@ mod tests {
         "ids",
         "information",
         "log",
+        "modify",
         "reports",
         "uuids",
         "version",
