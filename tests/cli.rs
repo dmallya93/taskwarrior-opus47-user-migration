@@ -7,7 +7,9 @@
 //! `ids`/`uuids` family, `_unique` and `_zshattributes`, and the milestone 6
 //! report stack (custom reports, `sort.cpp`, `setHeaderUnderline` and the
 //! column factory), and the milestone 7 hook scripts (`Hooks.cpp`) and
-//! `synchronize` (local, git and configuration-error paths).
+//! `synchronize` (local, git and configuration-error paths), and the
+//! milestone 8 commands (including `_aliases`, `commands`, `_commands`,
+//! `_zshcommands`, `help` / `--help`, `execute` and `logo`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -155,13 +157,14 @@ fn dash_dash_version_with_more_args_is_a_command_line() {
 
 #[test]
 fn dash_dash_help_is_help() {
+    // commands.test.py `test_help_option`: `--help` is the `help` command.
     let env = Env::new("");
-    let output = env.task(&["--help"]);
-    assert_eq!(
-        stderr(&output),
-        env.override_headers() + "Command 'help' is not yet implemented.\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
+    let option = env.task(&["--help"]);
+    let help = env.task(&["help"]);
+    assert!(stdout(&option).contains("Usage:"));
+    assert_eq!(stdout(&option), stdout(&help));
+    assert_eq!(stderr(&option), stderr(&help));
+    assert_eq!(option.status.code(), Some(0));
 }
 
 #[test]
@@ -182,23 +185,6 @@ fn no_command_with_empty_default_command() {
     assert_eq!(
         stderr(&output),
         env.override_headers() + "You must specify a command or a task to modify.\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
-}
-
-#[test]
-fn stub_command_is_not_implemented() {
-    // `logo` is still an unported stub. The dispatch path itself is also
-    // covered by a test-only stub command in the Context unit tests
-    // (`stub_command_dispatch_reports_not_implemented`), which keeps working
-    // once every command is ported. Remove this test when the last stub
-    // command is ported.
-    let env = Env::new("");
-    let output = env.task(&["logo"]);
-    assert_eq!(stdout(&output), "");
-    assert_eq!(
-        stderr(&output),
-        env.override_headers() + "Command 'logo' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -5551,4 +5537,171 @@ fn edit_annotations_dependencies_and_udas() {
         stdout(&env.task(&["_get", "1.depends", "1.priority", "1.annotations.count"])),
         format!("{} H 1\n", uuid2.trim_end())
     );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdAliases.cpp, CmdCommands.cpp, CmdHelp.cpp, CmdExec.cpp, CmdLogo.cpp
+
+#[test]
+fn completion_aliases_lists_alias_names() {
+    let env = Env::new("alias.foo=list\n");
+    let output = env.task(&["_aliases"]);
+    // The default aliases plus `foo`, in key order.
+    assert_eq!(stdout(&output), "burndown\nfoo\nghistory\nhistory\nrm\n");
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn commands_table_shows_command_dna() {
+    let env = Env::new("defaultwidth=200\nfontunderline=off\n");
+    let output = env.task(&["commands"]);
+    let out = stdout(&output);
+    let row = |name: &str| -> Vec<String> {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("no {name} row in {out}"))
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(row("add")[..6], ["add", "operation", "RW", "Ctxt", "Mods", "Adds"]);
+    assert_eq!(
+        row("list")[..9],
+        ["list", "report", "RO", "ID", "GC", "Recur", "Ctxt", "Filt", "Most"]
+    );
+    assert_eq!(row("modify")[..6], ["modify", "operation", "RW", "Filt", "Mods", "Modifies"]);
+    assert!(out.starts_with("\nCommand "), "{out}");
+    assert!(out.ends_with("\n\n"), "{out}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn commands_table_alternate_row_colour() {
+    let env = Env::new("defaultwidth=200\n");
+    let output = env.task(&["commands", "rc._forcecolor:on"]);
+    let out = stdout(&output);
+    assert!(out.contains("\x1b[48;5;234m"), "{out}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn completion_commands_sorted_names() {
+    let env = Env::new("");
+    let output = env.task(&["_commands"]);
+    let out = stdout(&output);
+    let names: Vec<&str> = out.lines().collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted);
+    assert_eq!(names[0], "_aliases");
+    // Built-ins and custom reports.
+    assert!(names.contains(&"add") && names.contains(&"next"));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn zsh_commands_by_category() {
+    let env = Env::new("");
+    let output = env.task(&["_zshcommands"]);
+    let out = stdout(&output);
+    assert!(out.contains("\nadd:operation:Adds a new task\n"), "{out}");
+    assert!(out.contains("\nnext:report:Most urgent tasks\n"), "{out}");
+    let first = out.lines().next().unwrap();
+    assert!(first.split(':').nth(1) == Some("metadata"), "{first}");
+    let last = out.lines().last().unwrap();
+    assert!(last.split(':').nth(1) == Some("internal"), "{last}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn help_shows_usage_and_help_text() {
+    let env = Env::new("alias.zork=list\ndefaultwidth=200\n");
+    let output = env.task(&["help"]);
+    let out = stdout(&output);
+    assert!(out.starts_with("\n"), "{out}");
+    assert!(out.contains("\nUsage: task "), "{out}");
+    assert!(out.contains("Runs rc.default.command, if specified."));
+    assert!(out.contains("Aliased to 'list'"), "{out}");
+    assert!(out.contains(
+        "\nDocumentation for Taskwarrior can be found using 'man task', 'man taskrc', \
+         'man task-color', 'man task-sync' or at https://taskwarrior.org\n"
+    ));
+    assert!(out.ends_with("  $ ! ' \" ( ) ; \\ ` * ? { } [ ] < > | & % # ~\n\n"));
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn help_usage_shows_only_usage() {
+    let env = Env::new("");
+    let full = stdout(&env.task(&["help"]));
+    let output = env.task(&["help", "usage"]);
+    let usage = stdout(&output);
+    assert!(usage.contains("Usage: task "), "{usage}");
+    assert!(!usage.contains("Documentation for Taskwarrior"));
+    assert!(full.starts_with(&usage), "usage table is the head of help");
+    // An abbreviation of `usage` also works (closeEnough).
+    assert_eq!(stdout(&env.task(&["help", "us"])), usage);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn execute_runs_the_command_through_the_shell() {
+    let env = Env::new("verbose=nothing\n");
+    let output = env.task(&["execute", "echo", "hello"]);
+    assert_eq!(stdout(&output), "hello\n");
+    assert_eq!(output.status.code(), Some(0));
+    // exec.test.py: abbreviation, aliases and default.command.
+    assert_eq!(stdout(&env.task(&["exec", "echo", "hi"])), "hi\n");
+    let env = Env::new(
+        "verbose=nothing\nalias.asdf=execute echo aliased\ndefault.command=exec echo default\n",
+    );
+    assert_eq!(stdout(&env.task(&["asdf"])), "aliased\n");
+    assert_eq!(stdout(&env.task(&[])), "default\n");
+}
+
+#[test]
+fn execute_returns_the_raw_wait_status() {
+    // C++ returns `system`'s wait status (3 << 8); the exit code is its low
+    // byte.
+    let env = Env::new("verbose=nothing\n");
+    let output = env.task(&["execute", "exit", "3"]);
+    assert_eq!(output.status.code(), Some(0));
+    let output = env.task(&["execute", "kill", "-9", "$$"]);
+    assert_eq!(output.status.code(), Some(9));
+}
+
+#[test]
+fn execute_without_a_command() {
+    let env = Env::new("");
+    let output = env.task(&["execute"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "Cannot execute an empty command.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn logo_with_colour() {
+    let env = Env::new("");
+    let output = env.task(&["logo", "rc._forcecolor:on"]);
+    let out = stdout(&output);
+    assert!(out.starts_with("\n                  \x1b[48;5;232m  \x1b[0m"), "{out:?}");
+    assert_eq!(out.lines().count(), 30);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn logo_requires_colour() {
+    let env = Env::new("");
+    let output = env.task(&["logo"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "The logo command requires that color support is enabled.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
 }

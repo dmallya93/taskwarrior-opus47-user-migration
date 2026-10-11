@@ -958,7 +958,8 @@ impl Context {
     /// `throw int` gives 4, `catch (...)` (`std::runtime_error`, i.e.
     /// [`TwError::Runtime`]) queues "Unknown error. Please report." and gives 3.
     ///
-    /// Rust-only variants: `NotImplemented` (a stub command) is a message
+    /// Rust-only variants: `NotImplemented` (a command with no
+    /// implementation; no built-in command is one) is a message
     /// error like `throw std::string`; `Io` is reported like the libshared
     /// I/O failures, which throw strings.
     fn status_for_error(&mut self, err: TwError) -> i32 {
@@ -1933,7 +1934,7 @@ mod tests {
         Output(&'static str),
         Fail(fn() -> TwError),
         Messages,
-        /// An unported command: the stub body every command had before its
+        /// A command with no translation: the stub body every command had before its
         /// port (`TwError::NotImplemented(keyword)`).
         Stub,
     }

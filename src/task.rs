@@ -4993,7 +4993,7 @@ mod validate_tests {
 }
 
 /// Tests for urgency (the coefficient polynomial, the user coefficients and
-/// `urgency.inherit`) and the later-milestone stubs.
+/// `urgency.inherit`).
 #[cfg(test)]
 mod urgency_tests {
     use super::*;

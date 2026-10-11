@@ -44,9 +44,8 @@
 //!
 //! [`factory`] registers one struct per C++ command class (75 built-ins, in
 //! the C++ order) plus one [`CmdCustom`] per `report.<name>.columns`. Every
-//! struct carries the exact C++ constructor metadata; commands whose port has
-//! not landed return [`TwError::NotImplemented`] from `execute` (foundation
-//! DD4), and each stub's doc comment names the milestone that ports it.
+//! struct carries the exact C++ constructor metadata, and every `execute` is
+//! a translation of its C++ `execute`.
 //!
 //! # `uses_context` overrides
 //!
@@ -995,81 +994,6 @@ mod tests {
         ("waiting", "Waiting (hidden) tasks"),
     ];
 
-    /// Commands whose `execute` has been ported (milestone 1: `version`,
-    /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
-    /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
-    /// one must still be a stub.
-    const PORTED: [&str; 68] = [
-        "_columns",
-        "_config",
-        "_context",
-        "_get",
-        "_ids",
-        "_projects",
-        "_show",
-        "_tags",
-        "_udas",
-        "_unique",
-        "_urgency",
-        "_uuids",
-        "_version",
-        "_zshattributes",
-        "_zshids",
-        "_zshuuids",
-        "add",
-        "annotate",
-        "append",
-        "burndown.annual",
-        "burndown.daily",
-        "burndown.monthly",
-        "burndown.weekly",
-        "calc",
-        "calendar",
-        "colors",
-        "columns",
-        "config",
-        "context",
-        "count",
-        "delete",
-        "denotate",
-        "diagnostics",
-        "done",
-        "duplicate",
-        "edit",
-        "export",
-        "ghistory.annual",
-        "ghistory.daily",
-        "ghistory.monthly",
-        "ghistory.weekly",
-        "history.annual",
-        "history.daily",
-        "history.monthly",
-        "history.weekly",
-        "ids",
-        "import",
-        "import-v2",
-        "information",
-        "log",
-        "modify",
-        "news",
-        "prepend",
-        "projects",
-        "purge",
-        "reports",
-        "show",
-        "start",
-        "stats",
-        "stop",
-        "summary",
-        "synchronize",
-        "tags",
-        "timesheet",
-        "udas",
-        "undo",
-        "uuids",
-        "version",
-    ];
-
     fn default_config() -> Configuration {
         let mut config = Configuration::new();
         config
@@ -1234,48 +1158,49 @@ mod tests {
         }
     }
 
+    /// Every command is ported: no file in `src/commands` mentions the stub
+    /// error variant ("Command 'X' is not yet implemented."), so only the
+    /// Context dispatch path (covered by a test-only stub command in the
+    /// Context tests) can still produce it.
     #[test]
-    fn unported_commands_are_not_implemented() {
-        let mut all = Registry::new();
-        factory(&mut all, &default_config()).unwrap();
-        let mut context = Context::new();
-        let config = default_config();
-        let mut stubs = 0;
-        let mut custom = 0;
-        for (keyword, command) in &all {
-            if PORTED.contains(&keyword.as_str()) {
-                continue;
+    fn no_command_is_a_stub() {
+        let needle = ["Not", "Implemented"].concat();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands");
+        let mut files = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                let source = std::fs::read_to_string(&path).unwrap();
+                assert!(
+                    !source.contains(&needle),
+                    "{} still mentions the stub error",
+                    path.display()
+                );
+                files += 1;
             }
-            // Custom reports (one CmdCustom per `report.<name>.columns`) are
-            // registered dynamically and are all ported.
-            if config.has(&format!("report.{keyword}.columns")) {
-                custom += 1;
-                continue;
-            }
-            let mut output = String::new();
-            let err = command.execute(&mut context, &mut output).unwrap_err();
-            assert!(
-                matches!(&err, TwError::NotImplemented(k) if k == keyword),
-                "{keyword}"
-            );
-            assert_eq!(
-                err.to_string(),
-                format!("Command '{keyword}' is not yet implemented.")
-            );
-            assert_eq!(output, "");
-            stubs += 1;
         }
-        assert!(custom > 0);
-        assert_eq!(stubs, all.len() - PORTED.len() - custom);
+        assert!(files > 50);
     }
 
+    /// Every built-in command (the registry minus the custom reports, which
+    /// need a replica) runs from a bare Context with the default
+    /// configuration and its registry, except those that need a replica,
+    /// stdin or the file system, which are covered by their own unit tests
+    /// and end to end in tests/cli.rs.
     #[test]
-    fn ported_commands_execute() {
+    fn every_builtin_command_executes() {
         let mut all = Registry::new();
         factory(&mut all, &default_config()).unwrap();
         let mut context = Context::new();
         context.config = default_config();
-        for keyword in PORTED {
+        context.commands = all.clone();
+        let builtins: Vec<&str> = all
+            .keys()
+            .map(String::as_str)
+            .filter(|k| !context.config.has(&format!("report.{k}.columns")))
+            .collect();
+        assert_eq!(builtins, CPP_BUILTIN_KEYWORDS);
+        for keyword in builtins {
             let mut output = String::new();
             if keyword == "config" {
                 // Without a name to modify, `config` fails like C++.
@@ -1300,6 +1225,27 @@ mod tests {
                 let rc = all[keyword].execute(&mut context, &mut output).unwrap();
                 assert_eq!(rc, 0);
                 assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "execute" {
+                // Without words there is nothing to run, like C++.
+                let rc = all[keyword].execute(&mut context, &mut output).unwrap();
+                assert_eq!(rc, 1);
+                assert_eq!(context.errors, ["Cannot execute an empty command."]);
+                context.errors.clear();
+                assert_eq!(output, "");
+                continue;
+            }
+            if keyword == "logo" {
+                // Colour is off (no TTY, no _forcecolor) unless stdout is a
+                // terminal.
+                match all[keyword].execute(&mut context, &mut output) {
+                    Err(err) => assert_eq!(
+                        err.to_string(),
+                        "The logo command requires that color support is enabled."
+                    ),
+                    Ok(rc) => assert_eq!(rc, 0),
+                }
                 continue;
             }
             if keyword == "calc" {

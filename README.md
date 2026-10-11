@@ -79,8 +79,8 @@ src/commands/          one module per Cmd*.cpp
 ## Module mapping
 
 Each Rust module is the translation of one C++ file, so every piece can be
-traced back to its source. Modules whose port has not landed yet contain only
-a doc comment naming the C++ file and the milestone that fills them.
+traced back to its source, and every C++ command class is ported: no
+registered command is a stub.
 
 | Rust | C++ |
 |---|---|

@@ -23,7 +23,10 @@ pub enum TwError {
     Io(std::io::Error),
     /// An error reported by the taskchampion replica.
     TaskChampion(taskchampion::Error),
-    /// A registered command whose port has not landed yet; carries the keyword.
+    /// A command with no implementation; carries the keyword. Every built-in
+    /// command is ported, so only a registry entry without a translation
+    /// (e.g. a test-only command, or a missing `help` in dispatch, where C++
+    /// asserts) produces it.
     NotImplemented(String),
 }
 
