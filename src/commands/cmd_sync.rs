@@ -231,9 +231,7 @@ fn sync_with_configured_backend(
             return required("sync.server.client_id and sync.encryption_secret are required");
         }
         if verbose {
-            out.push_str(&format!(
-                "Syncing with sync server at {safe_server_url}\n"
-            ));
+            out.push_str(&format!("Syncing with sync server at {safe_server_url}\n"));
         }
         tdb2.sync_to_remote(
             &server_url,
@@ -413,7 +411,8 @@ mod tests {
 
     #[test]
     fn git_configuration_errors() {
-        let mut f = CommandFixture::new(&[], "sync.git.local_path=/nonexistent\n", &["synchronize"]);
+        let mut f =
+            CommandFixture::new(&[], "sync.git.local_path=/nonexistent\n", &["synchronize"]);
         assert_eq!(error(&mut f), "sync.git.branch is required");
         drop(f);
 

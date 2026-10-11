@@ -3629,10 +3629,7 @@ fn sync_local_server_dir_between_two_data_dirs() {
     assert_eq!(export(&first, &["status:completed"]).len(), 1);
 
     // Without the `sync` verbosity token, sync is silent.
-    assert_eq!(
-        quiet(&first, &["sync"]),
-        (String::new(), String::new(), 0)
-    );
+    assert_eq!(quiet(&first, &["sync"]), (String::new(), String::new(), 0));
 }
 
 #[test]
@@ -3713,7 +3710,11 @@ fn sync_git_backend() {
     assert_eq!(
         sync_task(
             &second,
-            &["rc.sync.git.remote=nowhere", "rc.sync.git.local_only=1", "sync"]
+            &[
+                "rc.sync.git.remote=nowhere",
+                "rc.sync.git.local_only=1",
+                "sync"
+            ]
         ),
         (
             "Syncing with git remote nowhere\nSuccess!\n".into(),
@@ -3741,7 +3742,10 @@ fn sync_configuration_errors() {
             ],
             "exactly one method of specifying AWS credentials is required",
         ),
-        (&["rc.sync.gcp.bucket=b"], "sync.encryption_secret is required"),
+        (
+            &["rc.sync.gcp.bucket=b"],
+            "sync.encryption_secret is required",
+        ),
         (
             &["rc.sync.server.url=http://localhost:1"],
             "sync.server.client_id and sync.encryption_secret are required",
