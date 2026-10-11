@@ -3205,3 +3205,142 @@ fn stop_declined_permission() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(export(&env, &["+ACTIVE"]).len(), 2);
 }
+
+#[test]
+fn annotate_feedback_recurring_siblings_and_exit_codes() {
+    let env = Env::new("confirmation=off\nverbose=affected,project\n");
+    quiet(&env, &["add", "one", "project:home"]);
+
+    let output = env.task(&["1", "annotate", "note", "text"]);
+    assert_eq!(
+        stdout(&output),
+        "Annotating task 1 'one'.\nAnnotated 1 task.\n"
+    );
+    assert_eq!(
+        stderr(&output),
+        "Project 'home' is 0% complete (1 task remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &["1"]);
+    assert_eq!(tasks[0]["annotations"][0]["description"], "note text");
+
+    let output = env.task(&["1", "annotate"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "Additional text must be provided.\n");
+    assert_eq!(output.status.code(), Some(2));
+
+    let output = env.task(&["99", "annotate", "x"]);
+    assert_eq!(stderr(&output), "No tasks specified.\n");
+    assert_eq!(output.status.code(), Some(1));
+
+    // Recurring child: siblings and parent are annotated too.
+    quiet(&env, &["add", "rec", "due:tomorrow", "recur:daily"]);
+    quiet(&env, &["list"]);
+    let output = env.task(&[
+        "rc.recurrence.confirmation=yes",
+        "status:pending",
+        "description:rec",
+        "annotate",
+        "shared",
+    ]);
+    let out = stdout(&output);
+    assert!(out.starts_with("Annotating task "), "{out}");
+    assert!(out.ends_with("Annotated 1 task.\n"), "{out}");
+    assert_eq!(output.status.code(), Some(0));
+    for task in export(&env, &["description:rec"]) {
+        assert_eq!(task["annotations"][0]["description"], "shared", "{task}");
+    }
+}
+
+#[test]
+fn annotate_bulk_quit() {
+    let env = Env::new("bulk=2\nconfirmation=on\nverbose=affected\n");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+
+    let output = task_input(&env, &["1-2", "annotate", "x"], "quit\n");
+    let out = stdout(&output);
+    assert!(out.starts_with("This command will alter 2 tasks.\n"), "{out}");
+    assert!(
+        out.ends_with(
+            "Annotate task 1 'one'? (yes/no/all/quit) Task not annotated.\nAnnotated 0 tasks.\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn denotate_exact_partial_and_no_match() {
+    let env = Env::new("confirmation=off\nverbose=affected\n");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+    quiet(&env, &["1", "annotate", "foo bar"]);
+    quiet(&env, &["1", "annotate", "foo"]);
+
+    let output = env.task(&["1", "denotate", "foo"]);
+    assert_eq!(
+        stdout(&output),
+        "Found annotation 'foo' and deleted it.\nDenotated 1 task.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["1", "denotate", "zzz"]);
+    assert_eq!(
+        stdout(&output),
+        "Did not find any matching annotation to be deleted for 'zzz'.\nDenotated 0 tasks.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = env.task(&["1", "denotate", "bar"]);
+    assert_eq!(
+        stdout(&output),
+        "Found annotation 'foo bar' and deleted it.\nDenotated 1 task.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["2", "denotate", "foo"]);
+    assert_eq!(
+        stderr(&output),
+        "The specified task has no annotations that can be deleted.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn append_and_prepend_feedback_and_exit_codes() {
+    let env = Env::new("confirmation=off\nverbose=affected\n");
+    quiet(&env, &["add", "one"]);
+
+    let output = env.task(&["1", "append", "tail"]);
+    assert_eq!(
+        stdout(&output),
+        "Appending to task 1 'one tail'.\nAppended 1 task.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["1", "prepend", "head"]);
+    assert_eq!(
+        stdout(&output),
+        "Prepending to task 1 'head one tail'.\nPrepended 1 task.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(export(&env, &["1"])[0]["description"], "head one tail");
+
+    for command in ["append", "prepend"] {
+        let output = env.task(&["1", command]);
+        assert_eq!(stderr(&output), "Additional text must be provided.\n");
+        assert_eq!(output.status.code(), Some(2));
+    }
+
+    quiet(&env, &["add", "two"]);
+    let output = task_input(
+        &env,
+        &["rc.confirmation=on", "rc.bulk=2", "1-2", "prepend", "x"],
+        "no\nno\n",
+    );
+    let out = stdout(&output);
+    assert_eq!(out.matches("Task not prepended.\n").count(), 2, "{out}");
+    assert!(out.ends_with("Prepended 0 tasks.\n"), "{out}");
+    assert_eq!(output.status.code(), Some(1));
+}
