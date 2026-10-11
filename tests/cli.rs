@@ -4097,3 +4097,215 @@ fn calendar_colors_and_legend() {
     );
     assert!(!out.contains("Legend"), "{out:?}");
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// burndown.daily / weekly / monthly / annual
+
+/// The burndown scenario at a frozen 2021-06-15 12:00:00 UTC: pending
+/// `one` (entry 06-01), started `two` (06-03), `three` (06-05, done today),
+/// logged `four` (06-02 to 06-08) and pending `five` (06-04). Returns `None`
+/// when `faketime` is not installed.
+fn burndown_env() -> Option<Env> {
+    let env = Env::new("defaultwidth=80\ndefaultheight=24\ndetection=off\nconfirmation=off\n");
+    let at = "2021-06-15 12:00:00";
+    for args in [
+        &["add", "one", "entry:2021-06-01"][..],
+        &["add", "two", "entry:2021-06-03"],
+        &["2", "start"],
+        &["add", "three", "entry:2021-06-05"],
+        &["3", "done"],
+        &["log", "four", "entry:2021-06-02", "end:2021-06-08"],
+        &["add", "five", "entry:2021-06-04"],
+    ] {
+        let mut all = vec!["rc.verbose=nothing"];
+        all.extend_from_slice(args);
+        let output = faketime_task(&env, at, &all)?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    Some(env)
+}
+
+/// `faketime` `task rc.verbose=nothing <args>` at the burndown scenario time.
+fn burndown(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let mut all = vec!["rc.verbose=nothing"];
+    all.extend_from_slice(args);
+    let output = faketime_task(env, "2021-06-15 12:00:00", &all).unwrap();
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+/// `burndown.daily`: 21 daily bars, the y axis rounded by `burndown_size`,
+/// the legend, the net fix rate (peak of 5 on 06-05, 3 still open) and the
+/// estimated completion. Each major x-axis label (`May`, `Jun`) replaces
+/// one byte fewer than it writes (C++ `std::string::replace`), so the rate
+/// lines start two columns left of the bars.
+#[test]
+fn burndown_daily_chart() {
+    let Some(env) = burndown_env() else {
+        return;
+    };
+    let (out, err, rc) = burndown(&env, &["burndown.daily"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &DAILY[1..]);
+    const DAILY: &str = r#"
+                                 Daily Burndown
+6 |
+  |
+  |
+  |                                X  X  X  .  .  .  .  .  .  .  .
+  |                                X  X  X  .  .  .  .  .  .  .  .
+  |                             X  X  X  X  X  X  X  X  X  X  X  .     . Done
+  |                             X  X  X  X  X  X  X  X  X  X  X  .     + Started
+3 |                             X  X  X  X  X  X  X  X  X  X  X  .     X Pending
+  |                          X  X  X  X  X  X  X  X  X  X  X  X  +
+  |                          X  X  X  X  X  X  X  X  X  X  X  X  +
+  |                       X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                       X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                       X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                    X  X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                    X  X  X  X  X  X  X  X  X  X  X  X  X  X  X
+0 +-----------------------------------------------------------------
+    26 27 28 29 30 31 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15
+    May               Jun
+
+  Net Fix Rate:         0.2/d
+  Estimated completion: 2021-07-01 (2w)
+"#;
+
+    // Colour replaces the markers by colorized blanks.
+    let (out, _, rc) = burndown(
+        &env,
+        &["burndown.daily", "rc._forcecolor=on", "rc.color.burndown.pending=on red"],
+    );
+    assert_eq!(rc, 0);
+    assert!(!out.contains(" X"), "{out}");
+    assert!(out.contains("  |                   \x1b[41m  \x1b[0m \x1b[41m  \x1b[0m"), "{out:?}");
+}
+
+/// `burndown.monthly` (cumulative) and `burndown.annual` with
+/// `burndown.cumulative=0`: no major labels for annual, so no shift.
+#[test]
+fn burndown_monthly_and_annual() {
+    let Some(env) = burndown_env() else {
+        return;
+    };
+    let (out, err, rc) = burndown(&env, &["burndown.monthly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &MONTHLY[1..]);
+    const MONTHLY: &str = r#"
+                                Monthly Burndown
+6 |
+  |
+  |
+  |                                                              .
+  |                                                              .
+  |                                                              .     . Done
+  |                                                              .     + Started
+3 |                                                              .     X Pending
+  |                                                              +
+  |                                                              +
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+0 +-----------------------------------------------------------------
+    10 11 12 01 02 03 04 05 06 07 08 09 10 11 12 01 02 03 04 05 06
+    2019     2020                                2021
+
+ Net Fix Rate:         0.2/d
+ Estimated completion: 2021-07-01 (2w)
+"#;
+
+    let (out, err, rc) = burndown(&env, &["burndown.annual", "rc.burndown.cumulative=0"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &ANNUAL[1..]);
+    const ANNUAL: &str = r#"
+                                Annual Burndown
+6 |
+  |
+  |
+  |                                                              .
+  |                                                              .
+  |                                                              .     . Done
+  |                                                              .     + Started
+3 |                                                              .     X Pending
+  |                                                              +
+  |                                                              +
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+0 +-----------------------------------------------------------------
+    01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21
+
+
+    Net Fix Rate:         0.2/d
+    Estimated completion: 2021-07-01 (2w)
+"#;
+}
+
+/// A filter selects through `Filter::subset`: one pending task, no
+/// convergence; no match gives the "No matches." footnote; bad weekstart,
+/// small terminals and bad colours fail like C++.
+#[test]
+fn burndown_filter_and_errors() {
+    let Some(env) = burndown_env() else {
+        return;
+    };
+    let (out, err, rc) = burndown(&env, &["description:one", "burndown.weekly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &WEEKLY[1..]);
+    const WEEKLY: &str = r#"
+                                Weekly Burndown
+2 |
+  |
+  |
+  |
+  |
+  |                                                                    . Done
+  |                                                                    + Started
+1 |                                                                    X Pending
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+0 +-----------------------------------------------------------------
+    04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    2021
+
+   Net Fix Rate:         -
+   Estimated completion: No convergence
+"#;
+
+    let (out, err, rc) = burndown(
+        &env,
+        &["description:zzz", "burndown.daily", "rc.verbose=footnote"],
+    );
+    assert_eq!((err.as_str(), rc), ("No matches.\n", 0));
+    assert!(out.ends_with("\n  Net Fix Rate:         -\n\n"), "{out:?}");
+    assert!(!out.contains("Estimated completion"), "{out}");
+
+    let (out, err, rc) = burndown(&env, &["burndown.daily", "rc.defaultheight=11"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("Terminal window too small to draw a graph.\n", "", 0));
+    let (out, _, rc) = burndown(&env, &["burndown.daily", "rc.defaultheight=1100"]);
+    assert_eq!((out.as_str(), rc), ("Terminal window too large to draw a graph.\n", 0));
+
+    let (out, err, rc) = burndown(&env, &["burndown.weekly", "rc.weekstart=tuesday"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "The 'weekstart' configuration variable may only contain 'Sunday' or 'Monday'.\n", 2)
+    );
+    let (out, err, rc) = burndown(&env, &["burndown.daily", "rc.color.burndown.done=nocolour"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "The color 'nocolour' is not recognized.\n", 2)
+    );
+}

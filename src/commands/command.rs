@@ -999,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 41] = [
+    const PORTED: [&str; 45] = [
         "_columns",
         "_config",
         "_get",
@@ -1015,6 +1015,10 @@ mod tests {
         "add",
         "annotate",
         "append",
+        "burndown.annual",
+        "burndown.daily",
+        "burndown.monthly",
+        "burndown.weekly",
         "calc",
         "calendar",
         "colors",
@@ -1311,6 +1315,10 @@ mod tests {
                     | "synchronize"
                     | "purge"
                     | "calendar"
+                    | "burndown.daily"
+                    | "burndown.weekly"
+                    | "burndown.monthly"
+                    | "burndown.annual"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
