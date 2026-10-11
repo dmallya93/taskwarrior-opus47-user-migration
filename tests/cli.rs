@@ -2122,3 +2122,130 @@ fn until_expires_tasks_before_reports() {
     assert_eq!(quiet(&env, &["status:deleted", "count"]).0, "1\n");
     assert_eq!(quiet(&env, &["status:deleted", "_unique", "description"]).0, "gone\n");
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdModify.cpp: modify
+
+/// `task <args>` (with `TASKRC`/`TASKDATA`) reading `stdin` as input.
+fn task_input(env: &Env, args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = env
+        .command(args)
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(stdin.as_bytes()).unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn modify_feedback_substitution_and_project_change() {
+    let env = Env::new("confirmation=off\n");
+    quiet(&env, &["add", "one", "project:home"]);
+    quiet(&env, &["add", "two"]);
+
+    let output = env.task(&["1", "modify", "/one/uno/", "project:work"]);
+    assert_eq!(stdout(&output), "Modifying task 1 'uno'.\nModified 1 task.\n");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers()
+            + "The project 'home' has changed.  Project 'home' is 0% complete (0 of 0 tasks remaining).\n"
+            + "The project 'work' has changed.  Project 'work' is 0% complete (1 task remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = env.task(&["rc.verbose=affected", "1-2", "modify", "+x"]);
+    assert_eq!(
+        stdout(&output),
+        "This command will alter 2 tasks.\nModifying task 1 'uno'.\nModifying task 2 'two'.\nModified 2 tasks.\n"
+    );
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks[0]["description"], "uno");
+    assert_eq!(tasks[0]["project"], "work");
+    assert_eq!(tasks[1]["tags"], serde_json::json!(["x"]));
+
+    // An unchanged task is not counted.
+    assert_eq!(
+        quiet(&env, &["rc.verbose=affected", "1", "modify", "uno"]),
+        ("Modified 0 tasks.\n".into(), String::new(), 0)
+    );
+}
+
+#[test]
+fn modify_errors_and_exit_codes() {
+    let env = Env::new("");
+    quiet(&env, &["add", "one"]);
+
+    let output = env.task(&["99", "modify", "x"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), env.override_headers() + "No tasks specified.\n");
+    assert_eq!(output.status.code(), Some(1));
+
+    let output = env.task(&["1", "modify", "recur:daily"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "You cannot specify a recurring task without a due date.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    let output = env.task(&["1", "modify", "end:now"]);
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "Could not modify task 1. You cannot set an end date on a pending task.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn modify_bulk_confirmation_yes_then_quit() {
+    let env = Env::new("bulk=2\nconfirmation=on\nverbose=affected,blank\n");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+
+    let output = task_input(&env, &["1-2", "modify", "+y"], "yes\nquit\n");
+    assert_eq!(
+        stdout(&output),
+        "This command will alter 2 tasks.\n\
+         Tag y will be added.\n\
+         Modify task 1 'one'? (yes/no/all/quit) Modifying task 1 'one'.\n\
+         \n\
+         Tag y will be added.\n\
+         Modify task 2 'two'? (yes/no/all/quit) Task not modified.\n\
+         Modified 1 task.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let tasks = export(&env, &[]);
+    assert_eq!(tasks[0]["tags"], serde_json::json!(["y"]));
+    assert!(tasks[1].get("tags").is_none());
+}
+
+#[test]
+fn modify_recurring_child_propagates_with_confirmation() {
+    let env = Env::new("recurrence.confirmation=yes\nrecurrence.limit=2\n");
+    quiet(&env, &["add", "rec", "due:yesterday", "recur:daily"]);
+    // The `list` report runs the recurrence handler, creating the children.
+    quiet(&env, &["list"]);
+
+    let (out, _, code) = quiet(&env, &["rc.verbose=affected", "2", "modify", "project:p"]);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("Modifying task 2 'rec'.\nModifying recurring task "), "{out}");
+    let tasks = export(&env, &[]);
+    assert!(tasks.len() >= 3, "{tasks:?}");
+    for task in &tasks {
+        assert_eq!(task["project"], "p", "{task}");
+    }
+
+    // rc.recurrence.confirmation=no only modifies the selected task.
+    let (_, _, code) = quiet(&env, &["rc.recurrence.confirmation=no", "2", "modify", "project:q"]);
+    assert_eq!(code, 0);
+    let tasks = export(&env, &[]);
+    let changed: Vec<_> = tasks.iter().filter(|t| t["project"] == "q").collect();
+    assert_eq!(changed.len(), 1);
+}
