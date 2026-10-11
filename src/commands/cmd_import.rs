@@ -306,3 +306,203 @@ impl Command for CmdImport {
         Ok(rc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const NEW1: &str = "cccccccc-0000-4000-8000-000000000001";
+    const NEW2: &str = "cccccccc-0000-4000-8000-000000000002";
+
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z"}"#,
+    ];
+
+    fn fixture(args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, "", args)
+    }
+
+    /// Runs `import` with `stdin` as standard input; returns the result and
+    /// what was written to standard output.
+    fn run_stdin(f: &mut CommandFixture, stdin: &str) -> (Result<i32>, String) {
+        begin_console_override(stdin);
+        let result = f.run(&CmdImport::new());
+        (result, end_console_override())
+    }
+
+    #[test]
+    fn imports_an_array_from_stdin() {
+        let mut f = fixture(&["import"]);
+        let input = format!(
+            r#"[{{"uuid":"{NEW1}","description":"a"}},{{"uuid":"{NEW2}","description":"b"}}]"#
+        );
+        let (rc, out) = run_stdin(&mut f, &input);
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(
+            out,
+            format!("Importing 'STDIN'\n add  {NEW1} a\n add  {NEW2} b\n")
+        );
+        assert_eq!(f.ctx.footnotes, vec!["Imported 2 tasks.".to_string()]);
+        assert_eq!(f.task(NEW1).get_ref("status"), "pending");
+        assert!(f.task(NEW2).has("entry"));
+    }
+
+    #[test]
+    fn dash_reads_stdin_and_single_object() {
+        let mut f = fixture(&["import", "-"]);
+        let (rc, out) = run_stdin(&mut f, &format!(r#"{{"uuid":"{NEW1}","description":"a"}}"#));
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(out, format!("Importing 'STDIN'\n add  {NEW1} a\n"));
+        assert_eq!(f.ctx.footnotes, vec!["Imported 1 tasks.".to_string()]);
+    }
+
+    #[test]
+    fn line_delimited_objects() {
+        let mut f = fixture(&["import"]);
+        let input = format!(
+            "{{\"uuid\":\"{NEW1}\",\"description\":\"a\"}}\n{{\"uuid\":\"{NEW2}\",\"description\":\"b\"}}\n"
+        );
+        let (rc, out) = run_stdin(&mut f, &input);
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(
+            out,
+            format!("Importing 'STDIN'\n add  {NEW1} a\n add  {NEW2} b\n")
+        );
+        assert_eq!(f.ctx.footnotes, vec!["Imported 2 tasks.".to_string()]);
+    }
+
+    #[test]
+    fn line_delimited_array_line_is_invalid() {
+        let mut f = fixture(&["import"]);
+        let input = format!("{{\"uuid\":\"{NEW1}\",\"description\":\"a\"}}\n[]\n");
+        let (rc, _) = run_stdin(&mut f, &input);
+        assert_eq!(rc.unwrap_err().to_string(), "Invalid JSON: []");
+        // Nothing is imported when a line fails.
+        assert!(f.ctx.tdb2.get_by_uuid(NEW1).unwrap().is_none());
+    }
+
+    #[test]
+    fn not_json_rethrows_the_parse_error() {
+        let mut f = fixture(&["import"]);
+        let (rc, out) = run_stdin(&mut f, "garbage\n");
+        assert_eq!(
+            rc.unwrap_err().to_string(),
+            "Error: expected '{' or '[' at position 0"
+        );
+        assert_eq!(out, "Importing 'STDIN'\n");
+    }
+
+    #[test]
+    fn trivial_input_imports_nothing() {
+        let mut f = fixture(&["import"]);
+        let (rc, _) = run_stdin(&mut f, "  \n");
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(f.ctx.footnotes, vec!["Imported 0 tasks.".to_string()]);
+    }
+
+    #[test]
+    fn empty_task_is_an_error() {
+        let mut f = fixture(&["import"]);
+        let (rc, _) = run_stdin(&mut f, "{}");
+        assert_eq!(rc.unwrap_err().to_string(), "Cannot import an empty task.");
+    }
+
+    #[test]
+    fn update_skip_and_mod() {
+        let mut f = fixture(&["import"]);
+        let entry = f.task(ONE).get("entry");
+        // Same content (generated modified ignored): skipped.
+        let (rc, out) = run_stdin(
+            &mut f,
+            &format!(r#"{{"uuid":"{ONE}","description":"one","status":"pending"}}"#),
+        );
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(out, format!("Importing 'STDIN'\n skip {ONE} one\n"));
+        drop(f);
+
+        let mut f = fixture(&["import"]);
+        let (rc, out) = run_stdin(
+            &mut f,
+            &format!(r#"{{"uuid":"{ONE}","description":"uno","status":"pending","project":"p"}}"#),
+        );
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(out, format!("Importing 'STDIN'\n mod  {ONE} uno\n"));
+        let task = f.task(ONE);
+        assert_eq!(task.get_ref("project"), "p");
+        // The generated entry was replaced by the stored one.
+        assert_eq!(task.get("entry"), entry);
+    }
+
+    #[test]
+    fn duplicate_uuids_are_reported() {
+        let mut f = fixture(&["import"]);
+        let input = format!(
+            r#"[{{"uuid":"{NEW1}","description":"a"}},{{"uuid":"{NEW1}","description":"b"}}]"#
+        );
+        let (rc, out) = run_stdin(&mut f, &input);
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(
+            out,
+            format!("Importing 'STDIN'\n add  {NEW1} a\n mod  {NEW1} b\n")
+        );
+        assert_eq!(
+            f.ctx.footnotes,
+            vec![
+                "Imported 2 tasks.".to_string(),
+                format!("Input contains UUID '{NEW1}' 2 times."),
+                "Tasks with the same UUID have been merged. Please check the results.".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn imports_files_and_missing_file_is_an_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let first = dir.path().join("first.json");
+        let second = dir.path().join("second.json");
+        std::fs::write(
+            &first,
+            format!(r#"[{{"uuid":"{NEW1}","description":"a"}}]"#),
+        )
+        .unwrap();
+        std::fs::write(&second, format!(r#"{{"uuid":"{NEW2}","description":"b"}}"#)).unwrap();
+        let first = first.to_str().unwrap().to_string();
+        let second = second.to_str().unwrap().to_string();
+
+        let mut f = fixture(&["import", &first, &second]);
+        let (rc, out) = run_stdin(&mut f, "");
+        assert_eq!(rc.unwrap(), 0);
+        assert_eq!(
+            out,
+            format!("Importing '{first}'\n add  {NEW1} a\nImporting '{second}'\n add  {NEW2} b\n")
+        );
+        assert_eq!(f.ctx.footnotes, vec!["Imported 2 tasks.".to_string()]);
+        drop(f);
+
+        let missing = dir.path().join("missing.json");
+        let missing = missing.to_str().unwrap().to_string();
+        let mut f = fixture(&["import", &missing]);
+        let (rc, out) = run_stdin(&mut f, "");
+        assert_eq!(
+            rc.unwrap_err().to_string(),
+            format!("File '{missing}' not found.")
+        );
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn invalid_status_is_an_error() {
+        let mut f = fixture(&["import"]);
+        let (rc, _) = run_stdin(
+            &mut f,
+            &format!(r#"{{"uuid":"{NEW1}","description":"a","status":"foo"}}"#),
+        );
+        assert_eq!(
+            rc.unwrap_err().to_string(),
+            "The status 'foo' is not valid."
+        );
+    }
+}
