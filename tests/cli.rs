@@ -3352,3 +3352,106 @@ fn append_and_prepend_feedback_and_exit_codes() {
     assert!(out.ends_with("Prepended 0 tasks.\n"), "{out}");
     assert_eq!(output.status.code(), Some(1));
 }
+
+#[test]
+fn duplicate_feedback_recurring_and_exit_codes() {
+    let env = Env::new("confirmation=off\nverbose=affected,new-id,project\n");
+    quiet(&env, &["add", "one", "project:home"]);
+
+    let output = env.task(&["1", "duplicate", "+copy"]);
+    assert_eq!(
+        stdout(&output),
+        "Duplicated task 1 'one'.\nCreated task 2.\nDuplicated 1 task.\n"
+    );
+    assert_eq!(
+        stderr(&output),
+        "The project 'home' has changed.  Project 'home' is 0% complete (2 of 2 tasks remaining).\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &["2"]);
+    assert_eq!(tasks[0]["description"], "one");
+    assert_eq!(tasks[0]["tags"][0], "copy");
+
+    let output = env.task(&["99", "duplicate"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "No tasks specified.\n");
+    assert_eq!(output.status.code(), Some(1));
+
+    // A recurring child becomes a plain task.
+    quiet(&env, &["add", "rec", "due:tomorrow", "recur:daily"]);
+    quiet(&env, &["list"]);
+    let child = export(&env, &["status:pending", "description:rec"]);
+    let child_id = child[0]["id"].as_i64().unwrap().to_string();
+    let output = env.task(&[&child_id, "duplicate"]);
+    let out = stdout(&output);
+    assert!(
+        out.starts_with(&format!(
+            "Note: task {child_id} was a recurring task.  The duplicated task is not.\n"
+        )),
+        "{out}"
+    );
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn duplicate_declined_is_rc_1() {
+    let env = Env::new("bulk=1\nconfirmation=on\nverbose=affected\n");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+
+    let output = task_input(&env, &["1-2", "duplicate"], "quit\n");
+    assert_eq!(
+        stdout(&output),
+        "Duplicate task 1 'one'? (yes/no/all/quit) Task not duplicated.\nDuplicated 0 tasks.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn import_stdin_files_update_and_errors() {
+    let env = Env::new("");
+    let output = task_input(
+        &env,
+        &["import"],
+        r#"[{"uuid":"a0000000-a000-a000-a000-a00000000000","description":"zero"},{"uuid":"a1111111-a111-a111-a111-a11111111111","description":"one"}]"#,
+    );
+    assert_eq!(
+        stdout(&output),
+        "Importing 'STDIN'\n add  a0000000-a000-a000-a000-a00000000000 zero\n add  a1111111-a111-a111-a111-a11111111111 one\n"
+    );
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "Imported 2 tasks.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    // Line-delimited objects from a file: one update, one unchanged.
+    env.write(
+        "tasks.json",
+        "{\"uuid\":\"a0000000-a000-a000-a000-a00000000000\",\"description\":\"zero\",\"project\":\"p\"}\n{\"uuid\":\"a1111111-a111-a111-a111-a11111111111\",\"description\":\"one\"}\n",
+    );
+    let output = env.task(&["import", "tasks.json"]);
+    assert_eq!(
+        stdout(&output),
+        "Importing 'tasks.json'\nModifying task a0000000 'zero'.\n mod  a0000000-a000-a000-a000-a00000000000 zero\n skip a1111111-a111-a111-a111-a11111111111 one\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &["a0000000-a000-a000-a000-a00000000000"]);
+    assert_eq!(tasks[0]["project"], "p");
+
+    let output = env.task(&["import", "missing.json"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "File 'missing.json' not found.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    let output = task_input(&env, &["import"], "{}");
+    assert_eq!(stdout(&output), "Importing 'STDIN'\n");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "Cannot import an empty task.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
