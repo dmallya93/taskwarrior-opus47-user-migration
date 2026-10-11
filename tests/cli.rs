@@ -5409,6 +5409,42 @@ fn edit_scripted_editor_modifies_task() {
     assert!(!env.data().join(&file).exists());
 }
 
+/// With stdout on a pipe, C++ `std::cout` is fully buffered, so the
+/// editor's own output comes before "Launching ..."; the `std::cerr` tie
+/// flushes it before the parse error.
+#[test]
+fn edit_piped_stdout_is_buffered_like_cpp() {
+    let (env, file) = edit_env();
+    let editor = editor_script(&env, "echo.sh", "echo from-editor");
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "from-editor\nLaunching '{editor} \"{file}\"' now...\nEditing complete.\n\
+             No edits were detected.\n"
+        )
+    );
+
+    let editor = editor_script(
+        &env,
+        "bad.sh",
+        "echo from-editor; sed -i -e 's/^  Due:.*/  Due: notadate/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "no\n");
+    let out = stdout(&output);
+    assert!(
+        out.starts_with(&format!(
+            "from-editor\nLaunching '{editor} \"{file}\"' now...\nEditing complete.\n\
+             Edits were detected.\nTaskwarrior couldn't handle your edits."
+        )),
+        "{out}"
+    );
+    assert!(stderr(&output).starts_with("Error: "), "{}", stderr(&output));
+}
+
 #[test]
 fn edit_without_changes_and_editor_precedence() {
     let (env, file) = edit_env();

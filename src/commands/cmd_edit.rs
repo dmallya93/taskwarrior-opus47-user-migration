@@ -846,6 +846,8 @@ impl CmdEdit {
                 };
 
                 if let Some(problem) = problem {
+                    // std::cerr is tied to std::cout.
+                    flush_stdout();
                     let mut stderr = std::io::stderr();
                     let _ = stderr.write_all(format!("Error: {problem}\n").as_bytes());
                     let _ = stderr.flush();
@@ -881,12 +883,40 @@ impl CmdEdit {
     }
 }
 
-/// `std::cout << text` (flushed, so it precedes the editor's own output).
+thread_local! {
+    /// `std::cout` text not yet flushed (see [`print_stdout`]).
+    static PENDING_STDOUT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// `std::cout << text`. On a terminal C++ stdout is line buffered, so the
+/// text appears at once, before the editor's own output. On a pipe it is
+/// fully buffered: it stays pending until `std::cin` or `std::cerr` (both
+/// tied to `std::cout`) is used, or the program exits. That ordering is
+/// reproduced: off a terminal the text waits in [`PENDING_STDOUT`] until
+/// [`flush_stdout`]. (C++ would also flush when its stdio buffer fills;
+/// edit messages never come near BUFSIZ.)
 fn print_stdout(text: &str) {
-    with_console(|_, stdout| {
-        let _ = stdout.write_all(text.as_bytes());
-        let _ = stdout.flush();
-    });
+    if crate::context::stdout_is_tty() {
+        with_console(|_, stdout| {
+            let _ = stdout.write_all(text.as_bytes());
+            let _ = stdout.flush();
+        });
+    } else {
+        PENDING_STDOUT.with(|p| p.borrow_mut().push_str(text));
+    }
+}
+
+/// Writes out the pending `std::cout` text: the tie flush before reading
+/// `std::cin` / writing `std::cerr`, and the flush at the end of the command
+/// (before Context prints the rest of the output).
+fn flush_stdout() {
+    let pending = PENDING_STDOUT.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    if !pending.is_empty() {
+        with_console(|_, stdout| {
+            let _ = stdout.write_all(pending.as_bytes());
+            let _ = stdout.flush();
+        });
+    }
 }
 
 /// C++ `getenv (name)`: `None` when unset.
@@ -937,6 +967,22 @@ impl Default for CmdEdit {
     }
 }
 
+impl CmdEdit {
+    /// The C++ `execute` loop over the filtered tasks.
+    fn edit_tasks(context: &mut Context, filtered: &mut [Task]) -> Result<i32> {
+        for task in filtered.iter_mut() {
+            let result = Self::edit_file(context, task)?;
+            if result == EditResult::Error {
+                break;
+            } else if result == EditResult::Changes {
+                tdb2::modify(context, task)?;
+            }
+        }
+
+        Ok(0)
+    }
+}
+
 impl Command for CmdEdit {
     fn meta(&self) -> &CommandMeta {
         &self.meta
@@ -970,16 +1016,9 @@ impl Command for CmdEdit {
         }
 
         // Find number of matching tasks.
-        for task in &mut filtered {
-            let result = Self::edit_file(context, task)?;
-            if result == EditResult::Error {
-                break;
-            } else if result == EditResult::Changes {
-                tdb2::modify(context, task)?;
-            }
-        }
-
-        Ok(0)
+        let result = Self::edit_tasks(context, &mut filtered);
+        flush_stdout();
+        result
     }
 }
 
