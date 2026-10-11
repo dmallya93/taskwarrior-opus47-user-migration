@@ -507,6 +507,59 @@ mod tests {
         assert_eq!(read(&rc), "confirmation=off\n");
     }
 
+    /// The interactive path (`rc.confirmation=on`): every change asks with
+    /// the C++ prompt text, and a declined change leaves the file alone.
+    #[test]
+    fn confirmation_prompts_for_change_add_and_remove() {
+        use crate::shared::shared::{begin_console_override, end_console_override};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (config, rc) = config_from(dir.path(), "a=1\nb=2\n");
+
+        begin_console_override("no\nyes\n");
+        assert!(!CmdConfig::set_config_variable(&config, "a", "x", true).unwrap());
+        assert!(CmdConfig::set_config_variable(&config, "c", "y", true).unwrap());
+        assert_eq!(
+            end_console_override(),
+            "Are you sure you want to change the value of 'a' from '1' to 'x'? (yes/no) \
+             Are you sure you want to add 'c' with a value of 'y'? (yes/no) "
+        );
+        assert_eq!(read(&rc), "a=1\nb=2\nc=y\n");
+
+        begin_console_override("no\nyes\n");
+        assert_eq!(
+            CmdConfig::unset_config_variable(&config, "b", true).unwrap(),
+            1,
+            "declined: found but unchanged"
+        );
+        assert_eq!(
+            CmdConfig::unset_config_variable(&config, "b", true).unwrap(),
+            0
+        );
+        assert_eq!(
+            end_console_override(),
+            "Are you sure you want to remove 'b'? (yes/no) \
+             Are you sure you want to remove 'b'? (yes/no) "
+        );
+        assert_eq!(read(&rc), "a=1\nc=y\n");
+    }
+
+    /// `task config name` with a declined removal reports `No changes made.`
+    /// and returns status 1, as the C++ `rc` from `unsetConfigVariable`.
+    #[test]
+    fn execute_declined_removal_reports_no_changes() {
+        use crate::shared::shared::{begin_console_override, end_console_override};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (mut context, rc) =
+            context_with(dir.path(), "confirmation=on\nfoo=1\n", &["task", "config", "foo"]);
+        begin_console_override("no\n");
+        let mut output = String::new();
+        let status = CmdConfig::new().execute(&mut context, &mut output).unwrap();
+        end_console_override();
+        assert_eq!(status, 1);
+        assert_eq!(output, "No changes made.\n");
+        assert_eq!(read(&rc), "confirmation=on\nfoo=1\n");
+    }
+
     #[test]
     fn completion_config_lists_sorted_names() {
         let dir = tempfile::tempdir().expect("tempdir");
