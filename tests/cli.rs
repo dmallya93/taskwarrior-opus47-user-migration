@@ -4,7 +4,9 @@
 //! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
 //! `information`, abbreviations, `--`, argument checks, message colours),
 //! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
-//! `ids`/`uuids` family, `_unique` and `_zshattributes`.
+//! `ids`/`uuids` family, `_unique` and `_zshattributes`, and the milestone 6
+//! report stack (custom reports, `sort.cpp`, `setHeaderUnderline` and the
+//! column factory).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1731,4 +1733,309 @@ fn custom_report_labels_sort_breaks_and_limit() {
     let output = env.task(&["rc.verbose=nothing", "rc.report.mine.columns=id,bogus", "rc.report.mine.labels=", "mine"]);
     assert_eq!(stderr(&output), "Unrecognized column name 'bogus'.\n");
     assert_eq!(output.status.code(), Some(2));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// sort.cpp, util.cpp setHeaderUnderline and the Column factory, end to end
+// through custom reports (`rc.report.X.*` overrides).
+
+/// An environment with tasks added by `task rc.verbose=nothing add <args>`.
+fn tasks_env(rc: &str, tasks: &[&[&str]]) -> Env {
+    let env = Env::new(rc);
+    for args in tasks {
+        let mut all = vec!["add"];
+        all.extend_from_slice(args);
+        let (_, err, rc) = quiet(&env, &all);
+        assert_eq!((err.as_str(), rc), ("", 0), "add {args:?}");
+    }
+    env
+}
+
+/// The stdout of the custom report `r` with `columns` and `sort`, run
+/// quietly (plus any extra `args`); asserts success and an empty stderr.
+fn sorted_report(env: &Env, columns: &str, sort: &str, args: &[&str]) -> String {
+    let columns = format!("rc.report.r.columns={columns}");
+    let sort = format!("rc.report.r.sort={sort}");
+    let mut all = vec![columns.as_str(), sort.as_str()];
+    all.extend_from_slice(args);
+    all.push("r");
+    let (out, err, rc) = quiet(env, &all);
+    assert_eq!((err.as_str(), rc), ("", 0), "{all:?}: {out}");
+    out
+}
+
+#[test]
+fn sort_ascending_and_descending() {
+    let env = tasks_env("", &[&["bravo"], &["alpha"], &["charlie"]]);
+    assert_eq!(
+        sorted_report(&env, "id,description", "description+", &[]),
+        " 2 alpha\n 1 bravo\n 3 charlie\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,description", "description-", &[]),
+        " 3 charlie\n 1 bravo\n 2 alpha\n"
+    );
+    // No direction means ascending.
+    assert_eq!(
+        sorted_report(&env, "id,description", "description", &[]),
+        " 2 alpha\n 1 bravo\n 3 charlie\n"
+    );
+}
+
+#[test]
+fn sort_multiple_keys() {
+    let env = tasks_env(
+        "",
+        &[&["b1", "project:B"], &["a2", "project:A"], &["b2", "project:B"], &["a1", "project:A"]],
+    );
+    // The second key only orders tasks equal on the first.
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project+,description-", &[]),
+        " 2 A       a2\n 4 A       a1\n 3 B       b2\n 1 B       b1\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project-,id+", &[]),
+        " 1 B       b1\n 3 B       b2\n 2 A       a2\n 4 A       a1\n"
+    );
+}
+
+#[test]
+fn sort_break_marker_groups_rows() {
+    let env = tasks_env(
+        "",
+        &[&["b1", "project:B"], &["none"], &["a1", "project:A"], &["b2", "project:B"]],
+    );
+    // `/` after the direction: a blank line wherever the project changes.
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project+/,id+", &[]),
+        " 2         none\n\n 3 A       a1\n\n 1 B       b1\n 4 B       b2\n"
+    );
+    // A break column without a direction (`project/`) keeps the slash in
+    // the key name (C++ Context::decomposeSortField), so it is rejected.
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id", "rc.report.r.sort=project/", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "The 'project/' column is not a valid sort field.\n", 2));
+}
+
+#[test]
+fn sort_uda_custom_values_order() {
+    let env = tasks_env(
+        "uda.size.type=string\nuda.size.label=Size\nuda.size.values=S,M,,L\n",
+        &[&["large", "size:L"], &["none"], &["small", "size:S"], &["medium", "size:M"]],
+    );
+    // Column widths include the label ("Size") even without the `label`
+    // verbosity (C++ ViewTask::render).
+    // C++ Context stores uda.X.values reversed in Task::customOrder, so
+    // ascending runs from the last value to the first; the empty value
+    // sorts at its position in the list.
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size+", &[]),
+        " 1 L    large\n 2      none\n 4 M    medium\n 3 S    small\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size-", &[]),
+        " 3 S    small\n 4 M    medium\n 2      none\n 1 L    large\n"
+    );
+    // Without uda.X.values: plain string order, empty values always last.
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size+", &["rc.uda.size.values="]),
+        " 1 L    large\n 4 M    medium\n 3 S    small\n 2      none\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size-", &["rc.uda.size.values="]),
+        " 3 S    small\n 4 M    medium\n 1 L    large\n 2      none\n"
+    );
+}
+
+#[test]
+fn sort_by_depends() {
+    let env = tasks_env(
+        "",
+        &[&["first"], &["second"], &["needs2", "depends:2"], &["needs1", "depends:1"], &["free"]],
+    );
+    // Tasks without dependencies first (ascending), then by the ID of the
+    // first dependency.
+    assert_eq!(
+        sorted_report(&env, "id,depends,description", "depends+,id+", &[]),
+        " 1         first\n 2         second\n 5         free\n 4 1       needs1\n 3 2       needs2\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,depends,description", "depends-,id+", &[]),
+        " 3 2       needs2\n 4 1       needs1\n 1         first\n 2         second\n 5         free\n"
+    );
+}
+
+#[test]
+fn sort_by_urgency() {
+    let env = tasks_env(
+        "urgency.age.coefficient=0\n",
+        &[&["low", "priority:L"], &["high", "priority:H"], &["none"], &["medium", "priority:M"]],
+    );
+    assert_eq!(
+        sorted_report(&env, "id,urgency,description", "urgency-", &[]),
+        " 2       6 high\n 4     3.9 medium\n 1     1.8 low\n 3       0 none\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,urgency,description", "urgency+", &[]),
+        " 3       0 none\n 1     1.8 low\n 4     3.9 medium\n 2       6 high\n"
+    );
+}
+
+#[test]
+fn sort_ids_numerically() {
+    let tasks: Vec<Vec<String>> = (1..=11).map(|i| vec![format!("t{i}")]).collect();
+    let tasks: Vec<Vec<&str>> = tasks.iter().map(|t| t.iter().map(String::as_str).collect()).collect();
+    let tasks: Vec<&[&str]> = tasks.iter().map(Vec::as_slice).collect();
+    let env = tasks_env("", &tasks);
+    // Natural (numeric) ID order: 1, 2, 10, 11 rather than 1, 10, 11, 2.
+    assert_eq!(sorted_report(&env, "id,description", "id+", &["1,2,10,11"]), " 1 t1\n 2 t2\n10 t10\n11 t11\n");
+    assert_eq!(sorted_report(&env, "id,description", "id-", &["1,2,10,11"]), "11 t11\n10 t10\n 2 t2\n 1 t1\n");
+    // Descriptions sort as strings.
+    assert_eq!(sorted_report(&env, "id,description", "description+", &["1,2,10,11"]), " 1 t1\n10 t10\n11 t11\n 2 t2\n");
+}
+
+#[test]
+fn sort_projects_with_hierarchy() {
+    let env = tasks_env(
+        "",
+        &[&["work", "project:Work"], &["garden", "project:Home.Garden"], &["home", "project:Home"], &["hw", "project:Homework"], &["none"]],
+    );
+    // Project names compare as strings: a subproject follows its parent
+    // ('.' sorts before letters), empty projects first.
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project+", &[]),
+        " 5             none\n 3 Home        home\n 2 Home.Garden garden\n 4 Homework    hw\n 1 Work        work\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,project.indented,description", "project-", &[]),
+        " 1 Work     work\n 4 Homework hw\n 2   Garden garden\n 3 Home     home\n 5          none\n"
+    );
+}
+
+#[test]
+fn report_header_underline_color_and_fontunderline() {
+    let env = tasks_env("color.label=bold\ncolor.label.sort=red\ncolor.alternate=on gray2\n", &[&["one"], &["two"]]);
+    let header = |color: &str, underline: &str| {
+        let color = format!("rc._forcecolor={color}");
+        let underline = format!("rc.fontunderline={underline}");
+        sorted_report(&env, "id,description", "id+", &["rc.verbose=label", &color, &underline])
+    };
+    // No colour: dashes, whatever fontunderline says.
+    let plain = "ID Description\n-- -----------\n 1 one\n 2 two\n";
+    assert_eq!(header("off", "off"), plain);
+    assert_eq!(header("off", "on"), plain);
+    // Rows are trimmed on the right (C++ ViewTask::render), so only the
+    // coloured alternate row keeps its padding.
+    // Colour without fontunderline: label colours (color.label.sort for the
+    // sorted ID column) on both the label and the dashes.
+    assert_eq!(
+        header("on", "off"),
+        "\x1b[31mID\x1b[0m \x1b[1mDescription\x1b[0m\n\
+         \x1b[31m--\x1b[0m \x1b[1m-----------\x1b[0m\n \
+         1 one\n\
+         \x1b[48;5;234m 2\x1b[0m\x1b[48;5;234m \x1b[0m\x1b[48;5;234mtwo        \x1b[0m\n"
+    );
+    // Colour and fontunderline: underlined labels, no dash line.
+    assert_eq!(
+        header("on", "on"),
+        "\x1b[4;31mID\x1b[0m \x1b[1;4mDescription\x1b[0m\n \
+         1 one\n\
+         \x1b[48;5;234m 2\x1b[0m\x1b[48;5;234m \x1b[0m\x1b[48;5;234mtwo        \x1b[0m\n"
+    );
+}
+
+#[test]
+fn set_header_underline_on_reports_table() {
+    let env = Env::new("defaultwidth=80\ndetection=off\ncolor.label=bold\ncolor.alternate=on gray2\n");
+    let head = |color: &str, underline: &str| {
+        let color = format!("rc._forcecolor={color}");
+        let underline = format!("rc.fontunderline={underline}");
+        let (out, err, rc) = quiet(&env, &[&color, &underline, "reports"]);
+        assert_eq!((err.as_str(), rc), ("", 0));
+        out.lines().take(3).collect::<Vec<_>>().join("\n")
+    };
+    let label = "Report          ";
+    let desc = "Description                                       ";
+    assert_eq!(
+        head("off", "off"),
+        format!("Report           Description\n{} {}\nactive           Active tasks", "-".repeat(16), "-".repeat(50))
+    );
+    // Without colour C++ still applies Color("underline") to the header:
+    // CmdReports never calls Table::withColor (whose default is true).
+    assert_eq!(
+        head("off", "on"),
+        format!("\x1b[4m{label}\x1b[0m \x1b[4m{desc}\x1b[0m\nactive           Active tasks\nall              All tasks")
+    );
+    let alt = "\x1b[48;5;234mactive          \x1b[0m\x1b[48;5;234m \x1b[0m\x1b[48;5;234mActive tasks                                      \x1b[0m";
+    assert_eq!(
+        head("on", "off"),
+        format!(
+            "\x1b[1m{label}\x1b[0m \x1b[1m{desc}\x1b[0m\n\x1b[1m{}\x1b[0m \x1b[1m{}\x1b[0m\n{alt}",
+            "-".repeat(16),
+            "-".repeat(50)
+        )
+    );
+    assert_eq!(
+        head("on", "on"),
+        format!("\x1b[1;4m{label}\x1b[0m \x1b[1;4m{desc}\x1b[0m\n{alt}\nall              All tasks")
+    );
+}
+
+#[test]
+fn report_uda_columns_of_each_type() {
+    let env = tasks_env(
+        "uda.size.type=string\nuda.size.label=Size\n\
+         uda.cost.type=numeric\nuda.cost.label=Cost\n\
+         uda.when.type=date\nuda.when.label=When\n\
+         uda.span.type=duration\nuda.span.label=Span\n\
+         uda.ref.type=uuid\nuda.ref.label=Ref\n",
+        &[
+            &["one", "size:big", "cost:3", "when:2030-01-02", "span:2d", "ref:a0b1c2d3-e4f5-4789-abcd-0123456789ab"],
+            &["two", "cost:12.5", "span:10d"],
+        ],
+    );
+    // Durations render right-aligned in ISO form; dates in rc.dateformat.
+    let columns = "id,size,cost,when,span,ref,ref.short,description";
+    assert_eq!(
+        sorted_report(&env, columns, "id+", &["rc.verbose=label", "rc.defaultwidth=120"]),
+        "ID Size Cost When       Span Ref                                  Ref      Description\n\
+         -- ---- ---- ---------- ---- ------------------------------------ -------- -----------\n \
+         1 big     3 2030-01-02  P2D a0b1c2d3-e4f5-4789-abcd-0123456789ab a0b1c2d3 one\n \
+         2      12.5            P10D                                               two\n"
+    );
+    // UDA styles: indicators (right-aligned, default "U"; widths include
+    // the labels), and an unknown style.
+    assert_eq!(
+        sorted_report(&env, "id,size.indicator,when.indicator,description", "id+", &["rc.uda.when.indicator=W"]),
+        " 1    U    W one\n 2           two\n"
+    );
+    let (_, err, rc) = quiet(&env, &["rc.report.r.columns=id,cost.donkey", "r"]);
+    assert_eq!((err.as_str(), rc), ("Unrecognized column format 'cost.donkey'\n", 2));
+}
+
+#[test]
+fn report_column_factory_errors() {
+    let env = tasks_env("", &[&["one"], &["two"]]);
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id,bogus", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "Unrecognized column name 'bogus'.\n", 2));
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id,description.donkey", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "Unrecognized column format 'description.donkey'\n", 2));
+    // An unknown sort key fails in the comparator (C++ validateSortColumns
+    // only maps legacy names), so it needs two tasks to compare.
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id", "rc.report.r.sort=bogus+", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "The 'bogus' column is not a valid sort field.\n", 2));
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id", "rc.report.r.sort=bogus+", "r", "1"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), (" 1\n", "", 0));
+}
+
+#[test]
+fn report_without_labels_uses_column_labels() {
+    let env = tasks_env("uda.size.type=string\nuda.size.label=Size\nuda.nolabel.type=string\n", &[&["one", "project:P", "+t", "size:x", "nolabel:y"]]);
+    // Each column's default label (Column metadata); a UDA without
+    // uda.X.label has an empty one, rendered as blanks (C++ ViewTask::render).
+    assert_eq!(
+        sorted_report(&env, "id,project,tags,status,size,nolabel,description", "id+", &["rc.verbose=label"]),
+        "ID Project Tags Status  Size   Description\n\
+         -- ------- ---- ------- ----   -----------\n \
+         1 P       t    Pending x    y one\n"
+    );
 }
