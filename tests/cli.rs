@@ -4309,3 +4309,208 @@ fn burndown_filter_and_errors() {
         ("", "The color 'nocolour' is not recognized.\n", 2)
     );
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// history.daily / weekly / monthly / annual, ghistory.daily / weekly / monthly / annual
+
+/// Pending `PL` (entry 2015-01-02), deleted `DLN` and completed `CLN`
+/// (entry 01-02, end 02-02), completed `CNN` (entry and end 02-02).
+const HISTORY_DATA: &str = r#"[
+{"uuid":"00000000-0000-0000-0000-000000000001","description":"PL","status":"pending","entry":"20150102T120000Z"},
+{"uuid":"00000000-0000-0000-0000-000000000002","description":"DLN","status":"deleted","entry":"20150102T120000Z","end":"20150202T120000Z"},
+{"uuid":"00000000-0000-0000-0000-000000000005","description":"CLN","status":"completed","entry":"20150102T120000Z","end":"20150202T120000Z"},
+{"uuid":"00000000-0000-0000-0000-000000000007","description":"CNN","status":"completed","entry":"20150202T120000Z","end":"20150202T120000Z"}
+]"#;
+
+fn history_env() -> Env {
+    let env = Env::new("defaultwidth=80\ndetection=off\nconfirmation=off\n");
+    let output = task_input(&env, &["rc.verbose=nothing", "import", "-"], HISTORY_DATA);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    env
+}
+
+/// `TZ=UTC task <args>`, returning (stdout, stderr, status).
+fn history(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let output = env
+        .command(args)
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .env("TZ", "UTC")
+        .output()
+        .unwrap();
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+/// The tabular reports: one row per interval, a blank row, the integer
+/// averages (`total / rows`) and the Net column. `history.monthly` prints
+/// the year only when it changes (from 1970 for the first row).
+#[test]
+fn history_tabular_reports() {
+    let env = history_env();
+    let (out, err, rc) = history(&env, &["rc.verbose=nothing", "history.monthly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\x1b[4mYear\x1b[0m \x1b[4mMonth   \x1b[0m \x1b[4mAdded\x1b[0m \x1b[4mCompleted\x1b[0m \x1b[4mDeleted\x1b[0m \x1b[4mNet\x1b[0m\n\
+         2015 January      3         0       0   3\n     February     1         2       1  -2\n\n     Average      2         1       0   0\n\n"
+    );
+
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "history.annual"]);
+    assert_eq!(rc, 0);
+    assert_eq!(
+        out,
+        "\x1b[4mYear   \x1b[0m \x1b[4mAdded\x1b[0m \x1b[4mCompleted\x1b[0m \x1b[4mDeleted\x1b[0m \x1b[4mNet\x1b[0m\n\
+         2015        4         2       1   1\n\nAverage     4         2       1   1\n\n"
+    );
+
+    // Weeks start on Sunday (2014-12-28); the Day column holds "Average".
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "history.weekly"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains("\n2014 December      28     3         0       0   3\n2015 February       1     1         2       1  -2\n\n              Average     2         1       0   0\n"),
+        "{out:?}"
+    );
+
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "history.daily"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains("\n2015 January        2     3         0       0   3\n     February       2     1         2       1  -2\n"),
+        "{out:?}"
+    );
+
+    // With colour: alternate rows, a red/green Net and a bold Average row.
+    let (out, _, rc) = history(
+        &env,
+        &["rc.verbose=nothing", "rc._forcecolor:on", "rc.color.alternate:", "history.monthly"],
+    );
+    assert_eq!(rc, 0);
+    assert!(out.contains("0 \x1b[31m  3\x1b[0m\n"), "{out:?}");
+    assert!(out.contains("1 \x1b[32m -2\x1b[0m\n"), "{out:?}");
+    assert!(out.contains("\n     \x1b[1mAverage \x1b[0m \x1b[1m    2\x1b[0m"), "{out:?}");
+}
+
+/// The graphical reports: bars scaled by `(widthOfBar * n) / maxLine`, with
+/// `widthOfBar = width - labelWidth` and the added bars right-aligned at
+/// `leftOffset`.
+#[test]
+fn ghistory_bars_and_legend() {
+    let env = history_env();
+    // 80 - 15 = 65; maxLine 3 + 3; leftOffset 32; February 10/21/10.
+    let (out, err, rc) = history(&env, &["rc.verbose=nothing", "ghistory.monthly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        format!(
+            "\x1b[4mYear\x1b[0m \x1b[4mMonth   \x1b[0m \x1b[4mNumber Added/Completed/Deleted{}\x1b[0m\n\
+             2015 January  {}\n     February {}{}{}{}\n\nLegend: + Added, X Completed, - Deleted\n",
+            " ".repeat(33),
+            "+".repeat(32),
+            " ".repeat(22),
+            "+".repeat(10),
+            "X".repeat(21),
+            "-".repeat(10)
+        )
+    );
+
+    // 80 - 19 = 61: 30, then 10/20/10 after a 20-column offset.
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "ghistory.weekly"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains(&format!(
+            "\n2014 December  28 {}\n2015 February   1 {}{}{}{}\n",
+            "+".repeat(30),
+            " ".repeat(20),
+            "+".repeat(10),
+            "X".repeat(20),
+            "-".repeat(10)
+        )),
+        "{out:?}"
+    );
+
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "ghistory.daily"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("\n2015 January    2 +"), "{out:?}");
+    assert!(out.contains("\n     February   2 "), "{out:?}");
+
+    // 80 - 5 = 75; maxLine 4 + 3: 42/21/10.
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "ghistory.annual"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains(&format!(
+            "\n2015 {}{}{}\n\nLegend: + Added, X Completed, - Deleted\n",
+            "+".repeat(42),
+            "X".repeat(21),
+            "-".repeat(10)
+        )),
+        "{out:?}"
+    );
+
+    // With colour the counts are right-aligned in coloured bars, and the
+    // legend is coloured and followed by the optional blank line.
+    let (out, _, rc) = history(
+        &env,
+        &["rc.verbose=blank", "rc._forcecolor:on", "rc.color.alternate:", "ghistory.annual"],
+    );
+    assert_eq!(rc, 0);
+    let add = "\x1b[38;5;0;48;5;196m";
+    let done = "\x1b[38;5;0;48;5;46m";
+    let del = "\x1b[38;5;0;48;5;226m";
+    assert!(
+        out.contains(&format!(
+            "\n2015 {add}{}4\x1b[0m{done}{}2\x1b[0m{del}{}1\x1b[0m\n",
+            " ".repeat(41),
+            " ".repeat(20),
+            " ".repeat(9)
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.ends_with(&format!(
+            "\nLegend: {add}Added\x1b[0m, {done}Completed\x1b[0m, {del}Deleted\x1b[0m\n\n"
+        )),
+        "{out:?}"
+    );
+}
+
+/// No matching task: no output, the "No tasks." footnote and status 1.
+#[test]
+fn history_no_tasks() {
+    let env = history_env();
+    for keyword in ["history.monthly", "ghistory.daily"] {
+        let (out, err, rc) = history(&env, &["rc.verbose=footnote", "description:nomatch", keyword]);
+        assert_eq!((out.as_str(), err.as_str(), rc), ("", "No tasks.\n", 1), "{keyword}");
+    }
+}
+
+/// A coloured count wider than `leftOffset`: C++ `std::string (leftOffset -
+/// aBar.length (), ' ')` wraps and throws `std::length_error`, reported by
+/// `catch (...)`.
+#[test]
+fn ghistory_colour_bar_wider_than_offset() {
+    let env = Env::new("detection=off\nconfirmation=off\n");
+    let tasks: Vec<String> = (0..10)
+        .map(|i| format!(r#"{{"description":"t{i}","entry":"20150102T120000Z"}}"#))
+        .collect();
+    let output = task_input(
+        &env,
+        &["rc.verbose=nothing", "import", "-"],
+        &format!("[{}]", tasks.join(",")),
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let (out, err, rc) = history(
+        &env,
+        &["rc.verbose=nothing", "rc.defaultwidth=20", "rc._forcecolor:on", "ghistory.daily"],
+    );
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "\x1b[37;41mUnknown error. Please report.\x1b[0m\n", 3)
+    );
+    // Without colour the bar is one '+'.
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "rc.defaultwidth=20", "ghistory.daily"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("\n2015 January   2 +\n"), "{out:?}");
+}

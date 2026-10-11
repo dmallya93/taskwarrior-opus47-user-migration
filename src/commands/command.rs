@@ -999,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 45] = [
+    const PORTED: [&str; 53] = [
         "_columns",
         "_config",
         "_get",
@@ -1030,6 +1030,14 @@ mod tests {
         "duplicate",
         "done",
         "export",
+        "ghistory.annual",
+        "ghistory.daily",
+        "ghistory.monthly",
+        "ghistory.weekly",
+        "history.annual",
+        "history.daily",
+        "history.monthly",
+        "history.weekly",
         "ids",
         "import",
         "import-v2",
@@ -1319,6 +1327,14 @@ mod tests {
                     | "burndown.weekly"
                     | "burndown.monthly"
                     | "burndown.annual"
+                    | "history.daily"
+                    | "history.weekly"
+                    | "history.monthly"
+                    | "history.annual"
+                    | "ghistory.daily"
+                    | "ghistory.weekly"
+                    | "ghistory.monthly"
+                    | "ghistory.annual"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
