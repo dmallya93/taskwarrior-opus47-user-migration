@@ -4818,3 +4818,76 @@ gone       1
         ("extra\npriority\nsize\n", Some(0))
     );
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// show
+
+#[test]
+fn show_pattern_default_differences_and_unrecognized() {
+    let env = Env::new("fontunderline=0\nrecurrence.limit=3\nshow.bogus=1\n");
+    let output = env.task(&["show", "recurrence.limit"]);
+    assert_eq!(stderr(&output), env.override_headers());
+    assert_eq!(output.status.code(), Some(0));
+    // Unrecognized variables are only reported when displayed.
+    assert_eq!(
+        stdout(&output),
+        "
+Config Variable  Value
+---------------- -----
+recurrence.limit 3
+  Default value  1
+
+Some of your .taskrc variables differ from the default values.
+
+"
+    );
+
+    let output = env.task(&["show", "bogus"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        "
+Config Variable Value
+--------------- -----
+show.bogus      1
+
+Your .taskrc file contains these unrecognized variables:
+  show.bogus
+
+
+
+"
+    );
+
+    let output = env.task(&["show", "zzzzzz"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        "\nConfig Variable Value\n--------------- -----\nNo matching configuration variables.\n\n\n"
+    );
+
+    let output = env.task(&["show", "a", "b"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "You can only specify 'all' or a search string.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn show_all_and_config_errors() {
+    let env = Env::new("calendar.details=bogus\n");
+    let output = env.task(&["show", "all"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = stdout(&output);
+    assert!(out.starts_with("\n\x1b[4mConfig Variable "), "{out}");
+    assert!(out.contains("\ncalendar.details "), "{out}");
+    assert!(out.contains("\nxterm.title "), "{out}");
+    assert!(
+        out.ends_with(
+            "Configuration error: calendar.details contains an unrecognized value 'bogus'.\n"
+        ),
+        "{out}"
+    );
+}
