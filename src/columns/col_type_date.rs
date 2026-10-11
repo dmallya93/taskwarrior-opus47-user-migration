@@ -441,4 +441,60 @@ mod tests {
         let expected = Datetime::length("Y \u{2013}") as u32 as usize;
         assert_eq!(m, (expected, expected));
     }
+
+    fn date_column() -> ColumnTypeDate {
+        let mut c = ColumnTypeDate::new(&Configuration::new());
+        c.base.name = "when".to_string();
+        c
+    }
+
+    fn modified(value: &str) -> Result<String> {
+        let mut task = Task::new();
+        let mut env = crate::columns::column::FakeModifyEnv::default();
+        ColumnTypeDate::modify_date(&date_column(), &mut task, value, &mut env)?;
+        Ok(task.get("when"))
+    }
+
+    #[test]
+    fn constructor_and_validate() {
+        let c = ColumnTypeDate::new(&Configuration::new());
+        assert_eq!((c.name(), c.type_(), c.style(), c.label()), ("", "date", "formatted", ""));
+        assert!(c.modifiable() && !c.is_uda() && !c.is_fixed_width());
+        assert_eq!(c.styles().len(), 8);
+        assert_eq!(c.examples().len(), 8);
+        assert!(ColumnTypeDate::validate_date("x") && !ColumnTypeDate::validate_date(""));
+        assert!(c.validate("2030-01-01") && !c.validate(""));
+    }
+
+    #[test]
+    fn modify_epoch_range() {
+        let _utc = Utc::new();
+        // [EPOCH_MIN_VALUE, EPOCH_MAX_VALUE): 1980-01-01T00:00:00Z is the
+        // first valid date.
+        assert_eq!(modified("1980-01-01T00:00:00").unwrap(), EPOCH_MIN_VALUE.to_string());
+        assert_eq!(
+            modified("1979-12-31T23:59:59").unwrap_err().to_string(),
+            "'1979-12-31T23:59:59' is not a valid date."
+        );
+        assert_eq!(modified("2023-11-14T22:13:20").unwrap(), FIXED.to_string());
+        // An in-range epoch literal is a date.
+        assert_eq!(modified(&FIXED.to_string()).unwrap(), FIXED.to_string());
+    }
+
+    #[test]
+    fn modify_unparseable_and_empty() {
+        // A string that is neither a date nor a duration evaluates to 0.
+        let err = modified("abc").unwrap_err().to_string();
+        assert_eq!(err, format!("'abc' is not a valid date in the '{}' format.", Variant::date_format()));
+        // An empty value skips that check, then fails the range check.
+        assert_eq!(modified("").unwrap_err().to_string(), "'' is not a valid date.");
+    }
+
+    #[test]
+    fn modify_duration_is_relative_to_now() {
+        let before = localtime::time_now();
+        let stored: i64 = modified("1h").unwrap().parse().unwrap();
+        let after = localtime::time_now();
+        assert!(stored >= before + 3600 && stored <= after + 3600);
+    }
 }

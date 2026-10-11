@@ -631,3 +631,548 @@ fn merge_adaptive(v: &mut [usize], middle: usize, buffer: &mut [usize], less: &m
 #[cfg(test)]
 #[path = "sort_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod report_sort_tests {
+    //! `sort_tasks` driven the way `CmdCustom::execute` drives it, checked
+    //! against the semantics of C++ `sort.cpp` (`sort_compare`):
+    //!
+    //! 1. tasks are stored through `tdb2::add` in a real data directory;
+    //! 2. `report.r.sort` is read from config and split, and every key goes
+    //!    through `legacySortColumnMap`. As in C++, the *unvalidated* string
+    //!    is still what `sort_tasks` receives;
+    //! 3. `Filter::subset` (no filter: every task) selects the data;
+    //! 4. the sequence `0..n` is sorted by `sort_tasks`.
+    //!
+    //! Expectations come from the C++ comparator: date epoch strings compare
+    //! lexically, and unset dates are last in both directions. Strings compare
+    //! bytewise. Durations compare parsed. `uda.X.values` is reversed into
+    //! `Task::customOrder`, with values missing from it at `end ()`. A string
+    //! UDA without values puts empties last in both directions. Depends sorts
+    //! on the ID of the lexically first dependency, and `random` hashes uuid
+    //! plus seed.
+    use super::*;
+    use crate::cli2;
+    use crate::context::set_stdout_tty_override;
+    use crate::filter::Filter;
+    use crate::legacy::legacy_sort_column_map;
+    use crate::test_util::{env_lock, EnvGuard};
+    use std::sync::MutexGuard;
+    use tempfile::TempDir;
+
+    /// Restores the CLI2 abbreviation length and the `random` seed that the
+    /// tests (and `Context::initialize`) change.
+    struct Statics(i32);
+
+    impl Drop for Statics {
+        fn drop(&mut self) {
+            cli2::set_minimum_match_length(self.0);
+            set_sort_random_seed(0);
+            set_stdout_tty_override(None);
+        }
+    }
+
+    /// Fields drop in declaration order: Context and data directory, then
+    /// statics and environment, the lock last.
+    struct Report {
+        ctx: Context,
+        _dir: TempDir,
+        _statics: Statics,
+        _env: EnvGuard,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    fn initialized(list: &[&str]) -> Context {
+        let args: Vec<String> = list.iter().map(|s| s.to_string()).collect();
+        let mut ctx = Context::new();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let rc = ctx.initialize_with(&args, &mut out, &mut err).unwrap();
+        assert_eq!(rc, 0, "{}", String::from_utf8_lossy(&err));
+        ctx
+    }
+
+    impl Report {
+        /// `task <rc...> count` on a data directory holding the `seed` JSON
+        /// tasks (added in order, so pending tasks get IDs 1, 2, ...).
+        fn new(rc: &[&str], seed: &[&str]) -> Self {
+            let lock = env_lock();
+            let env = EnvGuard::save(&["HOME", "TASKRC", "TASKDATA", "XDG_CONFIG_HOME"]);
+            let statics = Statics(cli2::minimum_match_length());
+            set_sort_random_seed(0);
+            let dir = TempDir::new().unwrap();
+            let base = dir.path().to_str().unwrap().to_string();
+            let home = format!("{base}/home");
+            std::fs::create_dir(&home).unwrap();
+            let taskrc = format!("{base}/taskrc");
+            std::fs::write(&taskrc, "").unwrap();
+            std::env::set_var("HOME", &home);
+            std::env::set_var("TASKRC", &taskrc);
+            std::env::set_var("TASKDATA", format!("{base}/data"));
+            std::env::remove_var("XDG_CONFIG_HOME");
+            set_stdout_tty_override(Some(false));
+
+            let mut full = vec!["task"];
+            full.extend_from_slice(rc);
+            full.push("count");
+            if !seed.is_empty() {
+                let mut seeder = initialized(&full);
+                for json in seed {
+                    let mut task = Task::from_input(&mut seeder, json).unwrap();
+                    crate::tdb2::add(&mut seeder, &mut task).unwrap();
+                }
+            }
+
+            let ctx = initialized(&full);
+            Report { ctx, _dir: dir, _statics: statics, _env: env, _lock: lock }
+        }
+
+        /// CmdCustom steps 3: `Filter::subset` with no filter.
+        fn load(&mut self) -> Vec<Task> {
+            let mut filtered = Vec::new();
+            Filter::new().subset(&mut self.ctx, &mut filtered).unwrap();
+            filtered
+        }
+
+        /// CmdCustom steps 2 and 4 on `filtered` with `rc.report.r.sort` =
+        /// `sort`: the resulting sequence.
+        fn sequence(&mut self, filtered: &mut [Task], sort: &str) -> Result<Vec<usize>> {
+            self.ctx.config.set("report.r.sort", sort);
+            let report_sort = self.ctx.config.get("report.r.sort");
+            let mut sort_order = split(&report_sort, ',');
+            if !sort_order.is_empty() && sort_order[0] != "none" {
+                for column in sort_order.iter_mut() {
+                    legacy_sort_column_map(&mut self.ctx, column);
+                }
+            }
+            let mut sequence: Vec<usize> = (0..filtered.len()).collect();
+            if !sort_order.is_empty() {
+                sort_tasks(&mut self.ctx, filtered, &mut sequence, &report_sort)?;
+            }
+            Ok(sequence)
+        }
+
+        /// Descriptions of the sorted `filtered` tasks.
+        fn sorted(&mut self, filtered: &mut [Task], sort: &str) -> Vec<String> {
+            let sequence = self.sequence(filtered, sort).unwrap();
+            sequence.iter().map(|&i| filtered[i].get("description")).collect()
+        }
+
+        /// The full CmdCustom path: load, then sort.
+        fn report(&mut self, sort: &str) -> Vec<String> {
+            let mut filtered = self.load();
+            self.sorted(&mut filtered, sort)
+        }
+
+        fn report_err(&mut self, sort: &str) -> String {
+            let mut filtered = self.load();
+            match self.sequence(&mut filtered, sort) {
+                Ok(s) => panic!("expected an error, got {s:?}"),
+                Err(e) => e.to_string(),
+            }
+        }
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn reversed(list: &[&str]) -> Vec<String> {
+        list.iter().rev().map(|s| s.to_string()).collect()
+    }
+
+    const ENTRY: &str = r#""entry":"20210101T000000Z""#;
+
+    #[test]
+    fn natural_id_order() {
+        let mut seed: Vec<String> = (1..=12)
+            .map(|i| format!(r#"{{"description":"t{i}","status":"pending",{ENTRY}}}"#))
+            .collect();
+        seed.push(format!(r#"{{"description":"done","status":"completed","end":"20210102T000000Z",{ENTRY}}}"#));
+        let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
+        let mut r = Report::new(&[], &seed);
+        let mut filtered = r.load();
+        let ids = |r: &mut Report, filtered: &mut [Task], sort: &str| -> Vec<i32> {
+            let sequence = r.sequence(filtered, sort).unwrap();
+            sequence.iter().map(|&i| filtered[i].id).collect()
+        };
+        // Numeric, not lexical ("10" after "9"); completed tasks have ID 0.
+        let ascending: Vec<i32> = (0..=12).collect();
+        assert_eq!(ids(&mut r, &mut filtered, "id"), ascending);
+        assert_eq!(ids(&mut r, &mut filtered, "id+"), ascending);
+        assert_eq!(ids(&mut r, &mut filtered, "id+/"), ascending);
+        let descending: Vec<i32> = (0..=12).rev().collect();
+        assert_eq!(ids(&mut r, &mut filtered, "id-"), descending);
+        assert_eq!(ids(&mut r, &mut filtered, "id-/"), descending);
+        // IDs follow the task descriptions t1..t12.
+        let sorted = r.sorted(&mut filtered, "id+");
+        assert_eq!(sorted[0], "done");
+        assert_eq!(sorted[9], "t9");
+        assert_eq!(sorted[10], "t10");
+        assert!(r.ctx.time_sort_us >= 0);
+    }
+
+    #[test]
+    fn uuid_and_string_attributes() {
+        let mut r = Report::new(
+            &[],
+            &[
+                r#"{"uuid":"eeeeeeee-0000-4000-8000-000000000003","description":"a","status":"pending","project":"work","tags":["x"],"entry":"20210101T000000Z"}"#,
+                r#"{"uuid":"eeeeeeee-0000-4000-8000-000000000001","description":"B","status":"pending","project":"Home","tags":["b","a"],"entry":"20210101T000000Z"}"#,
+                r#"{"uuid":"eeeeeeee-0000-4000-8000-000000000002","description":"c","status":"completed","end":"20210102T000000Z","entry":"20210101T000000Z"}"#,
+                r#"{"uuid":"eeeeeeee-0000-4000-8000-000000000004","description":"d","status":"deleted","project":"home","end":"20210102T000000Z","entry":"20210101T000000Z"}"#,
+            ],
+        );
+        assert_eq!(r.report("uuid+"), names(&["B", "c", "a", "d"]));
+        assert_eq!(r.report("uuid-"), names(&["d", "a", "c", "B"]));
+        // Bytewise: "" < "Home" < "home" < "work".
+        assert_eq!(r.report("project+"), names(&["c", "B", "d", "a"]));
+        assert_eq!(r.report("project-"), names(&["a", "d", "B", "c"]));
+        assert_eq!(r.report("description"), names(&["B", "a", "c", "d"]));
+        assert_eq!(r.report("description-"), names(&["d", "c", "a", "B"]));
+        // completed < deleted < pending, ties on the next key.
+        assert_eq!(r.report("status+,description+"), names(&["c", "d", "B", "a"]));
+        assert_eq!(r.report("status-,description-"), names(&["a", "B", "d", "c"]));
+        // The "tags" attribute is rebuilt in key order ("a,b").
+        assert_eq!(r.report("tags+,description+"), names(&["c", "d", "B", "a"]));
+        assert_eq!(r.report("tags-,description+"), names(&["a", "B", "c", "d"]));
+    }
+
+    #[test]
+    fn recurrence_attributes_parent_imask_mask_recur() {
+        const A: &str = "aaaaaaaa-0000-4000-8000-000000000000";
+        const B: &str = "bbbbbbbb-0000-4000-8000-000000000000";
+        let child = |d: &str, parent: &str, imask: &str, recur: &str| {
+            format!(
+                r#"{{"description":"{d}","status":"pending","parent":"{parent}","imask":{imask},"recur":"{recur}","due":"20210105T000000Z",{ENTRY}}}"#
+            )
+        };
+        let seed = [
+            format!(
+                r#"{{"uuid":"{A}","description":"tmplA","status":"recurring","recur":"weekly","mask":"-","due":"20210105T000000Z",{ENTRY}}}"#
+            ),
+            format!(
+                r#"{{"uuid":"{B}","description":"tmplB","status":"recurring","recur":"2d","mask":"+--","due":"20210105T000000Z",{ENTRY}}}"#
+            ),
+            child("c1", A, "1", "weekly"),
+            child("c10", B, "10", "2d"),
+            child("c2", A, "2", "weekly"),
+            format!(r#"{{"description":"plain","status":"pending",{ENTRY}}}"#),
+        ];
+        let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
+        let mut r = Report::new(&[], &seed);
+        // imask is in the string branch: "1" < "10" < "2"; "" first.
+        assert_eq!(r.report("imask+,description+"), names(&["plain", "tmplA", "tmplB", "c1", "c10", "c2"]));
+        assert_eq!(r.report("imask-,description+"), names(&["c2", "c10", "c1", "plain", "tmplA", "tmplB"]));
+        assert_eq!(r.report("parent+,description+"), names(&["plain", "tmplA", "tmplB", "c1", "c2", "c10"]));
+        assert_eq!(r.report("parent-,description+"), names(&["c10", "c1", "c2", "plain", "tmplA", "tmplB"]));
+        // '+' (43) < '-' (45).
+        assert_eq!(r.report("mask+,description+"), names(&["c1", "c10", "c2", "plain", "tmplB", "tmplA"]));
+        // recur: parsed durations (unset = 0); identical strings go on to the
+        // next key.
+        assert_eq!(r.report("recur+,description+"), names(&["plain", "c10", "tmplB", "c1", "c2", "tmplA"]));
+        assert_eq!(r.report("recur-,description+"), names(&["c1", "c2", "tmplA", "c10", "tmplB", "plain"]));
+    }
+
+    /// Every built-in date attribute plus a date UDA, as stored epochs.
+    /// `early`/`late` are completed: C++ `Task::validate` removes `end` from
+    /// pending tasks.
+    #[test]
+    fn date_attributes_lexical_epochs_and_missing_last() {
+        const FIELDS: [&str; 7] = ["due", "end", "start", "until", "wait", "scheduled", "when"];
+        let all_dates = |d: &str, iso: &str, entry: &str| {
+            let dates: Vec<String> = FIELDS.iter().map(|f| format!(r#""{f}":"{iso}""#)).collect();
+            format!(r#"{{"description":"{d}","status":"completed",{},"entry":"{entry}"}}"#, dates.join(","))
+        };
+        let seed = [
+            all_dates("late", "20210102T000000Z", "20210102T000000Z"),
+            all_dates("early", "20210101T000000Z", "20210101T000000Z"),
+            // 999999999 and 1000000000: lexically reversed.
+            r#"{"description":"lex9","status":"pending","due":"20010909T014639Z","when":"20010909T014639Z","entry":"20210103T000000Z"}"#.to_string(),
+            r#"{"description":"lex10","status":"pending","due":"20010909T014640Z","when":"20010909T014640Z","entry":"20210103T000000Z"}"#.to_string(),
+            // No dates; entry defaults to now.
+            r#"{"description":"none","status":"pending"}"#.to_string(),
+        ];
+        let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
+        let mut r = Report::new(&["rc.uda.when.type:date"], &seed);
+
+        for field in ["due", "when"] {
+            assert_eq!(
+                r.report(&format!("{field}+,description+")),
+                names(&["lex10", "early", "late", "lex9", "none"]),
+                "{field}"
+            );
+            assert_eq!(
+                r.report(&format!("{field}-,description+")),
+                names(&["lex9", "late", "early", "lex10", "none"]),
+                "{field}"
+            );
+        }
+        for field in ["end", "start", "until", "wait", "scheduled"] {
+            assert_eq!(
+                r.report(&format!("{field}+,description+")),
+                names(&["early", "late", "lex10", "lex9", "none"]),
+                "{field}"
+            );
+            assert_eq!(
+                r.report(&format!("{field}-,description+")),
+                names(&["late", "early", "lex10", "lex9", "none"]),
+                "{field}"
+            );
+            // Two unset values are equal: the next key decides.
+            assert_eq!(
+                r.report(&format!("{field}-,description-")),
+                names(&["late", "early", "none", "lex9", "lex10"]),
+                "{field}"
+            );
+        }
+        assert_eq!(r.report("entry+,description+"), names(&["early", "late", "lex10", "lex9", "none"]));
+        assert_eq!(r.report("entry-,description+"), names(&["none", "lex10", "lex9", "late", "early"]));
+
+        // `modified` is stamped by tdb2::add; set it on the loaded tasks
+        // (CmdCustom sorts exactly what Filter::subset returned).
+        let mut filtered = r.load();
+        for task in filtered.iter_mut() {
+            match task.get("description").as_str() {
+                "early" => task.set("modified", "1609459200"),
+                "late" => task.set("modified", "1609545600"),
+                "lex9" => task.set("modified", "999999999"),
+                "lex10" => task.set("modified", "1000000000"),
+                _ => task.remove("modified"),
+            }
+        }
+        assert_eq!(r.sorted(&mut filtered, "modified+,description+"), names(&["lex10", "early", "late", "lex9", "none"]));
+        assert_eq!(r.sorted(&mut filtered, "modified-,description+"), names(&["lex9", "late", "early", "lex10", "none"]));
+    }
+
+    #[test]
+    fn depends_first_dependency_id() {
+        const U1: &str = "cccccccc-0000-4000-8000-000000000001";
+        const U2: &str = "cccccccc-0000-4000-8000-000000000002";
+        const U3: &str = "cccccccc-0000-4000-8000-000000000003";
+        let plain = |d: &str, u: &str| format!(r#"{{"uuid":"{u}","description":"{d}","status":"pending",{ENTRY}}}"#);
+        let dep = |d: &str, uuids: &[&str]| {
+            let list: Vec<String> = uuids.iter().map(|u| format!("\"{u}\"")).collect();
+            format!(r#"{{"description":"{d}","status":"pending","depends":[{}],{ENTRY}}}"#, list.join(","))
+        };
+        let seed = [
+            plain("u1", U1),
+            plain("u2", U2),
+            plain("u3", U3),
+            dep("on3", &[U3]),
+            // Lexically first dependency: U1.
+            dep("on2+1", &[U2, U1]),
+            plain("none", "cccccccc-0000-4000-8000-0000000000ff"),
+            dep("on1", &[U1]),
+        ];
+        let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
+        let mut r = Report::new(&[], &seed);
+        assert_eq!(r.ctx.tdb2.id(U1).unwrap(), 1);
+        assert_eq!(r.ctx.tdb2.id(U3).unwrap(), 3);
+        // Ascending: no dependencies first; on1 and on2+1 tie on ID 1.
+        assert_eq!(
+            r.report("depends+,description+"),
+            names(&["none", "u1", "u2", "u3", "on1", "on2+1", "on3"])
+        );
+        assert_eq!(
+            r.report("depends-,description-"),
+            names(&["on3", "on2+1", "on1", "u3", "u2", "u1", "none"])
+        );
+        // Legacy break marker on depends.
+        assert_eq!(
+            r.report("depends-/,description-"),
+            names(&["on3", "on2+1", "on1", "u3", "u2", "u1", "none"])
+        );
+    }
+
+    #[test]
+    fn urgency_computed_per_task() {
+        let mut r = Report::new(
+            &[],
+            &[
+                r#"{"description":"plain","status":"pending"}"#,
+                r#"{"description":"next","status":"pending","tags":["next"]}"#,
+                r#"{"description":"proj","status":"pending","project":"p"}"#,
+            ],
+        );
+        assert_eq!(r.report("urgency-"), names(&["next", "proj", "plain"]));
+        assert_eq!(r.report("urgency+"), names(&["plain", "proj", "next"]));
+        assert_eq!(r.report("urgency"), names(&["plain", "proj", "next"]));
+    }
+
+    #[test]
+    fn break_suffix_is_stripped_and_quirks() {
+        let mut r = Report::new(
+            &[],
+            &[
+                r#"{"description":"w2","status":"pending","project":"work"}"#,
+                r#"{"description":"h1","status":"pending","project":"home"}"#,
+                r#"{"description":"w1","status":"pending","project":"work"}"#,
+                r#"{"description":"n","status":"pending"}"#,
+            ],
+        );
+        let plain = r.report("project+,description-");
+        assert_eq!(plain, names(&["n", "h1", "w2", "w1"]));
+        assert_eq!(r.report("project+/,description-"), plain);
+        assert_eq!(r.report("project+/,description-/"), plain);
+        assert_eq!(r.report("project-/,description+"), names(&["w1", "w2", "h1", "n"]));
+
+        // C++ decomposeSortField: '/' without '+'/'-' stays part of the key.
+        assert_eq!(r.report_err("project/"), "The 'project/' column is not a valid sort field.");
+        assert_eq!(r.report_err("bogus+"), "The 'bogus' column is not a valid sort field.");
+        // Reached only when earlier keys tie.
+        assert_eq!(r.report_err("project,bogus-"), "The 'bogus' column is not a valid sort field.");
+        // The legacy map does not rewrite the string passed to sort_tasks
+        // (and removed names are not mapped at all).
+        assert_eq!(r.report_err("entry_time"), "The 'entry_time' column is not a valid sort field.");
+        assert!(!r.ctx.columns.contains_key("bogus"));
+    }
+
+    const UDA_RC: &[&str] = &[
+        "rc.uda.size.type:string",
+        "rc.uda.size.values:H,M,L",
+        "rc.uda.sizee.type:string",
+        "rc.uda.sizee.values:H,M,L,",
+        "rc.uda.plain.type:string",
+        "rc.uda.est.type:numeric",
+        "rc.uda.len.type:duration",
+    ];
+
+    #[test]
+    fn string_uda_with_values() {
+        let mut r = Report::new(
+            UDA_RC,
+            &[
+                r#"{"description":"m","status":"pending","size":"M","sizee":"M"}"#,
+                r#"{"description":"none","status":"pending"}"#,
+                r#"{"description":"h","status":"pending","size":"H","sizee":"H"}"#,
+                r#"{"description":"l","status":"pending","size":"L","sizee":"L"}"#,
+            ],
+        );
+        // `Task::customOrder` is appended to by every Context initialization
+        // on the thread (C++: once per process; the seeding Context ran it
+        // too). `std::find` takes the first match, so only the prefix counts.
+        assert!(Task::custom_order().get("size").unwrap().starts_with(&names(&["L", "M", "H"])));
+        assert!(Task::custom_order().get("sizee").unwrap().starts_with(&names(&["", "L", "M", "H"])));
+        // customOrder is the reversed value list; "" is not in it (end ()).
+        assert_eq!(r.report("size+"), names(&["l", "m", "h", "none"]));
+        assert_eq!(r.report("size-"), names(&["none", "h", "m", "l"]));
+        // A trailing comma puts "" first in customOrder.
+        assert_eq!(r.report("sizee+"), names(&["none", "l", "m", "h"]));
+        assert_eq!(r.report("sizee-"), names(&["h", "m", "l", "none"]));
+    }
+
+    #[test]
+    fn string_uda_without_values() {
+        let mut r = Report::new(
+            UDA_RC,
+            &[
+                r#"{"description":"none1","status":"pending"}"#,
+                r#"{"description":"b","status":"pending","plain":"b"}"#,
+                r#"{"description":"none2","status":"pending"}"#,
+                r#"{"description":"a","status":"pending","plain":"a"}"#,
+            ],
+        );
+        assert!(!Task::custom_order().contains_key("plain"));
+        // Empty values are last in both directions; two empties tie.
+        assert_eq!(r.report("plain+,description-"), names(&["a", "b", "none2", "none1"]));
+        assert_eq!(r.report("plain-,description+"), names(&["b", "a", "none1", "none2"]));
+    }
+
+    #[test]
+    fn numeric_and_duration_udas() {
+        let mut r = Report::new(
+            UDA_RC,
+            &[
+                r#"{"description":"ten","status":"pending","est":10,"len":"P7D"}"#,
+                r#"{"description":"ninehalf","status":"pending","est":9.5,"len":"P2D"}"#,
+                r#"{"description":"none","status":"pending"}"#,
+                r#"{"description":"neg","status":"pending","est":-1,"len":"PT36H"}"#,
+            ],
+        );
+        // strtof: unset is 0.
+        assert_eq!(r.report("est+"), names(&["neg", "none", "ninehalf", "ten"]));
+        assert_eq!(r.report("est-"), names(&["ten", "ninehalf", "none", "neg"]));
+        // Parsed durations, not strings ("P2D" < "P7D" < "PT36H").
+        assert_eq!(r.report("len+"), names(&["none", "neg", "ninehalf", "ten"]));
+        assert_eq!(r.report("len-"), names(&["ten", "ninehalf", "neg", "none"]));
+    }
+
+    #[test]
+    fn random_is_deterministic_with_seed() {
+        let uuids: Vec<String> = (0..10).map(|i| format!("dddddddd-0000-4000-8000-{i:012}")).collect();
+        let seed: Vec<String> = uuids
+            .iter()
+            .map(|u| format!(r#"{{"uuid":"{u}","description":"{u}","status":"pending",{ENTRY}}}"#))
+            .collect();
+        let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
+        let mut r = Report::new(&["rc.debug.random.seed:1234"], &seed);
+        let mut expected = uuids.clone();
+        expected.sort_by_key(|u| std_hash(&format!("{u}1234")).to_string());
+        let first = r.report("random");
+        assert_eq!(first, expected);
+        assert_eq!(sort_random_seed(), 1234);
+        assert_eq!(r.report("random+"), first);
+        let desc: Vec<&str> = expected.iter().map(String::as_str).collect();
+        assert_eq!(r.report("random-"), reversed(&desc));
+        // Not the uuid order.
+        assert_ne!(first, uuids);
+    }
+
+    #[test]
+    fn sort_projects_from_report_data() {
+        let mut r = Report::new(
+            &[],
+            &[
+                r#"{"description":"1","status":"pending","project":"home.garden"}"#,
+                r#"{"description":"2","status":"pending","project":"home.garden"}"#,
+                r#"{"description":"3","status":"pending","project":"home.kitchen"}"#,
+                r#"{"description":"4","status":"pending","project":"work.alpha.x"}"#,
+                r#"{"description":"5","status":"pending","project":"home"}"#,
+                r#"{"description":"6","status":"pending"}"#,
+            ],
+        );
+        let filtered = r.load();
+        // CmdProjects: unique[project] += 1.
+        let mut unique: BTreeMap<String, i32> = BTreeMap::new();
+        for task in &filtered {
+            *unique.entry(task.get("project")).or_insert(0) += 1;
+        }
+        let mut sorted = Vec::new();
+        sort_projects(&mut sorted, &unique);
+        let pairs = |l: &[(&str, i32)]| -> Vec<(String, i32)> { l.iter().map(|(n, c)| (n.to_string(), *c)).collect() };
+        assert_eq!(
+            sorted,
+            pairs(&[
+                ("", 1),
+                ("home", 1),
+                ("home.kitchen", 1),
+                ("home.garden", 2),
+                ("work", 1),
+                ("work.alpha", 1),
+                ("work.alpha.x", 1)
+            ])
+        );
+
+        // CmdSummary: allProjects[project] = false; missing parents get 1.
+        let mut all: BTreeMap<String, bool> = BTreeMap::new();
+        for task in &filtered {
+            if !task.get("project").is_empty() && task.get("project") != "home" {
+                all.insert(task.get("project"), false);
+            }
+        }
+        let mut sorted = Vec::new();
+        sort_projects_bool(&mut sorted, &all);
+        assert_eq!(
+            sorted,
+            pairs(&[
+                ("home", 1),
+                ("home.kitchen", 0),
+                ("home.garden", 0),
+                ("work", 1),
+                ("work.alpha", 1),
+                ("work.alpha.x", 0)
+            ])
+        );
+    }
+}

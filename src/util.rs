@@ -547,4 +547,186 @@ mod tests {
         let err = styled(&[("_forcecolor", "on"), ("color.alternate", "nosuchcolor")]).unwrap_err();
         assert_eq!(err.to_string(), "The color 'nosuchcolor' is not recognized.");
     }
+
+    /// Restores the thread-local stdout-TTY override.
+    struct TtyOverride;
+
+    impl Drop for TtyOverride {
+        fn drop(&mut self) {
+            crate::context::set_stdout_tty_override(None);
+        }
+    }
+
+    /// The table C++ `setHeaderUnderline` produces on the colour path.
+    fn colour_table(alternate: &str, header: &str, underline: bool) -> Table {
+        let mut expected = Table::new();
+        let alternate = Color::parse(alternate).unwrap();
+        expected.color_odd(alternate);
+        expected.intra_color_odd(alternate);
+        expected.color_header(Color::parse(header).unwrap());
+        if underline {
+            expected.underline_headers();
+        }
+        expected
+    }
+
+    #[test]
+    fn set_header_underline_colour_follows_context_color() {
+        let _lock = env_lock();
+        let _tty = TtyOverride;
+        let dbg = |t: &Table| format!("{t:?}");
+        let settings = [("color", "on"), ("color.alternate", "on gray4"), ("color.label", "red"), ("fontunderline", "on")];
+
+        // color=on but stdout is not a TTY: Context::color () is false, so
+        // the no-colour branch runs (and rc.color is switched off).
+        crate::context::set_stdout_tty_override(Some(false));
+        let mut context = context_with(&settings);
+        let mut table = Table::new();
+        set_header_underline(&mut context, &mut table).unwrap();
+        let mut expected = Table::new();
+        expected.color_header(Color::parse("underline").unwrap());
+        assert_eq!(dbg(&table), dbg(&expected));
+        assert_eq!(context.config.get("color"), "off");
+
+        // On a TTY the colour branch runs.
+        crate::context::set_stdout_tty_override(Some(true));
+        let mut context = context_with(&settings);
+        let mut table = Table::new();
+        set_header_underline(&mut context, &mut table).unwrap();
+        assert_eq!(dbg(&table), dbg(&colour_table("on gray4", "underline red", false)));
+
+        let mut settings = settings.to_vec();
+        settings[3] = ("fontunderline", "off");
+        let mut context = context_with(&settings);
+        let mut table = Table::new();
+        set_header_underline(&mut context, &mut table).unwrap();
+        assert_eq!(dbg(&table), dbg(&colour_table("on gray4", "red", true)));
+    }
+
+    #[test]
+    fn set_header_underline_unknown_colours() {
+        let _lock = env_lock();
+        let dbg = |t: &Table| format!("{t:?}");
+        for fontunderline in ["on", "off"] {
+            // A bad color.label fails after the alternate colours are set
+            // (Deviation documented on set_header_underline).
+            let mut context = context_with(&[
+                ("_forcecolor", "on"),
+                ("color.alternate", "on gray2"),
+                ("color.label", "nosuch"),
+                ("fontunderline", fontunderline),
+            ]);
+            let mut table = Table::new();
+            let err = set_header_underline(&mut context, &mut table).unwrap_err();
+            assert_eq!(err.to_string(), "The color 'nosuch' is not recognized.", "{fontunderline}");
+            let mut expected = Table::new();
+            let alternate = Color::parse("on gray2").unwrap();
+            expected.color_odd(alternate);
+            expected.intra_color_odd(alternate);
+            assert_eq!(dbg(&table), dbg(&expected), "{fontunderline}");
+
+            // A bad color.alternate fails before anything is applied.
+            let mut context = context_with(&[
+                ("_forcecolor", "on"),
+                ("color.alternate", "on nosuch"),
+                ("fontunderline", fontunderline),
+            ]);
+            let mut table = Table::new();
+            let err = set_header_underline(&mut context, &mut table).unwrap_err();
+            assert_eq!(err.to_string(), "The color 'nosuch' is not recognized.");
+            assert_eq!(dbg(&table), dbg(&Table::new()));
+
+            // Without colour no Color is built from config: bad names are
+            // never parsed.
+            let mut context = context_with(&[
+                ("color", "off"),
+                ("_forcecolor", "off"),
+                ("color.alternate", "nosuch"),
+                ("color.label", "nosuch"),
+                ("fontunderline", fontunderline),
+            ]);
+            let mut table = Table::new();
+            set_header_underline(&mut context, &mut table).unwrap();
+        }
+    }
+
+    /// `table` with columns ID/Name and two rows, colour forced, rendered.
+    fn rendered(mut table: Table) -> String {
+        table.width(80);
+        table.add("ID");
+        table.add("Name");
+        for (id, name) in [("1", "one"), ("2", "two")] {
+            let row = table.add_row();
+            table.set(row, 0, id);
+            table.set(row, 1, name);
+        }
+        table.force_color();
+        table.with_color(true);
+        table.render()
+    }
+
+    #[test]
+    fn set_header_underline_rendered_headers() {
+        let _lock = env_lock();
+        let render_styled = |settings: &[(&str, &str)]| {
+            let mut context = context_with(settings);
+            let mut table = Table::new();
+            set_header_underline(&mut context, &mut table).unwrap();
+            rendered(table)
+        };
+
+        // Colour + fontunderline: the label colour with underline, no dashes.
+        let out = render_styled(&[
+            ("_forcecolor", "on"),
+            ("color.alternate", "on gray2"),
+            ("color.label", "bold"),
+            ("fontunderline", "on"),
+        ]);
+        assert_eq!(out, rendered(colour_table("on gray2", "underline bold", false)));
+        assert!(out.contains(&Color::parse("underline bold").unwrap().colorize("ID")), "{out:?}");
+        assert!(!out.contains("--"), "{out:?}");
+        // The odd row carries the alternate colour.
+        assert!(out.contains(&Color::parse("on gray2").unwrap().colorize("1 ")), "{out:?}");
+
+        // Colour, no fontunderline: label colour, then a dashed underline.
+        let out = render_styled(&[
+            ("_forcecolor", "on"),
+            ("color.alternate", "on gray2"),
+            ("color.label", "bold"),
+            ("fontunderline", "off"),
+        ]);
+        assert_eq!(out, rendered(colour_table("on gray2", "bold", true)));
+        assert!(out.contains("--"), "{out:?}");
+
+        // No colour, fontunderline: underline escape on the header only.
+        let out = render_styled(&[("color", "off"), ("_forcecolor", "off"), ("fontunderline", "on")]);
+        assert!(out.contains(&Color::parse("underline").unwrap().colorize("ID")), "{out:?}");
+        assert!(!out.contains("--"), "{out:?}");
+
+        // No colour, no fontunderline: plain text with dashes, no escapes.
+        let out = render_styled(&[("color", "off"), ("_forcecolor", "off"), ("fontunderline", "off")]);
+        assert!(!out.contains('\x1b'), "{out:?}");
+        assert!(out.contains("ID Name"), "{out:?}");
+        assert!(out.contains("-- ----"), "{out:?}");
+    }
+
+    #[test]
+    fn optional_blank_line_legacy_and_default_verbosity() {
+        let _lock = env_lock();
+        // Boolean true (verbosity_legacy) and the default: everything.
+        for v in ["1", "yes", "true", "blank"] {
+            let mut context = context_with(&[("verbose", v)]);
+            assert_eq!(optional_blank_line(&mut context), "\n", "{v}");
+        }
+        // rc.verbose=off/0 emulates 1.9.4: {blank, label, new-id, edit}.
+        for v in ["off", "0", "no"] {
+            let mut context = context_with(&[("verbose", v)]);
+            assert_eq!(optional_blank_line(&mut context), "\n", "{v}");
+        }
+        // A real token list without blank.
+        for v in ["nothing", "footnote,label", "affected"] {
+            let mut context = context_with(&[("verbose", v)]);
+            assert_eq!(optional_blank_line(&mut context), "", "{v}");
+        }
+    }
 }

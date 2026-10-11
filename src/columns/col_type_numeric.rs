@@ -91,3 +91,64 @@ impl Column for ColumnTypeNumeric {
         ColumnTypeNumeric::modify_numeric(self, task, value, env)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! C++ `ColumnTypeNumeric::validate` / `modify` on the bare type column.
+    use super::*;
+    use crate::columns::column::FakeModifyEnv;
+    use crate::shared::datetime::Datetime;
+
+    fn column() -> ColumnTypeNumeric {
+        let mut c = ColumnTypeNumeric::new();
+        c.base.name = "n".to_string();
+        c
+    }
+
+    fn modified(value: &str) -> Result<String> {
+        let mut task = Task::new();
+        ColumnTypeNumeric::modify_numeric(&column(), &mut task, value, &mut FakeModifyEnv::default())?;
+        Ok(task.get("n"))
+    }
+
+    #[test]
+    fn constructor_and_validate() {
+        let c = ColumnTypeNumeric::new();
+        assert_eq!(c.type_(), "numeric");
+        assert!(c.modifiable());
+        assert!(ColumnTypeNumeric::validate_numeric("1") && ColumnTypeNumeric::validate_numeric("x"));
+        assert!(!ColumnTypeNumeric::validate_numeric(""));
+        assert!(c.validate("1") && !c.validate(""));
+    }
+
+    #[test]
+    fn modify_integer_real_and_expressions() {
+        assert_eq!(modified("42").unwrap(), "42");
+        assert_eq!(modified("-7").unwrap(), "-7");
+        assert_eq!(modified("3.25").unwrap(), "3.25");
+        assert_eq!(modified("6*7").unwrap(), "42");
+        let mut env = FakeModifyEnv::default();
+        let mut task = Task::new();
+        column().modify(&mut task, "1+2", &mut env).unwrap();
+        assert_eq!(task.get("n"), "3");
+        // C++ `get_string ()` is the raw `_string`, which Eval leaves at the
+        // left operand's literal text.
+        assert_eq!(env.debug, vec![format!("{MODIFICATION_LABEL}n <-- '1' <-- '1+2'")]);
+    }
+
+    #[test]
+    fn modify_casts_dates_and_durations_to_integer() {
+        assert_eq!(modified("1h").unwrap(), "3600");
+        assert_eq!(modified("P1D").unwrap(), "86400");
+        let epoch = Datetime::from_string("2030-01-01", "").unwrap().to_epoch();
+        assert_eq!(modified("2030-01-01").unwrap(), epoch.to_string());
+    }
+
+    #[test]
+    fn modify_rejects_strings() {
+        assert_eq!(modified("abc").unwrap_err().to_string(), "The value 'abc' is not a valid numeric value.");
+        // Eval failure falls back to the literal string.
+        assert_eq!(modified("(").unwrap_err().to_string(), "The value '(' is not a valid numeric value.");
+        assert_eq!(modified("").unwrap_err().to_string(), "The value '' is not a valid numeric value.");
+    }
+}
