@@ -169,3 +169,166 @@ impl Command for CmdStart {
         Ok(rc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const TWO: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+    const THREE: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+    const FOUR: &str = "aaaaaaaa-0000-4000-8000-000000000004";
+
+    /// ID 1 started with a project, ID 2 plain with a project, a completed
+    /// task, and a completed task that is still started.
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z","project":"home","start":"20260101T000000Z"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000002","description":"two","status":"pending","entry":"20260101T000000Z","project":"work"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000003","description":"three","status":"completed","entry":"20260101T000000Z","end":"20260102T000000Z"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000004","description":"four","status":"completed","entry":"20260101T000000Z","end":"20260102T000000Z","start":"20260101T000000Z"}"#,
+    ];
+
+    fn fixture(rc_lines: &str, args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, &format!("confirmation=off\n{rc_lines}"), args)
+    }
+
+    #[test]
+    fn starts_and_stamps_start() {
+        let mut f = fixture("", &["2", "start", "+go"]);
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        let t = f.task(TWO);
+        assert!(t.has("start"));
+        assert_eq!(t.get("status"), "pending");
+        assert!(t.get_tags().contains(&"go".to_string()));
+    }
+
+    #[test]
+    fn already_started_uses_raw_id() {
+        let mut f = fixture("", &["1", "start"]);
+        begin_console_override("");
+        let rc = f.run(&CmdStart::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown, "Task 1 'one' already started.\n");
+        assert_eq!(f.task(ONE).get("start"), "1767225600");
+
+        // A completed task has id 0, which C++ prints verbatim.
+        drop(f);
+        let mut f2 = fixture("", &[FOUR, "start"]);
+        begin_console_override("");
+        let rc = f2.run(&CmdStart::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown, "Task 0 'four' already started.\n");
+    }
+
+    #[test]
+    fn completed_task_is_reopened() {
+        let mut f = fixture("", &[THREE, "start"]);
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        let t = f.task(THREE);
+        assert_eq!(t.get("status"), "pending");
+        assert!(t.has("start"));
+    }
+
+    #[test]
+    fn journal_time_start_annotation() {
+        let mut f = fixture(
+            "journal.time=on\njournal.time.start.annotation=Go go\n",
+            &["2", "start"],
+        );
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        let annotations: Vec<String> = f.task(TWO).get_annotations().values().cloned().collect();
+        assert_eq!(annotations, vec!["Go go".to_string()]);
+    }
+
+    #[test]
+    fn no_journal_no_annotation() {
+        let mut f = fixture("", &["2", "start"]);
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        assert!(f.task(TWO).get_annotations().is_empty());
+    }
+
+    #[test]
+    fn no_tasks_specified() {
+        let mut f = fixture("", &["99", "start"]);
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 1);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "No tasks specified."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+
+    #[test]
+    fn single_task_needs_no_confirmation() {
+        let mut f = fixture("confirmation=on\n", &["2", "start"]);
+        begin_console_override("");
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        let shown = end_console_override();
+        assert!(!shown.contains("(yes/no)"), "{shown}");
+        assert!(f.task(TWO).has("start"));
+    }
+
+    #[test]
+    fn declined_permission_returns_1() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &[THREE, "2", "start"]);
+        begin_console_override("no\nno\n");
+        let rc = f.run(&CmdStart::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert!(
+            shown.contains("Start task 2 'two'? (yes/no/all/quit) Task not started.\n"),
+            "{shown}"
+        );
+        assert_eq!(shown.matches("Task not started.").count(), 2, "{shown}");
+        assert!(!f.task(TWO).has("start"));
+    }
+
+    #[test]
+    fn bulk_quit_stops_the_loop() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &[THREE, "2", "start"]);
+        begin_console_override("quit\n");
+        let rc = f.run(&CmdStart::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown.matches("Task not started.").count(), 1, "{shown}");
+        assert!(!f.task(TWO).has("start"));
+        assert!(!f.task(THREE).has("start"));
+    }
+
+    #[test]
+    fn bulk_all_starts_every_task() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &[THREE, "2", "start"]);
+        begin_console_override("all\n");
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        end_console_override();
+        assert!(f.task(TWO).has("start"));
+        assert!(f.task(THREE).has("start"));
+    }
+
+    #[test]
+    fn nag_when_more_urgent_task_remains() {
+        let mut f = fixture("nag=Be good.\n", &["2", "start"]);
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "Be good."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+
+    #[test]
+    fn project_change_footnoted() {
+        let mut f = fixture("verbose=project\n", &["2", "start"]);
+        assert_eq!(f.run(&CmdStart::new()).unwrap(), 0);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m
+                == "Project 'work' is 0% complete (1 task remaining)."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+}
