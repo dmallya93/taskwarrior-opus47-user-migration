@@ -256,8 +256,10 @@ mod tests {
         let mut f = fixture("verbose=project\n", &["1", "stop"]);
         assert_eq!(f.run(&CmdStop::new()).unwrap(), 0);
         assert!(
-            f.ctx.footnotes.iter().any(|m| m
-                == "Project 'home' is 0% complete (1 task remaining)."),
+            f.ctx
+                .footnotes
+                .iter()
+                .any(|m| m == "Project 'home' is 0% complete (1 task remaining)."),
             "{:?}",
             f.ctx.footnotes
         );

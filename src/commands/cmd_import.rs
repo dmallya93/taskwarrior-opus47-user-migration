@@ -229,7 +229,11 @@ impl CmdImport {
             cout(" add  ");
         }
 
-        cout(&format!("{} {}\n", task.get("uuid"), task.get("description")));
+        cout(&format!(
+            "{} {}\n",
+            task.get("uuid"),
+            task.get("description")
+        ));
         Ok(())
     }
 }
@@ -295,7 +299,8 @@ impl Command for CmdImport {
             }
         }
         if duplicates {
-            context.footnote("Tasks with the same UUID have been merged. Please check the results.");
+            context
+                .footnote("Tasks with the same UUID have been merged. Please check the results.");
         }
 
         Ok(rc)

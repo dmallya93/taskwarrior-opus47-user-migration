@@ -121,7 +121,11 @@ impl Command for CmdAppend {
                         sibling.modify(context, ModType::Append, true)?;
                         tdb2::modify(context, &mut sibling)?;
                         count += 1;
-                        feedback_affected_task(context, "Appending to recurring task {1} '{2}'.", &sibling);
+                        feedback_affected_task(
+                            context,
+                            "Appending to recurring task {1} '{2}'.",
+                            &sibling,
+                        );
                     }
 
                     // Append to the parent
@@ -239,7 +243,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_prompt_asks() {
-        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "append", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=prompt\n",
+            &[CHILD1, "append", "note"],
+        );
         begin_console_override("yes\n");
         assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
         let shown = end_console_override();
@@ -253,7 +260,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_prompt_declined() {
-        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "append", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=prompt\n",
+            &[CHILD1, "append", "note"],
+        );
         begin_console_override("no\n");
         assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
         end_console_override();
@@ -304,8 +314,10 @@ mod tests {
         let mut f = fixture("verbose=project\n", &["1", "append", "note"]);
         assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
         assert!(
-            f.ctx.footnotes.iter().any(|m| m
-                == "Project 'home' is 0% complete (1 task remaining)."),
+            f.ctx
+                .footnotes
+                .iter()
+                .any(|m| m == "Project 'home' is 0% complete (1 task remaining)."),
             "{:?}",
             f.ctx.footnotes
         );

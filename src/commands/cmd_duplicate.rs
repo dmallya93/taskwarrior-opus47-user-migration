@@ -6,7 +6,6 @@
 //! annotation modifications, ask permission, and store it with `TDB2::add`
 //! (which runs the on-add hooks).
 
-
 use crate::commands::cmd_modify::ProjectChanges;
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
@@ -172,5 +171,164 @@ impl Command for CmdDuplicate {
         );
 
         Ok(rc)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::task::Task;
+    use crate::test_util::CommandFixture;
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const PARENT: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    const CHILD1: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z","start":"20260102T000000Z","project":"home"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000002","description":"two","status":"completed","entry":"20260101T000000Z","end":"20260103T000000Z"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000001","description":"rec","status":"recurring","entry":"20260101T000000Z","due":"20260101T000000Z","recur":"daily","mask":"--"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000002","description":"rec","status":"pending","entry":"20260101T000000Z","due":"20260101T000000Z","recur":"daily","until":"20270101T000000Z","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"0"}"#,
+    ];
+
+    fn fixture(rc_lines: &str, args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, &format!("confirmation=off\n{rc_lines}"), args)
+    }
+
+    /// The tasks with `description` other than the seeded ones.
+    fn duplicates(f: &mut CommandFixture, description: &str) -> Vec<Task> {
+        let seeded = [ONE, "aaaaaaaa-0000-4000-8000-000000000002", PARENT, CHILD1];
+        f.ctx
+            .tdb2
+            .all_tasks()
+            .unwrap()
+            .into_iter()
+            .filter(|t| {
+                !seeded.contains(&t.get_ref("uuid")) && t.get_ref("description") == description
+            })
+            .collect()
+    }
+
+    #[test]
+    fn copies_without_start_end_entry_and_applies_modifications() {
+        let mut f = fixture("", &["1", "duplicate", "project:work", "+tagged"]);
+        begin_console_override("");
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        assert_eq!(end_console_override(), "");
+        let dups = duplicates(&mut f, "one");
+        assert_eq!(dups.len(), 1);
+        let dup = &dups[0];
+        assert_ne!(dup.get_ref("uuid"), ONE);
+        assert!(!dup.has("start"));
+        assert!(!dup.has("end"));
+        // TDB2::add gives a new entry date.
+        assert_ne!(dup.get_ref("entry"), f.task(ONE).get_ref("entry"));
+        assert_eq!(dup.get_ref("project"), "work");
+        assert!(dup.get_tags().contains(&"tagged".to_string()));
+        assert_eq!(dup.get_status().unwrap(), Status::Pending);
+        // The original is untouched.
+        assert_eq!(f.task(ONE).get_ref("project"), "home");
+    }
+
+    #[test]
+    fn completed_task_becomes_pending() {
+        let mut f = fixture("", &["aaaaaaaa-0000-4000-8000-000000000002", "duplicate"]);
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        let dups = duplicates(&mut f, "two");
+        assert_eq!(dups.len(), 1);
+        assert_eq!(dups[0].get_status().unwrap(), Status::Pending);
+        assert!(!dups[0].has("end"));
+    }
+
+    #[test]
+    fn child_becomes_a_plain_task() {
+        let mut f = fixture("", &[CHILD1, "duplicate"]);
+        begin_console_override("");
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        let id = f.task(CHILD1).id;
+        assert_eq!(
+            end_console_override(),
+            format!("Note: task {id} was a recurring task.  The duplicated task is not.\n")
+        );
+        let dups: Vec<Task> = duplicates(&mut f, "rec")
+            .into_iter()
+            .filter(|t| t.get_ref("status") == "pending")
+            .collect();
+        assert_eq!(dups.len(), 1);
+        for attribute in ["parent", "recur", "until", "imask"] {
+            assert!(!dups[0].has(attribute), "{attribute}");
+        }
+        assert!(dups[0].has("due"));
+    }
+
+    #[test]
+    fn template_stays_a_template_without_mask() {
+        let mut f = fixture("", &[PARENT, "duplicate"]);
+        begin_console_override("");
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        let id = f.task(PARENT).id;
+        assert_eq!(
+            end_console_override(),
+            format!("Note: task {id} was a parent recurring task.  The duplicated task is too.\n")
+        );
+        let dups = duplicates(&mut f, "rec");
+        assert_eq!(dups.len(), 1);
+        // Status::Pending, then TDB2::add validation restores `recurring`
+        // for a task with `recur` and `due`.
+        assert!(!dups[0].has("mask"));
+        assert_eq!(dups[0].get_ref("recur"), "daily");
+    }
+
+    #[test]
+    fn verbose_feedback_new_id_and_project() {
+        let mut f = fixture("verbose=affected,new-id,project\n", &["1", "duplicate"]);
+        begin_console_override("");
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        let shown = end_console_override();
+        let dup = duplicates(&mut f, "one").remove(0);
+        assert_eq!(shown, format!("Created task {}.\n", dup.id));
+        assert!(
+            f.ctx
+                .footnotes
+                .iter()
+                .any(|m| m.starts_with("The project 'home' has changed.")),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+
+    #[test]
+    fn verbose_feedback_new_uuid() {
+        let mut f = fixture("verbose=new-uuid\n", &["1", "duplicate"]);
+        begin_console_override("");
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        let shown = end_console_override();
+        let dup = duplicates(&mut f, "one").remove(0);
+        assert_eq!(shown, format!("Created task {}.\n", dup.get_ref("uuid")));
+    }
+
+    #[test]
+    fn declined_permission_is_rc_1() {
+        let mut f =
+            CommandFixture::new(SEED, "confirmation=on\n", &["1", "duplicate", "/one/uno/"]);
+        // A modification other than annotation needs no bulk prompt for one
+        // task, so permission is granted without asking.
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 0);
+        drop(f);
+
+        let mut f = CommandFixture::new(SEED, "confirmation=on\nbulk=1\n", &["1,2", "duplicate"]);
+        begin_console_override("no\nno\n");
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 1);
+        let shown = end_console_override();
+        assert!(shown.contains("Task not duplicated.\n"), "{shown}");
+        assert!(duplicates(&mut f, "one").is_empty());
+    }
+
+    #[test]
+    fn no_tasks_specified() {
+        let mut f = fixture("", &["99", "duplicate"]);
+        assert_eq!(f.run(&CmdDuplicate::new()).unwrap(), 1);
+        assert!(f.ctx.footnotes.iter().any(|m| m == "No tasks specified."));
     }
 }

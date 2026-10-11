@@ -121,7 +121,11 @@ impl Command for CmdAnnotate {
                         sibling.modify(context, ModType::Annotate, true)?;
                         tdb2::modify(context, &mut sibling)?;
                         count += 1;
-                        feedback_affected_task(context, "Annotating recurring task {1} '{2}'.", &sibling);
+                        feedback_affected_task(
+                            context,
+                            "Annotating recurring task {1} '{2}'.",
+                            &sibling,
+                        );
                     }
 
                     // Annotate the parent
@@ -221,7 +225,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_yes_changes_siblings_and_parent() {
-        let mut f = fixture("recurrence.confirmation=yes\n", &[CHILD1, "annotate", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=yes\n",
+            &[CHILD1, "annotate", "note"],
+        );
         assert_eq!(f.run(&CmdAnnotate::new()).unwrap(), 0);
         for uuid in [PARENT, CHILD1, CHILD2] {
             assert!(applied(&mut f, uuid), "{uuid}");
@@ -230,7 +237,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_no_changes_only_the_task() {
-        let mut f = fixture("recurrence.confirmation=no\n", &[CHILD1, "annotate", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=no\n",
+            &[CHILD1, "annotate", "note"],
+        );
         assert_eq!(f.run(&CmdAnnotate::new()).unwrap(), 0);
         assert!(applied(&mut f, CHILD1));
         assert!(!applied(&mut f, CHILD2));
@@ -239,7 +249,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_prompt_asks() {
-        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "annotate", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=prompt\n",
+            &[CHILD1, "annotate", "note"],
+        );
         begin_console_override("yes\n");
         assert_eq!(f.run(&CmdAnnotate::new()).unwrap(), 0);
         let shown = end_console_override();
@@ -253,7 +266,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_prompt_declined() {
-        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "annotate", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=prompt\n",
+            &[CHILD1, "annotate", "note"],
+        );
         begin_console_override("no\n");
         assert_eq!(f.run(&CmdAnnotate::new()).unwrap(), 0);
         end_console_override();
@@ -304,8 +320,10 @@ mod tests {
         let mut f = fixture("verbose=project\n", &["1", "annotate", "note"]);
         assert_eq!(f.run(&CmdAnnotate::new()).unwrap(), 0);
         assert!(
-            f.ctx.footnotes.iter().any(|m| m
-                == "Project 'home' is 0% complete (1 task remaining)."),
+            f.ctx
+                .footnotes
+                .iter()
+                .any(|m| m == "Project 'home' is 0% complete (1 task remaining)."),
             "{:?}",
             f.ctx.footnotes
         );

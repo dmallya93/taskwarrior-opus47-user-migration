@@ -3132,9 +3132,14 @@ fn start_journal_annotation_reopens_completed_and_bulk_quit() {
 
     let output = task_input(&env, &["1-2", "start"], "quit\n");
     let out = stdout(&output);
-    assert!(out.starts_with("This command will alter 2 tasks.\n"), "{out}");
     assert!(
-        out.ends_with("Start task 1 'one'? (yes/no/all/quit) Task not started.\nStarted 0 tasks.\n"),
+        out.starts_with("This command will alter 2 tasks.\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(
+            "Start task 1 'one'? (yes/no/all/quit) Task not started.\nStarted 0 tasks.\n"
+        ),
         "{out}"
     );
     assert_eq!(output.status.code(), Some(1));
@@ -3260,7 +3265,10 @@ fn annotate_bulk_quit() {
 
     let output = task_input(&env, &["1-2", "annotate", "x"], "quit\n");
     let out = stdout(&output);
-    assert!(out.starts_with("This command will alter 2 tasks.\n"), "{out}");
+    assert!(
+        out.starts_with("This command will alter 2 tasks.\n"),
+        "{out}"
+    );
     assert!(
         out.ends_with(
             "Annotate task 1 'one'? (yes/no/all/quit) Task not annotated.\nAnnotated 0 tasks.\n"

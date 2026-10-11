@@ -121,7 +121,11 @@ impl Command for CmdPrepend {
                         sibling.modify(context, ModType::Prepend, true)?;
                         tdb2::modify(context, &mut sibling)?;
                         count += 1;
-                        feedback_affected_task(context, "Prepending to recurring task {1} '{2}'.", &sibling);
+                        feedback_affected_task(
+                            context,
+                            "Prepending to recurring task {1} '{2}'.",
+                            &sibling,
+                        );
                     }
 
                     // Prepend to the parent
@@ -221,7 +225,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_yes_changes_siblings_and_parent() {
-        let mut f = fixture("recurrence.confirmation=yes\n", &[CHILD1, "prepend", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=yes\n",
+            &[CHILD1, "prepend", "note"],
+        );
         assert_eq!(f.run(&CmdPrepend::new()).unwrap(), 0);
         for uuid in [PARENT, CHILD1, CHILD2] {
             assert!(applied(&mut f, uuid), "{uuid}");
@@ -239,7 +246,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_prompt_asks() {
-        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "prepend", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=prompt\n",
+            &[CHILD1, "prepend", "note"],
+        );
         begin_console_override("yes\n");
         assert_eq!(f.run(&CmdPrepend::new()).unwrap(), 0);
         let shown = end_console_override();
@@ -253,7 +263,10 @@ mod tests {
 
     #[test]
     fn recurrence_confirmation_prompt_declined() {
-        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "prepend", "note"]);
+        let mut f = fixture(
+            "recurrence.confirmation=prompt\n",
+            &[CHILD1, "prepend", "note"],
+        );
         begin_console_override("no\n");
         assert_eq!(f.run(&CmdPrepend::new()).unwrap(), 0);
         end_console_override();
@@ -304,8 +317,10 @@ mod tests {
         let mut f = fixture("verbose=project\n", &["1", "prepend", "note"]);
         assert_eq!(f.run(&CmdPrepend::new()).unwrap(), 0);
         assert!(
-            f.ctx.footnotes.iter().any(|m| m
-                == "Project 'home' is 0% complete (1 task remaining)."),
+            f.ctx
+                .footnotes
+                .iter()
+                .any(|m| m == "Project 'home' is 0% complete (1 task remaining)."),
             "{:?}",
             f.ctx.footnotes
         );
