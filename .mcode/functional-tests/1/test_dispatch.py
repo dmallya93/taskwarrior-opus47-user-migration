@@ -25,14 +25,12 @@ class TestAliases:
 
 class TestStubs:
     STUBS = [
-        (["list"], "list"),
         (["diag"], "diagnostics"),
         (["show"], "show"),
-        ([], "next"),
     ]
 
     def test_stub_commands_not_implemented(self, sb, check):
-        """Unported commands (incl. abbreviation `diag` and default.command=next) fail with exit 2."""
+        """Unported commands (incl. abbreviation `diag`) fail with exit 2. list/next were ported in milestone 6."""
         out, exp = [], []
         all_ok = True
         for args, kw in self.STUBS:
