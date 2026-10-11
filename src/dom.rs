@@ -65,7 +65,7 @@ use crate::version::VERSION;
 /// C++ `strtoll (text, nullptr, 10)`: optional leading whitespace and sign,
 /// then the leading decimal digits (saturating, as `strtoll` clamps to
 /// `LLONG_MIN`/`LLONG_MAX`); 0 if none.
-fn strtoll(text: &str) -> i64 {
+pub(crate) fn strtoll(text: &str) -> i64 {
     let text = text.trim_start_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
     let (negative, digits) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),

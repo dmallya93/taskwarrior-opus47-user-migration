@@ -20,9 +20,12 @@ class TestVersionOption:
         check(p, ["--version"], VERSION + "\n", "", 0)
 
     def test_help_option_rewritten_to_help(self, sb, check):
-        """`task --help` is rewritten to `help`; help is a milestone stub (target_only)."""
+        """`task --help` is rewritten to `help`: byte-identical to `task help` (usage text), exit 0."""
+        ref = sb.run(["help"])
         p = sb.run(["--help"])
-        check(p, ["--help"], "", hdr(sb) + "Command 'help' is not yet implemented.\n", 2)
+        check(p, ["--help"], ref.stdout, ref.stderr, 0,
+              extra={"ok": ref.returncode == 0 and p.stdout.startswith("\nUsage: task"),
+                     "what": "usage"})
 
 
 class TestVersionCommand:

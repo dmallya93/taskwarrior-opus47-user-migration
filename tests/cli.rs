@@ -7,7 +7,9 @@
 //! `ids`/`uuids` family, `_unique` and `_zshattributes`, and the milestone 6
 //! report stack (custom reports, `sort.cpp`, `setHeaderUnderline` and the
 //! column factory), and the milestone 7 hook scripts (`Hooks.cpp`) and
-//! `synchronize` (local, git and configuration-error paths).
+//! `synchronize` (local, git and configuration-error paths), and the
+//! milestone 8 commands (including `_aliases`, `commands`, `_commands`,
+//! `_zshcommands`, `help` / `--help`, `execute` and `logo`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -155,13 +157,14 @@ fn dash_dash_version_with_more_args_is_a_command_line() {
 
 #[test]
 fn dash_dash_help_is_help() {
+    // commands.test.py `test_help_option`: `--help` is the `help` command.
     let env = Env::new("");
-    let output = env.task(&["--help"]);
-    assert_eq!(
-        stderr(&output),
-        env.override_headers() + "Command 'help' is not yet implemented.\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
+    let option = env.task(&["--help"]);
+    let help = env.task(&["help"]);
+    assert!(stdout(&option).contains("Usage:"));
+    assert_eq!(stdout(&option), stdout(&help));
+    assert_eq!(stderr(&option), stderr(&help));
+    assert_eq!(option.status.code(), Some(0));
 }
 
 #[test]
@@ -187,27 +190,255 @@ fn no_command_with_empty_default_command() {
 }
 
 #[test]
-fn stub_command_is_not_implemented() {
-    let env = Env::new("");
-    let output = env.task(&["calendar"]);
-    assert_eq!(stdout(&output), "");
-    assert_eq!(
-        stderr(&output),
-        env.override_headers() + "Command 'calendar' is not yet implemented.\n"
-    );
-    assert_eq!(output.status.code(), Some(2));
-}
-
-#[test]
 fn no_override_headers_without_taskrc_taskdata() {
     let env = Env::new("");
     std::fs::copy(env.rc(), env.home().join(".taskrc")).unwrap();
-    let output = env.command(&["calendar"]).output().unwrap();
-    assert_eq!(
-        stderr(&output),
-        "Command 'calendar' is not yet implemented.\n"
-    );
+    let output = env.command(&["calc"]).output().unwrap();
+    assert_eq!(stderr(&output), "No expression to evaluate.\n");
     assert_eq!(output.status.code(), Some(2));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdDiagnostics.cpp: diagnostics
+
+#[test]
+fn diagnostics_reports_build_configuration_hooks_and_tests() {
+    let env = Env::new("editor=edlin\ndefaultwidth=80\ndefaultheight=24\n");
+    let output = env.task(&["diag"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let out = stdout(&output);
+    let rc = env.rc().display().to_string();
+    let data = env.data().display().to_string();
+    assert!(out.starts_with("\ntask 3.5.0\n   Platform: "), "{out}");
+    assert!(out.contains("\n\nCompiler\n    Version: rustc "), "{out}");
+    assert!(out.contains(" +time_t64\n Compliance: C++17\n\nBuild Features\n"), "{out}");
+    assert!(out.contains("\n Build type: "), "{out}");
+    assert!(
+        out.contains(&format!("\n\nConfiguration\n       File: {rc} (found), ")),
+        "{out}"
+    );
+    assert!(out.contains(&format!("\n       Data: {data} (found), dir, mode 40")), "{out}");
+    assert!(out.contains(&format!("\n     TASKRC: {rc}\n   TASKDATA: {data}\n")), "{out}");
+    assert!(out.contains("\n  rc.editor: edlin\nHooks\n     System: Disabled\n"), "{out}");
+    assert!(
+        out.ends_with(
+            "             (-none-)\n\nTests\n   Terminal: 120x30\n \
+             Broken ref: Scanned 0 tasks for broken references:\n             \
+             No broken references found\n\n"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("\x1b[1m"));
+}
+
+#[test]
+fn diagnostics_bold_only_with_forced_colour() {
+    let env = Env::new("");
+    let plain = stdout(&env.task(&["rc.color:off", "diag"]));
+    assert!(!plain.contains("\x1b[1m"), "{plain}");
+    let forced = stdout(&env.task(&["rc._forcecolor:on", "diag"]));
+    assert!(forced.starts_with("\n\x1b[1mtask 3.5.0\x1b[0m\n"), "{forced:?}");
+    assert!(forced.contains("\x1b[1mTests\x1b[0m\n"), "{forced:?}");
+}
+
+#[test]
+fn diagnostics_reports_broken_references() {
+    let env = Env::new("");
+    let missing = "00000000-0000-0000-0000-000000000009";
+    let task = "00000000-0000-0000-0000-000000000001";
+    env.write(
+        "in.json",
+        &format!(
+            r#"[{{"uuid":"{task}","description":"x","status":"pending","entry":"20240101T000000Z","depends":["{missing}"]}}]"#
+        ),
+    );
+    let output = env.task(&["import", env.path("in.json").to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let out = stdout(&env.task(&["diag"]));
+    assert!(
+        out.ends_with(&format!(
+            " Broken ref: Scanned 1 tasks for broken references:\n             \
+             Task {task} depends on nonexistent task: {missing}\n\n"
+        )),
+        "{out}"
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdNews.cpp
+
+/// The `wait_for_enter` prompt and the escapes that erase it.
+const NEWS_PRESS_ENTER: &str = "\nPress enter to continue..\x1b[2K\x1b[A\x1b[2K";
+
+/// `task <args>` (TASKRC/TASKDATA set) with `stdin` as input.
+fn task_with_stdin(env: &Env, args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = env
+        .command(args)
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn news_non_interactive_shows_all_unread_and_records_version() {
+    // stdin at end of input: every wait returns at once.
+    let env = Env::new("");
+    let output = env.task(&["news"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), env.override_headers());
+    let out = stdout(&output);
+    // Not a TTY, so no colour - but the banner is bold regardless, as in C++.
+    assert!(out.starts_with(concat!(
+        "\x1b[1m\n",
+        "================================================\n",
+        "Taskwarrior 2.6.0 through 3.5.0 Release Highlights\n",
+        "================================================\n",
+        "\x1b[0m\n(1/7) New data model and sync backend (3.0.0)\n",
+        "\nPress enter to continue..\x1b[2K\x1b[A\x1b[2K",
+        "  What changed in 3.0.0?\n",
+        "The sync functionality for Taskwarrior has been rewritten entirely, and no longer\n"
+    )), "{out:?}");
+    for title in [
+        "\n(2/7) Purging Tasks, Manually or Automatically (3.1.0)\n",
+        "\n(3/7) Improved 'task news' (3.1.0)\n",
+        "\n(4/7) `task info` Journal Restored (3.2.0)\n",
+        "\n(5/7) AWS S3 Sync (3.3.0)\n",
+        "\n(6/7) Read-Only Access (3.4.0)\n",
+        "\n(7/7) Scheduled attribute of recurring tasks (3.5.0)\n",
+    ] {
+        assert!(out.contains(title), "{title:?} in {out:?}");
+    }
+    assert!(out.ends_with(&format!(
+        "that assume the old behavior.\n\n\n{NEWS_PRESS_ENTER}Thank you for catching up on the new features!\n{NEWS_PRESS_ENTER}"
+    )), "{out:?}");
+    // Two waits per item, plus the final one.
+    assert_eq!(out.matches("Press enter to continue..").count(), 15);
+
+    // news.version was rewritten in place.
+    let rc = std::fs::read_to_string(env.rc()).unwrap();
+    assert!(rc.contains("\nnews.version=3.5.0\n"), "{rc}");
+    assert!(!rc.contains("2.6.0"), "{rc}");
+
+    // Now up to date: nothing but the bold notice and one wait.
+    let output = env.task(&["news"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!("\x1b[1mYou are up to date!\n\x1b[0m{NEWS_PRESS_ENTER}")
+    );
+    assert_eq!(std::fs::read_to_string(env.rc()).unwrap(), rc);
+
+    // ...and custom reports no longer nag.
+    let output = env.task(&["rc.verbose=footnote", "next"]);
+    assert_eq!(stderr(&output), "No matches.\n");
+}
+
+#[test]
+fn news_interactive_pages_with_enter() {
+    let env = Env::new("news.version=3.4.0\n");
+    // The rc now holds news.version twice; both lines are rewritten.
+    let output = task_with_stdin(&env, &["rc.verbose=nothing", "news"], "\n\n\n");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            concat!(
+                "\x1b[1m\n",
+                "================================================\n",
+                "Taskwarrior 3.4.0 through 3.5.0 Release Highlights\n",
+                "================================================\n",
+                "\x1b[0m",
+                "\n(1/1) Scheduled attribute of recurring tasks (3.5.0)\n",
+                "{p}",
+                "  What changed in 3.5.0?\n",
+                "The `scheduled` attribute is now updated for new instances of recurring tasks\n",
+                "Previously, the value of `scheduled` for a recurring task was copied from the\n",
+                "parent task without modification. It is now offset from the recurrence time\n",
+                "just like `wait`. While this fixes a bug, it may interact poorly with any hooks\n",
+                "that assume the old behavior.\n\n\n",
+                "{p}",
+                "Thank you for catching up on the new features!\n",
+                "{p}"
+            ),
+            p = NEWS_PRESS_ENTER
+        )
+    );
+    let rc = std::fs::read_to_string(env.rc()).unwrap();
+    assert_eq!(rc.matches("news.version=3.5.0\n").count(), 2, "{rc}");
+}
+
+#[test]
+fn news_colors_headers_with_forcecolor() {
+    let env = Env::new("news.version=3.4.0\n");
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.color.header=green",
+        "rc.color.footnote=red",
+        "rc.verbose=nothing",
+        "news",
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains(
+        "\n(1/1) \x1b[1m\x1b[32mScheduled attribute of recurring tasks (3.5.0)\n\x1b[0m\x1b[0m"
+    ), "{out:?}");
+    assert!(out.contains("  \x1b[4mWhat changed in 3.5.0?\n\x1b[0m\x1b[31mThe `scheduled` attribute is now updated for new instances of recurring tasks\n\x1b[0m"), "{out:?}");
+}
+
+#[test]
+fn news_sigint_while_waiting() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let env = Env::new("news.version=3.4.0\n");
+    let mut child = env
+        .command(&["rc._forcecolor=on", "rc.color.footnote=red", "news"])
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _stdin = child.stdin.take().unwrap(); // kept open: the wait blocks
+    let mut out = child.stdout.take().unwrap();
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    while !String::from_utf8_lossy(&seen).contains("Press enter to continue..") {
+        let n = out.read(&mut buf).unwrap();
+        assert!(n > 0, "{}", String::from_utf8_lossy(&seen));
+        seen.extend_from_slice(&buf[..n]);
+    }
+    // SAFETY: signalling our own child process.
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGINT);
+    }
+    out.read_to_end(&mut seen).unwrap();
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&seen).ends_with(concat!(
+        "\nPress enter to continue..",
+        "\n\nCome back and read about new features later!\n",
+        "\x1b[31m\nIf you enjoy Taskwarrior, please consider supporting the project at:\n",
+        "    https://github.com/sponsors/GothenburgBitFactory/\n\x1b[0m"
+    )), "{:?}", String::from_utf8_lossy(&seen));
+    // Interrupted: news.version is unchanged.
+    assert!(std::fs::read_to_string(env.rc()).unwrap().contains("news.version=3.4.0"));
 }
 
 #[test]
@@ -3867,4 +4098,1646 @@ fn purge_recurrence_template_children() {
     assert_eq!(stdout(&output), "Purged 2 tasks.\n");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(export(&env, &["rc.recurrence=off"]).len(), 0);
+}
+
+/// `calendar <MM> <YYYY>`: the month grid (C++ `CmdCalendar::renderMonths`),
+/// week numbers (`%U` with weekstart Sunday), `weekstart=monday`,
+/// `displayweeknumber=off` and the month-number / month-name arguments.
+#[test]
+fn calendar_month_grid_layout() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\n");
+    let (out, err, rc) = quiet(&env, &["calendar", "2", "2021", "rc.calendar.monthsperline:1"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\n       February 2021      \n\
+         \x20    Su Mo Tu We Th Fr Sa\n\
+         ---- -- -- -- -- -- -- --\n\
+         \x20  5     1  2  3  4  5  6\n\
+         \x20  6  7  8  9 10 11 12 13\n\
+         \x20  7 14 15 16 17 18 19 20\n\
+         \x20  8 21 22 23 24 25 26 27\n\
+         \x20  9 28\n\n"
+    );
+    let (out, err, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "feb",
+            "2021",
+            "rc.monthsperline:1",
+            "rc.weekstart:monday",
+            "rc.displayweeknumber:off",
+        ],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\n       February 2021      \n\
+         \x20Mo Tu We Th Fr Sa Su\n\
+         \x20-- -- -- -- -- -- --\n\
+         \x20 1  2  3  4  5  6  7\n\
+         \x20 8  9 10 11 12 13 14\n\
+         \x2015 16 17 18 19 20 21\n\
+         \x2022 23 24 25 26 27 28\n\n"
+    );
+    // Three months per line at width 80, headers centred in 26 columns.
+    let (out, _, rc) = quiet(&env, &["calendar", "12", "2021"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.starts_with(
+            "\n       December 2021             January 2022              February 2022      \n"
+        ),
+        "{out:?}"
+    );
+}
+
+/// `calendar y`, `calendar YYYY`, `calendar due` and `calendar.offset`.
+#[test]
+fn calendar_range_arguments() {
+    let env = Env::new("defaultwidth=80\ndetection=off\ncalendar.monthsperline=2\n");
+    let headers = |out: &str| -> Vec<String> {
+        out.lines()
+            .filter(|l| l.contains(" 20") && l.trim_start().starts_with(char::is_alphabetic))
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect()
+    };
+    let (out, err, rc) = quiet(&env, &["calendar", "2021"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        headers(&out),
+        [
+            "January 2021 February 2021",
+            "March 2021 April 2021",
+            "May 2021 June 2021",
+            "July 2021 August 2021",
+            "September 2021 October 2021",
+            "November 2021 December 2021"
+        ]
+    );
+    let (out, _, rc) = quiet(&env, &["calendar", "11", "2021", "y"]);
+    assert_eq!(rc, 0);
+    assert_eq!(headers(&out).len(), 6);
+    assert_eq!(headers(&out)[0], "November 2021 December 2021");
+    assert_eq!(headers(&out)[5], "September 2022 October 2022");
+
+    // `due`: the oldest pending due date not tagged nocal.
+    quiet(&env, &["add", "a", "due:2021-05-03"]);
+    quiet(&env, &["add", "b", "due:2020-01-03", "+nocal"]);
+    let (out, _, rc) = quiet(&env, &["calendar", "due"]);
+    assert_eq!(rc, 0);
+    assert_eq!(headers(&out), ["May 2021 June 2021"]);
+
+    // A negative offset wraps into the previous year.
+    let (out, _, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "2",
+            "2021",
+            "rc.calendar.offset:on",
+            "rc.calendar.offset.value:-3",
+        ],
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(headers(&out), ["November 2020 December 2020"]);
+}
+
+/// The C++ argument errors (exit status 2 through `Context::run`).
+#[test]
+fn calendar_argument_errors() {
+    let env = Env::new("");
+    let (out, err, rc) = quiet(&env, &["calendar", "donkey"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "Could not recognize argument 'donkey'.\n", 2)
+    );
+    let (out, err, rc) = quiet(&env, &["calendar", "13"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "Argument '13' is not a valid month.\n", 2)
+    );
+    let (_, err, rc) = quiet(
+        &env,
+        &["calendar", "rc.calendar.details:full", "rc.calendar.details.report:nope"],
+    );
+    assert_eq!(
+        (err.as_str(), rc),
+        (
+            "The setting 'calendar.details.report' must contain a single report name.\n",
+            2
+        )
+    );
+}
+
+/// `calendar.holidays=full` with holidays from an included
+/// `doc/rc/holidays.*.rc` file (resolved through the rc include path), and
+/// a multi-day `holiday.X.start`/`.end` entry.
+#[test]
+fn calendar_holidays_table_from_include() {
+    let env = Env::new(
+        "defaultwidth=80\ndetection=off\nfontunderline=off\ninclude holidays.en-US.rc\n\
+         holiday.zz.name=Donkey week\nholiday.zz.start=20210208\nholiday.zz.end=20210212\n",
+    );
+    let (out, err, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "1",
+            "2021",
+            "rc.monthsperline:2",
+            "rc.calendar.holidays:full",
+        ],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert!(
+        out.ends_with(
+            "\nDate       Holiday\n\
+             ---------- -----------------------------------\n\
+             2021-01-01 New Year's Day\n\
+             2021-01-18 Birthday of Martin Luther King, Jr.\n\
+             2021-02-08 Start of Donkey week\n\
+             2021-02-12 End of Donkey week\n\
+             2021-02-15 Washington's Birthday\n\n"
+        ),
+        "{out:?}"
+    );
+}
+
+/// `calendar.details=full` re-runs the details report as a child `task`
+/// process (C++ `::execute`) for the displayed range, excluding `+nocal`.
+#[test]
+fn calendar_details_report() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\n");
+    quiet(&env, &["add", "shown", "due:2021-05-03"]);
+    quiet(&env, &["add", "hidden", "due:2021-05-04", "+nocal"]);
+    quiet(&env, &["add", "later", "due:2021-07-04"]);
+    let (out, err, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "5",
+            "2021",
+            "rc.monthsperline:1",
+            "rc.calendar.details:full",
+            "rc.calendar.details.report:list",
+        ],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert!(out.contains("2021-05-03 shown"), "{out:?}");
+    assert!(!out.contains("hidden"), "{out:?}");
+    assert!(!out.contains("later"), "{out:?}");
+    assert!(out.ends_with("\n1 task\n"), "{out:?}");
+}
+
+/// Colour: the legend, weekend/holiday/due cell colours and the
+/// `color.calendar.*` settings.
+#[test]
+fn calendar_colors_and_legend() {
+    let env = Env::new(
+        "defaultwidth=80\ndetection=off\nfontunderline=off\ncolor.alternate=\n\
+         color.calendar.weekend=red\ncolor.calendar.holiday=green\ncolor.calendar.due=blue\n\
+         color.calendar.weeknumber=\ncolor.label=\n\
+         calendar.holidays=sparse\nholiday.x.name=X\nholiday.x.date=20210203\n",
+    );
+    quiet(&env, &["add", "d", "due:2099-02-04"]);
+    let (out, err, rc) = quiet(
+        &env,
+        &["calendar", "2", "2099", "rc.monthsperline:1", "rc._forcecolor:on"],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    // Sunday 1 Feb 2099 is a weekend, 4 Feb is due (rc.due is forced to 0).
+    assert!(out.contains("\x1b[31m 1\x1b[0m"), "{out:?}");
+    assert!(out.contains("\x1b[34m 4\x1b[0m"), "{out:?}");
+    assert!(out.ends_with(
+        "Legend: \x1b[38;5;15;48;5;25mtoday\x1b[0m, \x1b[31mweekend\x1b[0m, \
+         \x1b[34mdue\x1b[0m, \x1b[38;5;15;48;5;1mdue-today\x1b[0m, \
+         \x1b[38;5;0;48;5;9moverdue\x1b[0m, \x1b[38;5;25;48;5;15mscheduled\x1b[0m, \
+         \x1b[32mholiday\x1b[0m, weeknumber.\n"
+    ), "{out:?}");
+    // A holiday date in 2021 is coloured green.
+    let (out, _, _) = quiet(
+        &env,
+        &["calendar", "2", "2021", "rc.monthsperline:1", "rc._forcecolor:on"],
+    );
+    assert!(out.contains("\x1b[32m 3\x1b[0m"), "{out:?}");
+    // No legend without colour or with calendar.legend=off.
+    let (out, _, _) = quiet(
+        &env,
+        &["calendar", "2", "2099", "rc._forcecolor:on", "rc.calendar.legend:off"],
+    );
+    assert!(!out.contains("Legend"), "{out:?}");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// burndown.daily / weekly / monthly / annual
+
+/// The burndown scenario at a frozen 2021-06-15 12:00:00 UTC: pending
+/// `one` (entry 06-01), started `two` (06-03), `three` (06-05, done today),
+/// logged `four` (06-02 to 06-08) and pending `five` (06-04). Returns `None`
+/// when `faketime` is not installed.
+fn burndown_env() -> Option<Env> {
+    let env = Env::new("defaultwidth=80\ndefaultheight=24\ndetection=off\nconfirmation=off\n");
+    let at = "2021-06-15 12:00:00";
+    for args in [
+        &["add", "one", "entry:2021-06-01"][..],
+        &["add", "two", "entry:2021-06-03"],
+        &["2", "start"],
+        &["add", "three", "entry:2021-06-05"],
+        &["3", "done"],
+        &["log", "four", "entry:2021-06-02", "end:2021-06-08"],
+        &["add", "five", "entry:2021-06-04"],
+    ] {
+        let mut all = vec!["rc.verbose=nothing"];
+        all.extend_from_slice(args);
+        let output = faketime_task(&env, at, &all)?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    Some(env)
+}
+
+/// `faketime` `task rc.verbose=nothing <args>` at the burndown scenario time.
+fn burndown(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let mut all = vec!["rc.verbose=nothing"];
+    all.extend_from_slice(args);
+    let output = faketime_task(env, "2021-06-15 12:00:00", &all).unwrap();
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+/// `burndown.daily`: 21 daily bars, the y axis rounded by `burndown_size`,
+/// the legend, the net fix rate (peak of 5 on 06-05, 3 still open) and the
+/// estimated completion. Each major x-axis label (`May`, `Jun`) replaces
+/// one byte fewer than it writes (C++ `std::string::replace`), so the rate
+/// lines start two columns left of the bars.
+#[test]
+fn burndown_daily_chart() {
+    let Some(env) = burndown_env() else {
+        return;
+    };
+    let (out, err, rc) = burndown(&env, &["burndown.daily"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &DAILY[1..]);
+    const DAILY: &str = r#"
+                                 Daily Burndown
+6 |
+  |
+  |
+  |                                X  X  X  .  .  .  .  .  .  .  .
+  |                                X  X  X  .  .  .  .  .  .  .  .
+  |                             X  X  X  X  X  X  X  X  X  X  X  .     . Done
+  |                             X  X  X  X  X  X  X  X  X  X  X  .     + Started
+3 |                             X  X  X  X  X  X  X  X  X  X  X  .     X Pending
+  |                          X  X  X  X  X  X  X  X  X  X  X  X  +
+  |                          X  X  X  X  X  X  X  X  X  X  X  X  +
+  |                       X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                       X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                       X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                    X  X  X  X  X  X  X  X  X  X  X  X  X  X  X
+  |                    X  X  X  X  X  X  X  X  X  X  X  X  X  X  X
+0 +-----------------------------------------------------------------
+    26 27 28 29 30 31 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15
+    May               Jun
+
+  Net Fix Rate:         0.2/d
+  Estimated completion: 2021-07-01 (2w)
+"#;
+
+    // Colour replaces the markers by colorized blanks.
+    let (out, _, rc) = burndown(
+        &env,
+        &["burndown.daily", "rc._forcecolor=on", "rc.color.burndown.pending=on red"],
+    );
+    assert_eq!(rc, 0);
+    assert!(!out.contains(" X"), "{out}");
+    assert!(out.contains("  |                   \x1b[41m  \x1b[0m \x1b[41m  \x1b[0m"), "{out:?}");
+}
+
+/// `burndown.monthly` (cumulative) and `burndown.annual` with
+/// `burndown.cumulative=0`: no major labels for annual, so no shift.
+#[test]
+fn burndown_monthly_and_annual() {
+    let Some(env) = burndown_env() else {
+        return;
+    };
+    let (out, err, rc) = burndown(&env, &["burndown.monthly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &MONTHLY[1..]);
+    const MONTHLY: &str = r#"
+                                Monthly Burndown
+6 |
+  |
+  |
+  |                                                              .
+  |                                                              .
+  |                                                              .     . Done
+  |                                                              .     + Started
+3 |                                                              .     X Pending
+  |                                                              +
+  |                                                              +
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+0 +-----------------------------------------------------------------
+    10 11 12 01 02 03 04 05 06 07 08 09 10 11 12 01 02 03 04 05 06
+    2019     2020                                2021
+
+ Net Fix Rate:         0.2/d
+ Estimated completion: 2021-07-01 (2w)
+"#;
+
+    let (out, err, rc) = burndown(&env, &["burndown.annual", "rc.burndown.cumulative=0"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &ANNUAL[1..]);
+    const ANNUAL: &str = r#"
+                                Annual Burndown
+6 |
+  |
+  |
+  |                                                              .
+  |                                                              .
+  |                                                              .     . Done
+  |                                                              .     + Started
+3 |                                                              .     X Pending
+  |                                                              +
+  |                                                              +
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+  |                                                              X
+0 +-----------------------------------------------------------------
+    01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21
+
+
+    Net Fix Rate:         0.2/d
+    Estimated completion: 2021-07-01 (2w)
+"#;
+}
+
+/// A filter selects through `Filter::subset`: one pending task, no
+/// convergence; no match gives the "No matches." footnote; bad weekstart,
+/// small terminals and bad colours fail like C++.
+#[test]
+fn burndown_filter_and_errors() {
+    let Some(env) = burndown_env() else {
+        return;
+    };
+    let (out, err, rc) = burndown(&env, &["description:one", "burndown.weekly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(out, &WEEKLY[1..]);
+    const WEEKLY: &str = r#"
+                                Weekly Burndown
+2 |
+  |
+  |
+  |
+  |
+  |                                                                    . Done
+  |                                                                    + Started
+1 |                                                                    X Pending
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+  |                                                        X  X  X
+0 +-----------------------------------------------------------------
+    04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24
+    2021
+
+   Net Fix Rate:         -
+   Estimated completion: No convergence
+"#;
+
+    let (out, err, rc) = burndown(
+        &env,
+        &["description:zzz", "burndown.daily", "rc.verbose=footnote"],
+    );
+    assert_eq!((err.as_str(), rc), ("No matches.\n", 0));
+    assert!(out.ends_with("\n  Net Fix Rate:         -\n\n"), "{out:?}");
+    assert!(!out.contains("Estimated completion"), "{out}");
+
+    let (out, err, rc) = burndown(&env, &["burndown.daily", "rc.defaultheight=11"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("Terminal window too small to draw a graph.\n", "", 0));
+    let (out, _, rc) = burndown(&env, &["burndown.daily", "rc.defaultheight=1100"]);
+    assert_eq!((out.as_str(), rc), ("Terminal window too large to draw a graph.\n", 0));
+
+    let (out, err, rc) = burndown(&env, &["burndown.weekly", "rc.weekstart=tuesday"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "The 'weekstart' configuration variable may only contain 'Sunday' or 'Monday'.\n", 2)
+    );
+    let (out, err, rc) = burndown(&env, &["burndown.daily", "rc.color.burndown.done=nocolour"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "The color 'nocolour' is not recognized.\n", 2)
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// history.daily / weekly / monthly / annual, ghistory.daily / weekly / monthly / annual
+
+/// Pending `PL` (entry 2015-01-02), deleted `DLN` and completed `CLN`
+/// (entry 01-02, end 02-02), completed `CNN` (entry and end 02-02).
+const HISTORY_DATA: &str = r#"[
+{"uuid":"00000000-0000-0000-0000-000000000001","description":"PL","status":"pending","entry":"20150102T120000Z"},
+{"uuid":"00000000-0000-0000-0000-000000000002","description":"DLN","status":"deleted","entry":"20150102T120000Z","end":"20150202T120000Z"},
+{"uuid":"00000000-0000-0000-0000-000000000005","description":"CLN","status":"completed","entry":"20150102T120000Z","end":"20150202T120000Z"},
+{"uuid":"00000000-0000-0000-0000-000000000007","description":"CNN","status":"completed","entry":"20150202T120000Z","end":"20150202T120000Z"}
+]"#;
+
+fn history_env() -> Env {
+    let env = Env::new("defaultwidth=80\ndetection=off\nconfirmation=off\n");
+    let output = task_input(&env, &["rc.verbose=nothing", "import", "-"], HISTORY_DATA);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    env
+}
+
+/// `TZ=UTC task <args>`, returning (stdout, stderr, status).
+fn history(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let output = env
+        .command(args)
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .env("TZ", "UTC")
+        .output()
+        .unwrap();
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+/// The tabular reports: one row per interval, a blank row, the integer
+/// averages (`total / rows`) and the Net column. `history.monthly` prints
+/// the year only when it changes (from 1970 for the first row).
+#[test]
+fn history_tabular_reports() {
+    let env = history_env();
+    let (out, err, rc) = history(&env, &["rc.verbose=nothing", "history.monthly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\x1b[4mYear\x1b[0m \x1b[4mMonth   \x1b[0m \x1b[4mAdded\x1b[0m \x1b[4mCompleted\x1b[0m \x1b[4mDeleted\x1b[0m \x1b[4mNet\x1b[0m\n\
+         2015 January      3         0       0   3\n     February     1         2       1  -2\n\n     Average      2         1       0   0\n\n"
+    );
+
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "history.annual"]);
+    assert_eq!(rc, 0);
+    assert_eq!(
+        out,
+        "\x1b[4mYear   \x1b[0m \x1b[4mAdded\x1b[0m \x1b[4mCompleted\x1b[0m \x1b[4mDeleted\x1b[0m \x1b[4mNet\x1b[0m\n\
+         2015        4         2       1   1\n\nAverage     4         2       1   1\n\n"
+    );
+
+    // Weeks start on Sunday (2014-12-28); the Day column holds "Average".
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "history.weekly"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains("\n2014 December      28     3         0       0   3\n2015 February       1     1         2       1  -2\n\n              Average     2         1       0   0\n"),
+        "{out:?}"
+    );
+
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "history.daily"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains("\n2015 January        2     3         0       0   3\n     February       2     1         2       1  -2\n"),
+        "{out:?}"
+    );
+
+    // With colour: alternate rows, a red/green Net and a bold Average row.
+    let (out, _, rc) = history(
+        &env,
+        &["rc.verbose=nothing", "rc._forcecolor:on", "rc.color.alternate:", "history.monthly"],
+    );
+    assert_eq!(rc, 0);
+    assert!(out.contains("0 \x1b[31m  3\x1b[0m\n"), "{out:?}");
+    assert!(out.contains("1 \x1b[32m -2\x1b[0m\n"), "{out:?}");
+    assert!(out.contains("\n     \x1b[1mAverage \x1b[0m \x1b[1m    2\x1b[0m"), "{out:?}");
+}
+
+/// The graphical reports: bars scaled by `(widthOfBar * n) / maxLine`, with
+/// `widthOfBar = width - labelWidth` and the added bars right-aligned at
+/// `leftOffset`.
+#[test]
+fn ghistory_bars_and_legend() {
+    let env = history_env();
+    // 80 - 15 = 65; maxLine 3 + 3; leftOffset 32; February 10/21/10.
+    let (out, err, rc) = history(&env, &["rc.verbose=nothing", "ghistory.monthly"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        format!(
+            "\x1b[4mYear\x1b[0m \x1b[4mMonth   \x1b[0m \x1b[4mNumber Added/Completed/Deleted{}\x1b[0m\n\
+             2015 January  {}\n     February {}{}{}{}\n\nLegend: + Added, X Completed, - Deleted\n",
+            " ".repeat(33),
+            "+".repeat(32),
+            " ".repeat(22),
+            "+".repeat(10),
+            "X".repeat(21),
+            "-".repeat(10)
+        )
+    );
+
+    // 80 - 19 = 61: 30, then 10/20/10 after a 20-column offset.
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "ghistory.weekly"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains(&format!(
+            "\n2014 December  28 {}\n2015 February   1 {}{}{}{}\n",
+            "+".repeat(30),
+            " ".repeat(20),
+            "+".repeat(10),
+            "X".repeat(20),
+            "-".repeat(10)
+        )),
+        "{out:?}"
+    );
+
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "ghistory.daily"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("\n2015 January    2 +"), "{out:?}");
+    assert!(out.contains("\n     February   2 "), "{out:?}");
+
+    // 80 - 5 = 75; maxLine 4 + 3: 42/21/10.
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "ghistory.annual"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.contains(&format!(
+            "\n2015 {}{}{}\n\nLegend: + Added, X Completed, - Deleted\n",
+            "+".repeat(42),
+            "X".repeat(21),
+            "-".repeat(10)
+        )),
+        "{out:?}"
+    );
+
+    // With colour the counts are right-aligned in coloured bars, and the
+    // legend is coloured and followed by the optional blank line.
+    let (out, _, rc) = history(
+        &env,
+        &["rc.verbose=blank", "rc._forcecolor:on", "rc.color.alternate:", "ghistory.annual"],
+    );
+    assert_eq!(rc, 0);
+    let add = "\x1b[38;5;0;48;5;196m";
+    let done = "\x1b[38;5;0;48;5;46m";
+    let del = "\x1b[38;5;0;48;5;226m";
+    assert!(
+        out.contains(&format!(
+            "\n2015 {add}{}4\x1b[0m{done}{}2\x1b[0m{del}{}1\x1b[0m\n",
+            " ".repeat(41),
+            " ".repeat(20),
+            " ".repeat(9)
+        )),
+        "{out:?}"
+    );
+    assert!(
+        out.ends_with(&format!(
+            "\nLegend: {add}Added\x1b[0m, {done}Completed\x1b[0m, {del}Deleted\x1b[0m\n\n"
+        )),
+        "{out:?}"
+    );
+}
+
+/// No matching task: no output, the "No tasks." footnote and status 1.
+#[test]
+fn history_no_tasks() {
+    let env = history_env();
+    for keyword in ["history.monthly", "ghistory.daily"] {
+        let (out, err, rc) = history(&env, &["rc.verbose=footnote", "description:nomatch", keyword]);
+        assert_eq!((out.as_str(), err.as_str(), rc), ("", "No tasks.\n", 1), "{keyword}");
+    }
+}
+
+/// A coloured count wider than `leftOffset`: C++ `std::string (leftOffset -
+/// aBar.length (), ' ')` wraps and throws `std::length_error`, reported by
+/// `catch (...)`.
+#[test]
+fn ghistory_colour_bar_wider_than_offset() {
+    let env = Env::new("detection=off\nconfirmation=off\n");
+    let tasks: Vec<String> = (0..10)
+        .map(|i| format!(r#"{{"description":"t{i}","entry":"20150102T120000Z"}}"#))
+        .collect();
+    let output = task_input(
+        &env,
+        &["rc.verbose=nothing", "import", "-"],
+        &format!("[{}]", tasks.join(",")),
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let (out, err, rc) = history(
+        &env,
+        &["rc.verbose=nothing", "rc.defaultwidth=20", "rc._forcecolor:on", "ghistory.daily"],
+    );
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "\x1b[37;41mUnknown error. Please report.\x1b[0m\n", 3)
+    );
+    // Without colour the bar is one '+'.
+    let (out, _, rc) = history(&env, &["rc.verbose=nothing", "rc.defaultwidth=20", "ghistory.daily"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("\n2015 January   2 +\n"), "{out:?}");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// summary / timesheet / stats
+
+/// A frozen 2021-06-15 12:00:00 UTC scenario: pending `one` (a.b, +x),
+/// started `two` (a, due 06-20), `three` (c, done today), logged `four`
+/// (a.b.c, 06-02 to 06-08), pending `five` (+x +y) and deleted `six`
+/// (depends on `one`). Returns `None` when `faketime` is not installed.
+fn graphs_env() -> Option<Env> {
+    let env = Env::new("defaultwidth=80\ndetection=off\nconfirmation=off\ndateformat=Y-M-D\n");
+    for args in [
+        &["add", "one", "entry:2021-06-01", "project:a.b", "+x"][..],
+        &["add", "two", "entry:2021-06-03", "project:a", "due:2021-06-20"],
+        &["2", "start"],
+        &["add", "three", "entry:2021-06-05", "project:c"],
+        &["3", "done"],
+        &["log", "four", "entry:2021-06-02", "end:2021-06-08", "project:a.b.c"],
+        &["add", "five", "entry:2021-06-04", "+y", "+x"],
+        &["add", "six", "entry:2021-06-06", "depends:1"],
+        &["description:six", "delete"],
+    ] {
+        let mut all = vec!["rc.verbose=nothing"];
+        all.extend_from_slice(args);
+        let output = faketime_task(&env, "2021-06-15 12:00:00", &all)?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    Some(env)
+}
+
+/// `faketime` `task <args>` at the report scenario time.
+fn graphs(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let output = faketime_task(env, "2021-06-15 12:00:00", args).unwrap();
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+/// `summary`: the project tree of pending projects with parents indented,
+/// remaining counts, average ages, % complete and the `=` bars; with
+/// `summary.all.projects` the completed-only projects too; colour bars use
+/// `color.summary.bar`/`background`. As in C++ the average age divides by
+/// every task of the project (`counter`), so the deleted `six` halves the
+/// `(none)` age although it adds nothing to the sum.
+#[test]
+fn summary_project_tree() {
+    let Some(env) = graphs_env() else {
+        return;
+    };
+    let (out, err, rc) = graphs(&env, &["rc.verbose=blank,footnote", "summary"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "
+Project Remaining Avg age Complete 0%                        100%
+------- --------- ------- -------- ------------------------------
+(none)          1      5d       0%
+a               2     11d      33% ==========
+  b             1     10d      50% ===============
+
+3 projects
+"
+    );
+
+    let (out, _, rc) = graphs(&env, &["rc.verbose=nothing", "rc.summary.all.projects=1", "summary"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("\n    c           0      6d     100% ==============================\n"), "{out}");
+    assert!(out.contains("\nc               0     10d     100% ==============================\n"), "{out}");
+    assert!(out.ends_with("\n5 projects\n"), "{out}");
+
+    let (out, _, _) = graphs(
+        &env,
+        &[
+            "rc.verbose=nothing",
+            "rc._forcecolor=on",
+            "rc.color.alternate=",
+            "rc.color.summary.bar=on red",
+            "rc.color.summary.background=on blue",
+            "project:a.b",
+            "summary",
+        ],
+    );
+    assert!(
+        out.contains("\x1b[41m               \x1b[0m\x1b[44m               \x1b[0m"),
+        "{out:?}"
+    );
+
+    let (out, err, rc) = graphs(&env, &["rc.verbose=nothing", "project:none", "summary"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("No projects.\n", "", 1));
+}
+
+/// `timesheet`: the default 4-week filter, weekly blocks separated by a
+/// blank row, repeated week/date/day cells blanked, and the affected line.
+#[test]
+fn timesheet_weekly_blocks() {
+    let Some(env) = graphs_env() else {
+        return;
+    };
+    let (out, err, rc) = graphs(&env, &["rc.verbose=blank,affected", "rc.fontunderline=0", "timesheet"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let lines: Vec<&str> = out.lines().map(str::trim_end).collect();
+    assert_eq!(lines[0], "");
+    assert_eq!(lines[1], "Wk  Date       Day ID       Action    Project Due        Task");
+    assert!(lines[3].starts_with("W23 2021-06-08 Tue "), "{out}");
+    assert!(lines[3].ends_with(" Completed a.b.c              four"), "{out}");
+    assert_eq!(lines[4], "");
+    // `two` was started and `three` completed in the same (frozen) second:
+    // equal `_key`s keep the unstable C++ `std::sort` order, which follows
+    // the replica's load order, so either may come first. The second row of
+    // the week has blank week/date/day cells; the first one's day is blank
+    // too, as 06-08 was also a Tuesday.
+    let (started, completed) = if lines[5].contains("Started") { (5, 6) } else { (6, 5) };
+    let lead = |i: usize| if i == 5 { "W24 2021-06-15     " } else { "                   " };
+    assert!(lines[started].starts_with(lead(started)), "{out}");
+    assert!(lines[started].ends_with("2        Started   a       2021-06-20 two"), "{out}");
+    assert!(lines[completed].starts_with(lead(completed)), "{out}");
+    assert!(lines[completed].ends_with(" Completed c                  three"), "{out}");
+    assert_eq!(&lines[7..], ["", "2 completed, 1 started."]);
+
+    // An explicit filter replaces the default one.
+    let (out, _, rc) = graphs(&env, &["rc.verbose=affected", "description:four", "timesheet"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("four") && !out.contains("three"), "{out}");
+    assert!(out.ends_with("\n1 completed, 0 started.\n"), "{out}");
+}
+
+/// `stats`: status counts, tags/projects, blocked/blocking, replica undo and
+/// backlog counts, then the derived dates and averages.
+#[test]
+fn stats_database_statistics() {
+    let Some(env) = graphs_env() else {
+        return;
+    };
+    let (out, err, rc) = graphs(&env, &["rc.verbose=nothing", "stats"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Category                   Data");
+    assert_eq!(lines[1], "-------------------------  ------------");
+    let expected = [
+        "Pending                    3",
+        "Waiting                    0",
+        "Recurring                  0",
+        "Completed                  2",
+        "Deleted                    1",
+        "Total                      6",
+        "Annotations                0",
+        "Unique tags                2",
+        "Projects                   4",
+        "Blocked tasks              0",
+        "Blocking tasks             0",
+    ];
+    assert_eq!(&lines[2..13], expected, "{out}");
+    assert!(lines[13].starts_with("Undo transactions          "), "{out}");
+    assert!(lines[14].starts_with("Sync backlog transactions  "), "{out}");
+    assert_eq!(
+        &lines[15..],
+        [
+            "Tasks tagged               33.3%",
+            "Oldest task                2021-06-01",
+            "Newest task                2021-06-06",
+            "Task used for              5d",
+            "Task added every           20h",
+            "Task completed every       2d",
+            "Task deleted every         5d",
+            "Average time pending       11d",
+            "Average desc length        3 characters",
+        ],
+        "{out}"
+    );
+}
+
+/// The `projects`/`tags`/`udas` scenario: pending tasks in `a.b`, `a` and
+/// no project, a completed `c` and a deleted `d` (in `completed_tasks`), tags
+/// `foo`/`next`, the UDAs `size` and `extra` (default `x`) and an orphan
+/// `gone`.
+fn inventory_env() -> Env {
+    let env = Env::new(
+        "defaultwidth=80\nconfirmation=off\nuda.size.type=numeric\nuda.size.label=Size\n\
+         uda.size.values=1,2,3\nuda.extra.type=string\nuda.extra.default=x\n",
+    );
+    for args in [
+        &["add", "one", "project:a.b", "+foo", "size:2"][..],
+        &["add", "two", "project:a", "+foo", "+next"],
+        &["add", "three"],
+        &["add", "four", "project:c", "+old"],
+        &["4", "done"],
+        &["add", "five", "project:d"],
+        &["5", "delete"],
+        &["add", "six", "rc.uda.gone.type=string", "gone:1"],
+    ] {
+        let mut all = vec!["rc.verbose=nothing"];
+        all.extend_from_slice(args);
+        let output = env.task(&all);
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    env
+}
+
+/// `projects`, `_projects` and `list.all.projects`: the indented tree with
+/// counts, "(none)", the "N projects (M tasks)" line and rc 1 with
+/// "No projects.".
+#[test]
+fn projects_and_completion_projects() {
+    let env = inventory_env();
+    let output = env.task(&["rc.verbose=blank", "projects"]);
+    assert_eq!((stderr(&output).as_str(), output.status.code()), ("", Some(0)));
+    assert_eq!(
+        stdout(&output),
+        "
+Project Tasks
+------- -----
+(none)      2
+a           2
+  b         1
+
+2 projects (4 tasks)
+"
+    );
+
+    let output = env.task(&["rc.verbose=nothing", "rc.list.all.projects=1", "projects"]);
+    assert_eq!(
+        stdout(&output),
+        "Project Tasks\n------- -----\n(none)      2\na           2\n  b         1\nc           1\n3 projects (5 tasks)\n"
+    );
+
+    let output = env.task(&["rc.verbose=nothing", "project:zzz", "projects"]);
+    assert_eq!((stdout(&output).as_str(), output.status.code()), ("No projects.\n", Some(1)));
+
+    let output = env.task(&["_projects"]);
+    assert_eq!((stdout(&output).as_str(), output.status.code()), ("a\na.b\n", Some(0)));
+    // Unlike `projects`, `_projects` does not skip the deleted task.
+    let output = env.task(&["rc.list.all.projects=1", "_projects"]);
+    assert_eq!(stdout(&output), "a\na.b\nc\nd\n");
+}
+
+/// `tags` (counts, bold special tags under colour, footnotes counting the
+/// unfiltered tasks, "No tags." + rc 1) and `_tags` (with the built-ins).
+#[test]
+fn tags_and_completion_tags() {
+    let env = inventory_env();
+    let output = env.task(&["rc.verbose=footnote", "rc.fontunderline=0", "tags"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), "Tag  Count\n---- -----\nfoo      2\nnext     1\n\n");
+    assert_eq!(stderr(&output), "2 tags\n(4 tasks)\n");
+
+    let output = env.task(&["rc.verbose=footnote", "rc.fontunderline=0", "+next", "tags"]);
+    assert_eq!(stdout(&output), "Tag  Count\n---- -----\nfoo      1\nnext     1\n\n");
+    assert_eq!(stderr(&output), "2 tags\n(4 tasks)\n");
+
+    let output = env.task(&["rc.verbose=footnote", "rc.list.all.tags=1", "+old", "tags"]);
+    // The count includes the completed and the deleted task.
+    assert_eq!(stderr(&output), "1 tag\n(6 tasks)\n");
+
+    let output = env.task(&["rc.verbose=footnote", "rc._forcecolor=on", "rc.color.alternate=", "tags"]);
+    assert!(stdout(&output).contains("\u{1b}[1mnext\u{1b}[0m"), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("\u{1b}[1mfoo"), "{}", stdout(&output));
+
+    let output = env.task(&["rc.verbose=footnote", "project:zzz", "tags"]);
+    assert_eq!((stdout(&output).as_str(), output.status.code()), ("", Some(1)));
+    assert_eq!(stderr(&output), "No tags.\n");
+
+    let output = env.task(&["_tags"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = stdout(&output);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 37, "{out}");
+    assert_eq!(&lines[32..], ["foo", "next", "nocal", "nocolor", "nonag"]);
+    let output = env.task(&["rc.complete.all.tags=1", "_tags"]);
+    assert!(stdout(&output).contains("\nold\n"));
+}
+
+/// `udas` (the definition table with usage counts over all tasks, deleted
+/// included, and the orphan table) and `_udas`.
+#[test]
+fn udas_and_completion_udas() {
+    let env = inventory_env();
+    let output = env.task(&["rc.verbose=blank", "rc.fontunderline=0", "udas"]);
+    assert_eq!((stderr(&output).as_str(), output.status.code()), ("", Some(0)));
+    assert_eq!(
+        stdout(&output),
+        "
+Name     Type    Label    Allowed Values Default Usage Count
+-------- ------- -------- -------------- ------- -----------
+extra    string  extra                   x       6
+priority string  Priority H,M,L,                 0
+size     numeric Size     1,2,3                  1
+
+3 UDAs defined
+
+Orphan UDA Usage Count
+---------- -----------
+gone       1
+
+1 Orphan UDAs
+"
+    );
+
+    let output = env.task(&["_udas"]);
+    assert_eq!(
+        (stdout(&output).as_str(), output.status.code()),
+        ("extra\npriority\nsize\n", Some(0))
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// show
+
+#[test]
+fn show_pattern_default_differences_and_unrecognized() {
+    let env = Env::new("fontunderline=0\nrecurrence.limit=3\nshow.bogus=1\n");
+    let output = env.task(&["show", "recurrence.limit"]);
+    assert_eq!(stderr(&output), env.override_headers());
+    assert_eq!(output.status.code(), Some(0));
+    // Unrecognized variables are only reported when displayed.
+    assert_eq!(
+        stdout(&output),
+        "
+Config Variable  Value
+---------------- -----
+recurrence.limit 3
+  Default value  1
+
+Some of your .taskrc variables differ from the default values.
+
+"
+    );
+
+    let output = env.task(&["show", "bogus"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        "
+Config Variable Value
+--------------- -----
+show.bogus      1
+
+Your .taskrc file contains these unrecognized variables:
+  show.bogus
+
+
+
+"
+    );
+
+    let output = env.task(&["show", "zzzzzz"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        "\nConfig Variable Value\n--------------- -----\nNo matching configuration variables.\n\n\n"
+    );
+
+    let output = env.task(&["show", "a", "b"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "You can only specify 'all' or a search string.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn show_all_and_config_errors() {
+    let env = Env::new("calendar.details=bogus\n");
+    let output = env.task(&["show", "all"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = stdout(&output);
+    assert!(out.starts_with("\n\x1b[4mConfig Variable "), "{out}");
+    assert!(out.contains("\ncalendar.details "), "{out}");
+    assert!(out.contains("\nxterm.title "), "{out}");
+    assert!(
+        out.ends_with(
+            "Configuration error: calendar.details contains an unrecognized value 'bogus'.\n"
+        ),
+        "{out}"
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdContext.cpp, CLI2::addContext, Context::getTaskContext
+
+#[test]
+fn context_define_set_list_show_delete() {
+    let env = Env::new("confirmation=off\n");
+    let ok = |args: &[&str], expected: &str| {
+        let output = env.task(args);
+        assert_eq!(stderr(&output), env.override_headers(), "{args:?}");
+        assert_eq!(stdout(&output), expected, "{args:?}");
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+    };
+    let fails = |args: &[&str], message: &str| {
+        let output = env.task(args);
+        assert_eq!(stdout(&output), "", "{args:?}");
+        assert_eq!(
+            stderr(&output),
+            env.override_headers() + message + "\n",
+            "{args:?}"
+        );
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    };
+
+    fails(&["context"], "No contexts defined.");
+    fails(&["context", "list"], "No contexts defined.");
+    fails(
+        &["context", "define", "home"],
+        "Both context name and its definition must be provided.",
+    );
+    fails(
+        &["context", "define", "none", "+x"],
+        "The name 'none' is reserved and not allowed to use as a context name.",
+    );
+    ok(
+        &["context", "define", "home", "project:Home"],
+        "Context 'home' defined (read, write). Use 'task context home' to activate.\n",
+    );
+    ok(
+        &["context", "define", "either", "+a", "or", "+b"],
+        "The filter '+a or +b' is not a valid modification string, because it contains the 'OR' operator.\n\
+         As such, value for the write context cannot be set (context will not apply on task add / task log).\n\n\
+         Please use 'task config context.either.write <default mods>' to set default attribute values for new tasks in this context manually.\n\n\
+         Context 'either' defined (read only). Use 'task context either' to activate.\n",
+    );
+    let rc = rc_text(&env);
+    assert!(
+        rc.contains("context.home.read=project:Home\ncontext.home.write=project:Home\n"),
+        "{rc}"
+    );
+    assert!(rc.contains("context.either.read=+a or +b\n"), "{rc}");
+    assert!(!rc.contains("context.either.write"), "{rc}");
+
+    fails(&["context", "nope"], "Context 'nope' not found.");
+    ok(
+        &["context", "home"],
+        "Context 'home' set. Use 'task context none' to remove.\n",
+    );
+    // Helper commands print no override headers.
+    let output = env.task(&["_context"]);
+    assert_eq!(
+        (stdout(&output).as_str(), stderr(&output).as_str()),
+        ("either\nhome\n", "")
+    );
+    assert_eq!(output.status.code(), Some(0));
+    ok(
+        &["context", "show"],
+        "Context 'home' with \n\n* read filter: 'project:Home'\n* write filter: 'project:Home'\n\nis currently applied.\n",
+    );
+    let table = "\n\x1b[4mName  \x1b[0m \x1b[4mType \x1b[0m \x1b[4mDefinition  \x1b[0m \x1b[4mActive\x1b[0m\n\
+                 either read  +a or +b     no\n       write              no\n\
+                 home   read  project:Home yes\n       write project:Home yes\n\n";
+    ok(&["context", "list"], table);
+    ok(
+        &["context"],
+        &format!("{table}Use 'task context none' to unset the current context.\n"),
+    );
+
+    ok(&["context", "none"], "Context unset.\n");
+    fails(&["context", "none"], "Context not unset.");
+    ok(&["context", "show"], "No context is currently applied.\n");
+
+    ok(
+        &["context", "home"],
+        "Context 'home' set. Use 'task context none' to remove.\n",
+    );
+    ok(&["context", "delete", "home"], "Context 'home' deleted.\n");
+    let rc = rc_text(&env);
+    assert!(
+        !rc.contains("context.home") && !rc.contains("context=home"),
+        "{rc}"
+    );
+    fails(&["context", "delete", "home"], "Context 'home' not found.");
+    fails(
+        &["context", "delete"],
+        "Context name needs to be specified.",
+    );
+    fails(
+        &["_context", "x"],
+        "The '_context' command does not allow 'x'.",
+    );
+}
+
+#[test]
+fn context_confirmation_prompts() {
+    let env = Env::new("confirmation=on\n");
+    // No pending tasks: the filter matches nothing, so that is confirmed too.
+    let output = config_task(&env, &["context", "define", "h", "+x"], "no\n");
+    assert_eq!(
+        stdout(&output),
+        "The filter '+x' matches 0 pending tasks. Do you wish to continue? (yes/no) "
+    );
+    let header = format!("TASKRC override: {}\n", env.rc().display());
+    assert_eq!(
+        stderr(&output),
+        format!("{header}Context definition aborted.\n")
+    );
+    assert_eq!(output.status.code(), Some(2));
+
+    let output = config_task(&env, &["context", "define", "h", "+x"], "yes\nyes\nno\n");
+    assert_eq!(
+        stdout(&output),
+        "The filter '+x' matches 0 pending tasks. Do you wish to continue? (yes/no) \
+         Are you sure you want to add 'context.h.read' with a value of '+x'? (yes/no) \
+         Are you sure you want to add 'context.h.write' with a value of '+x'? (yes/no) \
+         Context 'h' defined (read only). Use 'task context h' to activate.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let output = config_task(&env, &["context", "delete", "h"], "no\n");
+    assert_eq!(
+        stdout(&output),
+        "Do you want to delete context 'h'? (yes/no) "
+    );
+    assert_eq!(
+        stderr(&output),
+        format!("{header}Context 'h' not deleted.\n")
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(rc_text(&env).contains("context.h.read=+x"));
+}
+
+#[test]
+fn context_filter_and_write_context_application() {
+    let env = Env::new("confirmation=off\nverbose=nothing\n");
+    let quiet = |args: &[&str]| {
+        let output = env.task(args);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+        stdout(&output)
+    };
+    quiet(&["add", "other", "project:Other"]);
+    quiet(&["context", "define", "home", "project:Home"]);
+    // Old-style context.<name> definitions are read contexts.
+    quiet(&["config", "context.legacy", "+old"]);
+    quiet(&["context", "home"]);
+
+    // Write context: applied to add and log modifications.
+    quiet(&["add", "inside"]);
+    quiet(&["log", "logged"]);
+    let export = quiet(&["export", "all"]);
+    let mut projects: Vec<&str> = export
+        .lines()
+        .filter_map(|l| l.split("\"project\":\"").nth(1))
+        .map(|p| p.split('"').next().unwrap())
+        .collect();
+    projects.sort();
+    assert_eq!(projects, ["Home", "Home", "Other"], "{export}");
+
+    // Read context: a filter for reports, with the context footnote (count
+    // includes the completed task).
+    let output = env.task(&["rc.verbose=footnote,context", "count"]);
+    assert_eq!(stdout(&output), "2\n");
+    assert_eq!(
+        stderr(&output),
+        "Context 'home' set. Use 'task context none' to remove.\n"
+    );
+    // Without the `context` verbosity token there is no footnote.
+    let output = env.task(&["rc.verbose=footnote", "count"]);
+    assert_eq!(
+        (stdout(&output).as_str(), stderr(&output).as_str()),
+        ("2\n", "")
+    );
+
+    // An ID or UUID bypasses the read context.
+    let output = env.task(&["rc.verbose=footnote,context", "1", "count"]);
+    assert_eq!(stdout(&output), "1\n");
+    assert_eq!(stderr(&output), "");
+    let output = env.task(&["rc.verbose=footnote,context", "1-2", "count"]);
+    assert_eq!(stdout(&output), "2\n");
+
+    // The legacy definition is used as the read context; it has no write
+    // context, so add is unaffected.
+    quiet(&["context", "legacy"]);
+    assert_eq!(quiet(&["count"]), "0\n");
+    quiet(&["add", "plain"]);
+    assert_eq!(quiet(&["_get", "3.project", "3.tags"]), " \n");
+
+    quiet(&["context", "none"]);
+    assert_eq!(quiet(&["count"]), "4\n");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// `edit` (CmdEdit.cpp) with scripted editors.
+
+/// `task rc.verbose=<verbose> <args>` with `TASKRC`/`TASKDATA`, `VISUAL` and
+/// `EDITOR` removed unless given in `vars`, and `stdin` piped in.
+fn edit_task(env: &Env, args: &[&str], vars: &[(&str, &str)], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut command = env.command(args);
+    command
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (name, value) in vars {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// Writes an executable `/bin/sh` editor script `name` and returns its path.
+fn editor_script(env: &Env, name: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = env.path(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.display().to_string()
+}
+
+/// An environment with one task; returns it and the edit temp file name.
+fn edit_env() -> (Env, String) {
+    let env = Env::new("verbose=footnote\nconfirmation=off\n");
+    let output = env.task(&["add", "hello", "project:x", "+t"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let uuid = stdout(&env.task(&["_get", "1.uuid"]));
+    let file = format!("task.{}.task", &uuid[..8]);
+    (env, file)
+}
+
+#[test]
+fn edit_scripted_editor_modifies_task() {
+    let (env, file) = edit_env();
+    let editor = editor_script(
+        &env,
+        "ed.sh",
+        "sed -i -e 's/^  Project:.*/  Project: y/' -e 's/^  Description:.*/  Description: bye/' \
+         -e 's/^  Tags:.*/  Tags: u v/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Launching '{editor} \"{file}\"' now...\nEditing complete.\nEdits were detected.\n"
+        )
+    );
+    assert_eq!(
+        stderr(&output),
+        "Project modified.\nDescription modified.\n"
+    );
+    assert_eq!(
+        stdout(&env.task(&["_get", "1.project", "1.description", "1.tags"])),
+        "y bye u,v\n"
+    );
+    // The temp file is removed.
+    assert!(!env.data().join(&file).exists());
+}
+
+/// With stdout on a pipe, C++ `std::cout` is fully buffered, so the
+/// editor's own output comes before "Launching ..."; the `std::cerr` tie
+/// flushes it before the parse error.
+#[test]
+fn edit_piped_stdout_is_buffered_like_cpp() {
+    let (env, file) = edit_env();
+    let editor = editor_script(&env, "echo.sh", "echo from-editor");
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "from-editor\nLaunching '{editor} \"{file}\"' now...\nEditing complete.\n\
+             No edits were detected.\n"
+        )
+    );
+
+    let editor = editor_script(
+        &env,
+        "bad.sh",
+        "echo from-editor; sed -i -e 's/^  Due:.*/  Due: notadate/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "no\n");
+    let out = stdout(&output);
+    assert!(
+        out.starts_with(&format!(
+            "from-editor\nLaunching '{editor} \"{file}\"' now...\nEditing complete.\n\
+             Edits were detected.\nTaskwarrior couldn't handle your edits."
+        )),
+        "{out}"
+    );
+    assert!(stderr(&output).starts_with("Error: "), "{}", stderr(&output));
+}
+
+#[test]
+fn edit_without_changes_and_editor_precedence() {
+    let (env, file) = edit_env();
+    // $VISUAL wins over $EDITOR.
+    let output = edit_task(
+        &env,
+        &["1", "edit"],
+        &[("VISUAL", "true"), ("EDITOR", "false")],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!("Launching 'true \"{file}\"' now...\nEditing complete.\nNo edits were detected.\n")
+    );
+    // $EDITOR when $VISUAL is unset; rc.editor wins over both.
+    let output = edit_task(&env, &["1", "edit"], &[("EDITOR", "true")], "");
+    assert!(stdout(&output).starts_with("Launching 'true "));
+    let output = edit_task(&env, &["rc.editor=true", "1", "edit"], &[("VISUAL", "false")], "");
+    assert!(stdout(&output).starts_with("Launching 'true "));
+}
+
+#[test]
+fn edit_editor_failure_and_no_matches() {
+    let (env, file) = edit_env();
+    let editor = editor_script(&env, "fail.sh", "exit 3");
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0));
+    // The raw system () wait status, as C++ prints it.
+    assert_eq!(
+        stdout(&output),
+        format!("Launching '{editor} \"{file}\"' now...\nEditing failed with exit code 768.\n")
+    );
+    assert!(!env.data().join(&file).exists());
+
+    let output = edit_task(&env, &["rc.editor=true", "99", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "No matches.\n");
+}
+
+#[test]
+fn edit_already_being_edited() {
+    let (env, file) = edit_env();
+    std::fs::write(env.data().join(&file), "").unwrap();
+    let output = edit_task(&env, &["rc.editor=true", "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "Task is already being edited.\n");
+}
+
+#[test]
+fn edit_parse_error_declined_and_retried() {
+    let (env, file) = edit_env();
+    let editor = editor_script(
+        &env,
+        "bad.sh",
+        "sed -i 's/^  Description:.*/  Description:/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "no\n");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Launching '{editor} \"{file}\"' now...\nEditing complete.\nEdits were detected.\n\
+             Taskwarrior couldn't handle your edits.  Would you like to try again? (yes/no) "
+        )
+    );
+    assert_eq!(stderr(&output), "Error: Cannot remove description.\n");
+    assert_eq!(stdout(&env.task(&["_get", "1.description"])), "hello\n");
+    assert!(!env.data().join(&file).exists());
+
+    // The second launch sees the preserved (broken) edits and fixes them.
+    let marker = env.path("second");
+    let editor = editor_script(
+        &env,
+        "retry.sh",
+        &format!(
+            "if [ -e '{m}' ]; then grep -q '^  Description:$' \"$1\" && \
+             sed -i 's/^  Description:.*/  Description: fixed/' \"$1\"; \
+             else touch '{m}'; sed -i 's/^  Description:.*/  Description:/' \"$1\"; fi",
+            m = marker.display()
+        ),
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "yes\n");
+    assert_eq!(output.status.code(), Some(0));
+    let launching = format!("Launching '{editor} \"{file}\"' now...\n");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "{launching}Editing complete.\nEdits were detected.\n\
+             Taskwarrior couldn't handle your edits.  Would you like to try again? (yes/no) \
+             {launching}Editing complete.\nEdits were detected.\n"
+        )
+    );
+    assert_eq!(
+        stderr(&output),
+        "Error: Cannot remove description.\nDescription modified.\n"
+    );
+    assert_eq!(stdout(&env.task(&["_get", "1.description"])), "fixed\n");
+}
+
+#[test]
+fn edit_annotations_dependencies_and_udas() {
+    let (env, _file) = edit_env();
+    assert!(env.task(&["add", "other"]).status.success());
+    assert!(env
+        .task(&["1", "annotate", "keep me"])
+        .status
+        .success());
+    let editor = editor_script(
+        &env,
+        "ed.sh",
+        "sed -i -e 's/^  Dependencies:.*/  Dependencies: 2/' \
+         -e 's/^  UDA priority:.*/  UDA priority: H/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "UDA priority modified.\n");
+    let uuid2 = stdout(&env.task(&["_get", "2.uuid"]));
+    assert_eq!(
+        stdout(&env.task(&["_get", "1.depends", "1.priority", "1.annotations.count"])),
+        format!("{} H 1\n", uuid2.trim_end())
+    );
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdAliases.cpp, CmdCommands.cpp, CmdHelp.cpp, CmdExec.cpp, CmdLogo.cpp
+
+#[test]
+fn completion_aliases_lists_alias_names() {
+    let env = Env::new("alias.foo=list\n");
+    let output = env.task(&["_aliases"]);
+    // The default aliases plus `foo`, in key order.
+    assert_eq!(stdout(&output), "burndown\nfoo\nghistory\nhistory\nrm\n");
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn commands_table_shows_command_dna() {
+    let env = Env::new("defaultwidth=200\nfontunderline=off\n");
+    let output = env.task(&["commands"]);
+    let out = stdout(&output);
+    let row = |name: &str| -> Vec<String> {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{name} ")))
+            .unwrap_or_else(|| panic!("no {name} row in {out}"))
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(row("add")[..6], ["add", "operation", "RW", "Ctxt", "Mods", "Adds"]);
+    assert_eq!(
+        row("list")[..9],
+        ["list", "report", "RO", "ID", "GC", "Recur", "Ctxt", "Filt", "Most"]
+    );
+    assert_eq!(row("modify")[..6], ["modify", "operation", "RW", "Filt", "Mods", "Modifies"]);
+    assert!(out.starts_with("\nCommand "), "{out}");
+    assert!(out.ends_with("\n\n"), "{out}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn commands_table_alternate_row_colour() {
+    let env = Env::new("defaultwidth=200\n");
+    let output = env.task(&["commands", "rc._forcecolor:on"]);
+    let out = stdout(&output);
+    assert!(out.contains("\x1b[48;5;234m"), "{out}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn completion_commands_sorted_names() {
+    let env = Env::new("");
+    let output = env.task(&["_commands"]);
+    let out = stdout(&output);
+    let names: Vec<&str> = out.lines().collect();
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted);
+    assert_eq!(names[0], "_aliases");
+    // Built-ins and custom reports.
+    assert!(names.contains(&"add") && names.contains(&"next"));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn zsh_commands_by_category() {
+    let env = Env::new("");
+    let output = env.task(&["_zshcommands"]);
+    let out = stdout(&output);
+    assert!(out.contains("\nadd:operation:Adds a new task\n"), "{out}");
+    assert!(out.contains("\nnext:report:Most urgent tasks\n"), "{out}");
+    let first = out.lines().next().unwrap();
+    assert!(first.split(':').nth(1) == Some("metadata"), "{first}");
+    let last = out.lines().last().unwrap();
+    assert!(last.split(':').nth(1) == Some("internal"), "{last}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn help_shows_usage_and_help_text() {
+    let env = Env::new("alias.zork=list\ndefaultwidth=200\n");
+    let output = env.task(&["help"]);
+    let out = stdout(&output);
+    assert!(out.starts_with("\n"), "{out}");
+    assert!(out.contains("\nUsage: task "), "{out}");
+    assert!(out.contains("Runs rc.default.command, if specified."));
+    assert!(out.contains("Aliased to 'list'"), "{out}");
+    assert!(out.contains(
+        "\nDocumentation for Taskwarrior can be found using 'man task', 'man taskrc', \
+         'man task-color', 'man task-sync' or at https://taskwarrior.org\n"
+    ));
+    assert!(out.ends_with("  $ ! ' \" ( ) ; \\ ` * ? { } [ ] < > | & % # ~\n\n"));
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn help_usage_shows_only_usage() {
+    let env = Env::new("");
+    let full = stdout(&env.task(&["help"]));
+    let output = env.task(&["help", "usage"]);
+    let usage = stdout(&output);
+    assert!(usage.contains("Usage: task "), "{usage}");
+    assert!(!usage.contains("Documentation for Taskwarrior"));
+    assert!(full.starts_with(&usage), "usage table is the head of help");
+    // An abbreviation of `usage` also works (closeEnough).
+    assert_eq!(stdout(&env.task(&["help", "us"])), usage);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn execute_runs_the_command_through_the_shell() {
+    let env = Env::new("verbose=nothing\n");
+    let output = env.task(&["execute", "echo", "hello"]);
+    assert_eq!(stdout(&output), "hello\n");
+    assert_eq!(output.status.code(), Some(0));
+    // exec.test.py: abbreviation, aliases and default.command.
+    assert_eq!(stdout(&env.task(&["exec", "echo", "hi"])), "hi\n");
+    let env = Env::new(
+        "verbose=nothing\nalias.asdf=execute echo aliased\ndefault.command=exec echo default\n",
+    );
+    assert_eq!(stdout(&env.task(&["asdf"])), "aliased\n");
+    assert_eq!(stdout(&env.task(&[])), "default\n");
+}
+
+#[test]
+fn execute_returns_the_raw_wait_status() {
+    // C++ returns `system`'s wait status (3 << 8); the exit code is its low
+    // byte.
+    let env = Env::new("verbose=nothing\n");
+    let output = env.task(&["execute", "exit", "3"]);
+    assert_eq!(output.status.code(), Some(0));
+    let output = env.task(&["execute", "kill", "-9", "$$"]);
+    assert_eq!(output.status.code(), Some(9));
+}
+
+#[test]
+fn execute_without_a_command() {
+    let env = Env::new("");
+    let output = env.task(&["execute"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "Cannot execute an empty command.\n"
+    );
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn logo_with_colour() {
+    let env = Env::new("");
+    let output = env.task(&["logo", "rc._forcecolor:on"]);
+    let out = stdout(&output);
+    assert!(out.starts_with("\n                  \x1b[48;5;232m  \x1b[0m"), "{out:?}");
+    assert_eq!(out.lines().count(), 30);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn logo_requires_colour() {
+    let env = Env::new("");
+    let output = env.task(&["logo"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers() + "The logo command requires that color support is enabled.\n"
+    );
+    assert_eq!(output.status.code(), Some(2));
 }

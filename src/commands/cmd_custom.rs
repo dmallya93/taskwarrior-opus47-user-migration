@@ -8,6 +8,7 @@
 
 use crate::cli2;
 use crate::columns::column;
+use crate::commands::cmd_news::CmdNews;
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
 use crate::error::{Result, TwError};
@@ -83,10 +84,6 @@ impl Command for CmdCustom {
     /// `There are different numbers of columns and labels for report '{1}'.`,
     /// and the errors of `CLI2::addFilter`, `Filter::subset`, `sort_tasks`,
     /// `Column::factory`, `Color` parsing and `ViewTask::render`.
-    ///
-    /// Deviation: C++ `CmdNews::should_nag` lives in `CmdNews.cpp`, which is
-    /// ported in milestone 8; [`should_nag`] reproduces it here from the
-    /// `NewsItem::all ()` version list.
     fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
         let mut rc = 0;
         let keyword = self.meta.keyword.clone();
@@ -265,7 +262,7 @@ impl Command for CmdCustom {
         }
 
         // Inform user about the new release highlights if not presented yet
-        if should_nag(context) {
+        if CmdNews::should_nag(context) {
             let notice = format!(
                 "Recently upgraded to {}. Please run 'task news' to read highlights about the new release.",
                 Version::current()
@@ -320,68 +317,9 @@ fn validate_sort_columns(context: &mut Context, columns: &mut [String]) {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
-/// The versions of the C++ `NewsItem::all ()` items (`version2_6_0` …
-/// `version3_5_0`); every one of those functions adds at least one item.
-const NEWS_ITEM_VERSIONS: [&str; 7] = [
-    "2.6.0", "3.0.0", "3.1.0", "3.2.0", "3.3.0", "3.4.0", "3.5.0",
-];
-
-////////////////////////////////////////////////////////////////////////////////
-/// C++ `CmdNews::should_nag`: whether to remind the user to read
-/// `task news` (the `news` verbosity token is on and `news.version` is older
-/// than the current version, with news items newer than it).
-///
-/// Deviation: lives here until `CmdNews.cpp` is ported (milestone 8);
-/// `NewsItem::all ()` is reduced to the versions of its items.
-pub fn should_nag(context: &mut Context) -> bool {
-    if !context.verbose("news") {
-        return false;
-    }
-
-    let mut news_version = Version::new(&context.config.get("news.version"));
-    if !news_version.is_valid() {
-        news_version = Version::new("2.6.0");
-    }
-
-    let current_version = Version::current();
-
-    if news_version >= current_version {
-        return false;
-    }
-
-    // Check if there are actually any interesting news items to show.
-    NEWS_ITEM_VERSIONS
-        .iter()
-        .any(|v| Version::new(v) > news_version)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn context(verbose: &str, news_version: &str) -> Context {
-        let mut context = Context::new();
-        context.config.set("verbose", verbose);
-        context.config.set("news.version", news_version);
-        context
-    }
-
-    #[test]
-    fn should_nag_follows_news_version_and_verbosity() {
-        // Older than the current release, with newer news items.
-        assert!(should_nag(&mut context("news", "2.6.0")));
-        assert!(should_nag(&mut context("news", "3.4.9")));
-        // An invalid or empty version counts as 2.6.0.
-        assert!(should_nag(&mut context("news", "")));
-        assert!(should_nag(&mut context("news", "garbage")));
-        // Up to date (or newer).
-        assert!(!should_nag(&mut context("news", "3.5.0")));
-        assert!(!should_nag(&mut context("news", "4.0.0")));
-        // Without the 'news' verbosity token.
-        assert!(!should_nag(&mut context("nothing", "2.6.0")));
-        assert!(!should_nag(&mut context("affected", "2.6.0")));
-    }
 
     #[test]
     fn uses_context_reads_report_context() {

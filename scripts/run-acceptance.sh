@@ -7,8 +7,11 @@
 #   TEST...      test file names or shell globs (e.g. version.test.py 'tw-*.test.sh').
 #                Default: every *.test.py and *.test.sh in the reference test/ dir.
 #   --no-build   skip `cargo build --release` (binaries must already exist).
-#   --strict     exit nonzero if any non-WILL_FAIL test file fails/times out, or
-#                a WILL_FAIL file unexpectedly passes (CTest semantics).
+#   --strict     exit 1 if any CTest-registered test file fails/times out, or a
+#                WILL_FAIL file unexpectedly passes (CTest semantics). Files not
+#                registered in the reference test/CMakeLists.txt (pythonTests /
+#                shell_SRCS), e.g. template.test.py, still run and are reported
+#                as UNREGISTERED but never count against the gate.
 #   -j N         run N test files in parallel (default 1; env TW_ACCEPTANCE_JOBS).
 #   -t SECS      per-file timeout in seconds (default 300; env TW_ACCEPTANCE_TIMEOUT).
 #
@@ -21,12 +24,21 @@
 #
 # Outputs (in acceptance-results/):
 #   logs/<file>.log   full stdout+stderr of each test file
-#   summary.txt       one line per file plus totals
+#   summary.txt       one line per file, discovery/registration counts, the
+#                     WILL_FAIL note, in-file unittest expected-failure/skip
+#                     markers, and totals (all files and CTest-registered only)
 #   summary.json      machine-readable equivalent
 #
-# Exit code: 0 when the harness ran (test failures are only tracked), nonzero on
-# harness errors (missing reference dir / python3 / binaries, build failure), or
-# with --strict when any non-WILL_FAIL test fails.
+# Expected failures: the reference test/CMakeLists.txt declares no WILL_FAIL
+# test properties, so the expected-failure list is the in-file Python markers
+# (@unittest.expectedFailure, @unittest.skip/skipIf/skipUnless). They are
+# scanned and listed in the summary; their TAP outcomes ("# TODO" = xfail,
+# "# skip" = skip) are counted per file. WILL_FAIL parsing is still applied
+# if the CMakeLists ever declares any.
+#
+# Exit code: 0 when the harness ran (test failures are only tracked), 2 on
+# harness errors (missing reference dir / python3 / binaries, build failure,
+# summary failure), 1 with --strict when any registered test file fails.
 
 set -u
 set -o pipefail
@@ -49,7 +61,7 @@ while [ $# -gt 0 ]; do
         -j) shift; JOBS="${1:-}" ;;
         -j*) JOBS="${1#-j}" ;;
         -t|--timeout) shift; TIMEOUT_SECS="${1:-}" ;;
-        -h|--help) sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         --) shift; PATTERNS+=("$@"); break ;;
         -*) die "unknown option: $1" ;;
         *) PATTERNS+=("$1") ;;
@@ -161,6 +173,21 @@ for m in re.finditer(r"set_tests_properties\s*\(([^)]*)\)", text, re.I | re.S):
                 print(name)
 PY
 
+# CTest registration: the pythonTests and shell_SRCS lists in the reference
+# test/CMakeLists.txt are the files `ctest` would run. Written as JSON
+# {"pythonTests": [...], "shell_SRCS": [...]}; a missing list is null.
+REGISTERED_FILE="$OUT_DIR/.registered.json"
+"$PYTHON" -I - "$REF_TEST/CMakeLists.txt" >"$REGISTERED_FILE" <<'PY' || die "cannot parse CTest registration lists"
+import json, re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+text = re.sub(r"#[^\n]*", "", text)
+out = {}
+for var in ("pythonTests", "shell_SRCS"):
+    m = re.search(r"\bset\s*\(\s*" + var + r"\b([^)]*)\)", text, re.I | re.S)
+    out[var] = m.group(1).split() if m else None
+json.dump(out, sys.stdout)
+PY
+
 # --- Test selection ---------------------------------------------------------
 
 cd "$WORK/test" || die "cannot enter $WORK/test"
@@ -237,73 +264,288 @@ wait
 
 # --- Summary -----------------------------------------------------------------
 
-"$PYTHON" -I - "$RES_DIR" "$WILL_FAIL_FILE" "$OUT_DIR" "$STRICT" "$TIMEOUT_SECS" "$REF_DIR" "${TESTS[@]}" <<'PY'
-import json, os, sys
-res_dir, wf_file, out_dir, strict, tmo, ref_dir = sys.argv[1:7]
-tests = sys.argv[7:]
-will_fail = set(l.strip() for l in open(wf_file) if l.strip())
-rows = []
-for t in tests:
-    p = os.path.join(res_dir, t + ".res")
-    if not os.path.exists(p):
-        rows.append(dict(file=t, status="error", exit_code=None, passed=0, failed=0,
-                         skipped=0, expected_failures=0, seconds=0, will_fail=t in will_fail))
-        continue
-    f, rc, ps, fl, sk, xf, sec = open(p).read().rstrip("\n").split("\t")
-    rc, ps, fl, sk, xf, sec = map(int, (rc, ps, fl, sk, xf, sec))
-    if rc in (124, 137):
-        raw = "timeout"
-    elif rc == 0 and fl == 0 and ps + xf == 0:
-        raw = "skip"
-    elif rc == 0 and fl == 0:
-        raw = "pass"
-    else:
-        raw = "fail"
-    wf = t in will_fail
-    status = raw
-    if wf:
-        status = "xpass" if raw == "pass" else ("xfail" if raw in ("fail", "timeout") else raw)
-    rows.append(dict(file=t, status=status, exit_code=rc, passed=ps, failed=fl,
-                     skipped=sk, expected_failures=xf, seconds=sec, will_fail=wf))
+"$PYTHON" -I - "$RES_DIR" "$WILL_FAIL_FILE" "$REGISTERED_FILE" "$OUT_DIR" "$STRICT" "$TIMEOUT_SECS" "$REF_DIR" "$REF_TEST" "${TESTS[@]}" <<'PY'
+import ast, fnmatch, json, os, re, sys, traceback
 
-count = lambda s: sum(1 for r in rows if r["status"] == s)
-tot = {k: sum(r[k] for r in rows) for k in ("passed", "failed", "skipped", "expected_failures")}
-nfiles = len(rows)
-cases_run = tot["passed"] + tot["failed"]
-totals = dict(
-    files=nfiles,
-    files_pass=count("pass"), files_fail=count("fail"), files_timeout=count("timeout"),
-    files_skip=count("skip"), files_xfail=count("xfail"), files_xpass=count("xpass"),
-    files_error=count("error"),
-    file_pass_rate=round(100.0 * (count("pass") + count("xfail")) / nfiles, 2) if nfiles else 0.0,
-    cases_passed=tot["passed"], cases_failed=tot["failed"], cases_skipped=tot["skipped"],
-    cases_expected_failures=tot["expected_failures"],
-    case_pass_rate=round(100.0 * tot["passed"] / cases_run, 2) if cases_run else 0.0,
-)
-lines = ["%-8s %-42s pass=%-4d fail=%-4d skip=%-4d xfail=%-3d rc=%-4s %4ds%s" % (
-    r["status"].upper(), r["file"], r["passed"], r["failed"], r["skipped"],
-    r["expected_failures"], r["exit_code"], r["seconds"], "  [WILL_FAIL]" if r["will_fail"] else "")
-    for r in rows]
-lines.append("")
-lines.append("files: %(files)d  pass=%(files_pass)d fail=%(files_fail)d timeout=%(files_timeout)d "
-             "skip=%(files_skip)d xfail=%(files_xfail)d xpass=%(files_xpass)d error=%(files_error)d  "
-             "file pass rate=%(file_pass_rate).2f%%" % totals)
-lines.append("cases: pass=%(cases_passed)d fail=%(cases_failed)d skip=%(cases_skipped)d "
-             "xfail=%(cases_expected_failures)d  case pass rate=%(case_pass_rate).2f%%" % totals)
-with open(os.path.join(out_dir, "summary.txt"), "w") as fh:
-    fh.write("\n".join(lines) + "\n")
-with open(os.path.join(out_dir, "summary.json"), "w") as fh:
-    json.dump(dict(reference_dir=ref_dir, timeout_seconds=int(tmo),
-                   will_fail=sorted(will_fail), totals=totals, files=rows), fh, indent=2)
-    fh.write("\n")
-print()
-print("\n".join(lines[-2:]))
-print("run-acceptance: summary written to " + os.path.join(out_dir, "summary.txt") + " and summary.json")
-bad = [r for r in rows if r["status"] in ("fail", "timeout", "xpass", "error")]
-if strict == "1" and bad:
-    print("run-acceptance: --strict: %d file(s) failed" % len(bad), file=sys.stderr)
-    sys.exit(1)
+def main():
+    (res_dir, wf_file, reg_file, out_dir, strict, tmo, ref_dir, ref_test) = sys.argv[1:9]
+    tests = sys.argv[9:]
+    will_fail = set(l.strip() for l in open(wf_file) if l.strip())
+    lists = json.load(open(reg_file))
+
+    # --- Discovery and CTest registration --------------------------------
+    on_disk = sorted(f for f in os.listdir(ref_test) if os.path.isfile(os.path.join(ref_test, f)))
+    disc_py = [f for f in on_disk if fnmatch.fnmatchcase(f, "*.test.py")]
+    disc_sh = [f for f in on_disk if fnmatch.fnmatchcase(f, "*.test.sh")]
+    disc_tw = [f for f in disc_sh if f.startswith("tw-")]
+    disc_sh_other = [f for f in disc_sh if not f.startswith("tw-")]
+    notes = []
+    registered = set()
+    for var, kind, found in (("pythonTests", "*.test.py", disc_py), ("shell_SRCS", "*.test.sh", disc_sh)):
+        if lists.get(var) is None:
+            # Cannot tell what CTest would run: gate every discovered file.
+            notes.append("test/CMakeLists.txt has no set(%s ...) list; every %s file is treated as registered" % (var, kind))
+            registered.update(found)
+        else:
+            registered.update(lists[var])
+    reg_py = lists.get("pythonTests") or []
+    reg_sh = lists.get("shell_SRCS") or []
+    disc_all = disc_py + disc_sh
+    unregistered = [f for f in disc_all if f not in registered]
+    registered_missing = sorted(f for f in registered if f not in disc_all)
+    discovery = dict(
+        test_py=len(disc_py), tw_test_sh=len(disc_tw), other_test_sh=len(disc_sh_other),
+        other_test_sh_files=disc_sh_other, total=len(disc_all),
+        registered_python_tests=len(reg_py) if lists.get("pythonTests") is not None else None,
+        registered_shell_srcs=len(reg_sh) if lists.get("shell_SRCS") is not None else None,
+        registered_total=len([f for f in disc_all if f in registered]),
+        unregistered=unregistered, registered_but_missing=registered_missing,
+    )
+
+    if will_fail:
+        wf_note = ("test/CMakeLists.txt declares WILL_FAIL for %d test(s): %s"
+                   % (len(will_fail), ", ".join(sorted(will_fail))))
+    else:
+        wf_note = ("Spec inconsistency: the spec tracks tests \"marked WILL_FAIL in test/CMakeLists.txt\", "
+                   "but the reference test/CMakeLists.txt declares no WILL_FAIL test properties, so that "
+                   "list is empty. The in-file Python unittest markers (@unittest.expectedFailure, "
+                   "@unittest.skip/skipIf/skipUnless, skipTest/SkipTest) listed below are used as the "
+                   "expected-failure list instead; their TAP outcomes are counted as xfail (# TODO) and "
+                   "skip (# skip).")
+
+    # --- In-file unittest markers -----------------------------------------
+    markers = scan_markers(ref_test, [t for t in tests if t.endswith(".py")], registered)
+
+    # --- Per-file results -------------------------------------------------
+    rows = []
+    for t in tests:
+        reg = t in registered
+        mk = [m for m in markers if m["file"] == t]
+        base = dict(registered=reg, classification="registered" if reg else "unregistered",
+                    markers_expected_failure=sum(1 for m in mk if m["marker"] == "expectedFailure"),
+                    markers_skip=sum(1 for m in mk if m["marker"] != "expectedFailure"))
+        p = os.path.join(res_dir, t + ".res")
+        if not os.path.exists(p):
+            rows.append(dict(file=t, status="error", exit_code=None, passed=0, failed=0,
+                             skipped=0, expected_failures=0, seconds=0, will_fail=t in will_fail, **base))
+            continue
+        f, rc, ps, fl, sk, xf, sec = open(p).read().rstrip("\n").split("\t")
+        rc, ps, fl, sk, xf, sec = map(int, (rc, ps, fl, sk, xf, sec))
+        if rc in (124, 137):
+            raw = "timeout"
+        elif rc == 0 and fl == 0 and ps + xf == 0:
+            raw = "skip"
+        elif rc == 0 and fl == 0:
+            raw = "pass"
+        else:
+            raw = "fail"
+        wf = t in will_fail
+        status = raw
+        if wf:
+            status = "xpass" if raw == "pass" else ("xfail" if raw in ("fail", "timeout") else raw)
+        rows.append(dict(file=t, status=status, exit_code=rc, passed=ps, failed=fl,
+                         skipped=sk, expected_failures=xf, seconds=sec, will_fail=wf, **base))
+
+    totals = make_totals(rows)
+    reg_rows = [r for r in rows if r["registered"]]
+    totals_reg = make_totals(reg_rows)
+    bad = [r for r in reg_rows if r["status"] in ("fail", "timeout", "xpass", "error")]
+    unreg_bad = [r for r in rows if not r["registered"] and r["status"] in ("fail", "timeout", "xpass", "error")]
+
+    # --- summary.txt ------------------------------------------------------
+    L = []
+    L.append("reference: %s" % ref_dir)
+    L.append("discovered test files in test/: %d  (*.test.py=%d, tw-*.test.sh=%d, other *.test.sh=%d%s)" % (
+        discovery["total"], discovery["test_py"], discovery["tw_test_sh"], discovery["other_test_sh"],
+        (": " + ", ".join(disc_sh_other)) if disc_sh_other else ""))
+    L.append("CTest-registered in test/CMakeLists.txt: %d  (pythonTests=%s, shell_SRCS=%s)" % (
+        discovery["registered_total"], discovery["registered_python_tests"], discovery["registered_shell_srcs"]))
+    L.append("unregistered (run and reported, not gated): %d%s" % (
+        len(unregistered), (": " + ", ".join(unregistered)) if unregistered else ""))
+    if registered_missing:
+        L.append("registered but missing on disk: " + ", ".join(registered_missing))
+    L.append("selected this run: %d  (registered=%d, unregistered=%d)" % (
+        len(rows), len(reg_rows), len(rows) - len(reg_rows)))
+    L.append("WILL_FAIL: " + wf_note)
+    for n in notes:
+        L.append("note: " + n)
+    L.append("")
+    for r in rows:
+        tags = []
+        if r["will_fail"]:
+            tags.append("[WILL_FAIL]")
+        if not r["registered"]:
+            tags.append("[UNREGISTERED: not gated]")
+        L.append("%-8s %-42s pass=%-4d fail=%-4d skip=%-4d xfail=%-3d rc=%-4s %4ds%s" % (
+            r["status"].upper(), r["file"], r["passed"], r["failed"], r["skipped"],
+            r["expected_failures"], r["exit_code"], r["seconds"], ("  " + " ".join(tags)) if tags else ""))
+    L.append("")
+    mfiles = sorted(set(m["file"] for m in markers))
+    L.append("in-file expected-failure/skip markers: %d in %d file(s)  (expectedFailure=%d, skip-type=%d)" % (
+        len(markers), len(mfiles), sum(1 for m in markers if m["marker"] == "expectedFailure"),
+        sum(1 for m in markers if m["marker"] != "expectedFailure")))
+    for m in markers:
+        detail = []
+        if m["condition"] is not None:
+            detail.append("if " + m["condition"])
+        if m["reason"]:
+            detail.append("reason: " + m["reason"])
+        L.append("  %s:%d  %s  @%s%s%s" % (
+            m["file"], m["line"], m["test"], m["marker"],
+            ("  " + "; ".join(detail)) if detail else "",
+            "" if m["registered"] else "  [UNREGISTERED]"))
+    L.append("")
+    L.append("per-file expected failures and skips (observed TAP counts vs in-file markers):")
+    L.append("  %-42s %6s %6s %10s %8s" % ("file", "xfail", "skip", "xf-markers", "sk-markers"))
+    for r in rows:
+        if r["expected_failures"] or r["skipped"] or r["markers_expected_failure"] or r["markers_skip"]:
+            L.append("  %-42s %6d %6d %10d %8d%s" % (
+                r["file"], r["expected_failures"], r["skipped"], r["markers_expected_failure"],
+                r["markers_skip"], "" if r["registered"] else "  [UNREGISTERED]"))
+    L.append("")
+    tail = [
+        "files (all):        " + fmt_files(totals),
+        "cases (all):        " + fmt_cases(totals),
+        "files (registered): " + fmt_files(totals_reg),
+        "cases (registered): " + fmt_cases(totals_reg),
+        "gate (registered files, --strict): %s%s" % (
+            "PASS" if not bad else "FAIL (%d file(s): %s)" % (len(bad), ", ".join(r["file"] for r in bad)),
+            ("  [unregistered failures not gated: %s]" % ", ".join(r["file"] for r in unreg_bad)) if unreg_bad else ""),
+    ]
+    L.extend(tail)
+    with open(os.path.join(out_dir, "summary.txt"), "w") as fh:
+        fh.write("\n".join(L) + "\n")
+    with open(os.path.join(out_dir, "summary.json"), "w") as fh:
+        json.dump(dict(reference_dir=ref_dir, timeout_seconds=int(tmo),
+                       discovery=discovery, will_fail=sorted(will_fail), will_fail_note=wf_note,
+                       notes=notes, expected_failure_markers=markers,
+                       totals=totals, totals_registered=totals_reg,
+                       gate=dict(scope="registered", passed=not bad, failing=[r["file"] for r in bad],
+                                 unregistered_failing=[r["file"] for r in unreg_bad]),
+                       files=rows), fh, indent=2)
+        fh.write("\n")
+    print()
+    print("\n".join(tail))
+    print("run-acceptance: summary written to " + os.path.join(out_dir, "summary.txt") + " and summary.json")
+    if strict == "1" and bad:
+        print("run-acceptance: --strict: %d registered file(s) failed" % len(bad), file=sys.stderr)
+        return 1
+    return 0
+
+def make_totals(rows):
+    count = lambda s: sum(1 for r in rows if r["status"] == s)
+    tot = {k: sum(r[k] for r in rows) for k in ("passed", "failed", "skipped", "expected_failures")}
+    nfiles = len(rows)
+    cases_run = tot["passed"] + tot["failed"]
+    return dict(
+        files=nfiles,
+        files_pass=count("pass"), files_fail=count("fail"), files_timeout=count("timeout"),
+        files_skip=count("skip"), files_xfail=count("xfail"), files_xpass=count("xpass"),
+        files_error=count("error"),
+        file_pass_rate=round(100.0 * (count("pass") + count("xfail")) / nfiles, 2) if nfiles else 0.0,
+        cases_passed=tot["passed"], cases_failed=tot["failed"], cases_skipped=tot["skipped"],
+        cases_expected_failures=tot["expected_failures"],
+        case_pass_rate=round(100.0 * tot["passed"] / cases_run, 2) if cases_run else 0.0,
+    )
+
+def fmt_files(t):
+    return ("%(files)d  pass=%(files_pass)d fail=%(files_fail)d timeout=%(files_timeout)d "
+            "skip=%(files_skip)d xfail=%(files_xfail)d xpass=%(files_xpass)d error=%(files_error)d  "
+            "file pass rate=%(file_pass_rate).2f%%" % t)
+
+def fmt_cases(t):
+    return ("pass=%(cases_passed)d fail=%(cases_failed)d skip=%(cases_skipped)d "
+            "xfail=%(cases_expected_failures)d  case pass rate=%(case_pass_rate).2f%%" % t)
+
+SKIP_DECOS = {"expectedFailure", "skip", "skipIf", "skipUnless"}
+
+def scan_markers(ref_test, files, registered):
+    """List @unittest.expectedFailure / skip / skipIf / skipUnless decorators
+    (on test methods or classes) and skipTest()/SkipTest raised in bodies."""
+    out = []
+    for f in sorted(files):
+        path = os.path.join(ref_test, f)
+        try:
+            src = open(path, encoding="utf-8", errors="surrogateescape").read()
+            tree = ast.parse(src, filename=f)
+        except (OSError, SyntaxError) as e:
+            out.append(dict(file=f, line=0, test="?", marker="unparsed", condition=None,
+                            reason="cannot parse: %s" % e, description=None, registered=f in registered))
+            continue
+        lines = src.splitlines()
+        seg = lambda n: " ".join((ast.get_source_segment(src, n) or "").split())
+        def comment(lineno):
+            m = re.search(r"#\s*(.*)$", lines[lineno - 1]) if 0 < lineno <= len(lines) else None
+            return m.group(1).strip() if m else None
+        def text(n):
+            if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                return n.value
+            return seg(n)
+        def visit(node, cls):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    handle(child, child.name, cls_level=True)
+                    visit(child, child.name)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    handle(child, cls, cls_level=False)
+                    for sub in ast.walk(child):
+                        rt = None
+                        if isinstance(sub, ast.Call) and name_of(sub.func) == "skipTest":
+                            rt = ("skipTest", sub.args[0] if sub.args else None)
+                        elif isinstance(sub, ast.Raise) and sub.exc is not None:
+                            exc = sub.exc.func if isinstance(sub.exc, ast.Call) else sub.exc
+                            if name_of(exc) == "SkipTest":
+                                rt = ("SkipTest", sub.exc.args[0] if isinstance(sub.exc, ast.Call) and sub.exc.args else None)
+                        if rt:
+                            out.append(dict(file=f, line=sub.lineno, test=qual(cls, child.name), marker=rt[0],
+                                            condition="runtime", reason=text(rt[1]) if rt[1] is not None else comment(sub.lineno),
+                                            description=None, registered=f in registered))
+        def handle(defn, cls, cls_level):
+            for d in defn.decorator_list:
+                fn = d.func if isinstance(d, ast.Call) else d
+                kind = name_of(fn)
+                if kind not in SKIP_DECOS:
+                    continue
+                cond = reason = None
+                args = list(d.args) if isinstance(d, ast.Call) else []
+                kw = {k.arg: k.value for k in d.keywords} if isinstance(d, ast.Call) else {}
+                if kind in ("skipIf", "skipUnless"):
+                    if args:
+                        cond = seg(args[0]) if kind == "skipIf" else "not (%s)" % seg(args[0])
+                    r = args[1] if len(args) > 1 else kw.get("reason")
+                    reason = text(r) if r is not None else None
+                elif kind == "skip":
+                    r = args[0] if args else kw.get("reason")
+                    reason = text(r) if r is not None else None
+                if not reason:
+                    reason = comment(d.lineno)
+                doc = ast.get_docstring(defn)
+                test = (defn.name + " (all tests in class)") if cls_level else qual(cls, defn.name)
+                out.append(dict(file=f, line=d.lineno, test=test, marker=kind, condition=cond,
+                                reason=reason, description=doc.strip().splitlines()[0] if doc else None,
+                                registered=f in registered))
+        visit(tree, None)
+    return out
+
+def name_of(n):
+    if isinstance(n, ast.Attribute):
+        return n.attr
+    if isinstance(n, ast.Name):
+        return n.id
+    return None
+
+def qual(cls, name):
+    return "%s.%s" % (cls, name) if cls else name
+
+try:
+    sys.exit(main())
+except SystemExit:
+    raise
+except BaseException:
+    traceback.print_exc()
+    print("run-acceptance: error: summary generation failed", file=sys.stderr)
+    sys.exit(2)
 PY
 rc=$?
-rm -rf "$RES_DIR" "$WILL_FAIL_FILE"
+rm -rf "$RES_DIR" "$WILL_FAIL_FILE" "$REGISTERED_FILE"
 exit $rc

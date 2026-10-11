@@ -1,4 +1,4 @@
-"""Command dispatch: aliases from config, abbreviations, and milestone stubs."""
+"""Command dispatch: aliases from config, abbreviations, and former milestone stubs."""
 
 from conftest import VERSION, origin_version_banner
 
@@ -23,24 +23,24 @@ class TestAliases:
                      "what": "stdout"})
 
 
-class TestStubs:
-    STUBS = [
-        (["diag"], "diagnostics"),
-        (["show"], "show"),
-    ]
+class TestFormerStubs:
+    """Commands that were milestone stubs until milestone 8 now dispatch to the
+    real implementations, as on origin C++ 3.5.0 (no stubs remain)."""
 
-    def test_stub_commands_not_implemented(self, sb, check):
-        """Unported commands (incl. abbreviation `diag`) fail with exit 2. list/next were ported in milestone 6."""
-        out, exp = [], []
-        all_ok = True
-        for args, kw in self.STUBS:
-            p = sb.run(args)
-            e = hdr(sb) + "Command '%s' is not yet implemented.\n" % kw
-            ok = p.returncode == 2 and p.stdout == "" and p.stderr == e
-            all_ok &= ok
-            out.append("task %s -> exit %d\n%s" % (" ".join(args), p.returncode, p.stderr))
-            exp.append("task %s -> exit 2\n%s" % (" ".join(args), e))
-        p.stdout = "".join(out)
-        p.stderr = ""
-        p.returncode = 0 if all_ok else 2
-        check(p, ["<multiple>"], "".join(exp), "", 0)
+    def test_former_stub_commands_dispatch(self, sb, check):
+        """`diag` (abbreviation) runs diagnostics exactly like `diagnostics`; `show` prints the config table. Exit 0, no stub error."""
+        full = sb.run(["diagnostics"])
+        diag = sb.run(["diag"])
+        show = sb.run(["show"])
+        ok = (full.returncode == 0 and diag.stdout == full.stdout and diag.stderr == full.stderr
+              and "\ntask 3.5.0\n   Platform:" in diag.stdout and "Build Features" in diag.stdout
+              and show.returncode == 0 and "Config Variable" in show.stdout
+              and "abbreviation.minimum" in show.stdout
+              and "not yet implemented" not in diag.stderr + show.stderr)
+        out = "task diag -> exit %d\n%s%stask show -> exit %d\n%s" % (
+            diag.returncode, diag.stderr, diag.stdout, show.returncode, show.stderr)
+        diag.stdout = out
+        diag.stderr = ""
+        diag.returncode = 0 if (diag.returncode == 0 and show.returncode == 0) else 2
+        check(diag, ["diag", ";", "show"], None, "", 0,
+              extra={"ok": ok, "what": "dispatch"})

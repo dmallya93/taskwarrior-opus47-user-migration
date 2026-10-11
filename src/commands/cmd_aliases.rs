@@ -1,14 +1,12 @@
 //! Rust translation of `src/commands/CmdAliases.cpp`.
 //!
-//! Not yet ported: this module is filled in by milestone 8 (remaining commands).
-//!
-//! Each struct below is one C++ class from `CmdAliases.cpp`, carrying the exact
-//! metadata of its C++ constructor; `execute` is a stub returning
-//! [`TwError::NotImplemented`] until the port lands (foundation DD4).
+//! `task _aliases`: every `alias.<name>` configuration key, without its
+//! `alias.` prefix, one per line in configuration (key) order, for shell
+//! completion.
 
 use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
-use crate::error::{Result, TwError};
+use crate::error::Result;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdCompletionAliases` (`_aliases`).
@@ -50,9 +48,49 @@ impl Command for CmdCompletionAliases {
         &self.meta
     }
 
-    /// C++ `CmdCompletionAliases::execute`: not yet implemented; ported by milestone 8 (remaining
-    /// commands).
-    fn execute(&self, _context: &mut Context, _output: &mut String) -> Result<i32> {
-        Err(TwError::NotImplemented(self.meta.keyword.clone()))
+    /// C++ `CmdCompletionAliases::execute`: the name of every `alias.*`
+    /// setting, in key order, one per line.
+    fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
+        for (key, _) in &context.config {
+            // C++ `alias.first.substr (0, 6) == "alias."`, then `substr (6)`.
+            if let Some(name) = key.strip_prefix("alias.") {
+                output.push_str(name);
+                output.push('\n');
+            }
+        }
+
+        Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lists_alias_names_in_key_order() {
+        let mut context = Context::new();
+        context.config.set("alias.zz", "list");
+        context.config.set("alias.aa", "exec echo hi");
+        context.config.set("alias.", "next");
+        context.config.set("aliasx.no", "x");
+        context.config.set("xalias.no", "x");
+        let mut output = String::new();
+        let rc = CmdCompletionAliases::new()
+            .execute(&mut context, &mut output)
+            .unwrap();
+        assert_eq!(rc, 0);
+        assert_eq!(output, "\naa\nzz\n");
+    }
+
+    #[test]
+    fn no_aliases_no_output() {
+        let mut context = Context::new();
+        let mut output = String::new();
+        let rc = CmdCompletionAliases::new()
+            .execute(&mut context, &mut output)
+            .unwrap();
+        assert_eq!(rc, 0);
+        assert_eq!(output, "");
     }
 }

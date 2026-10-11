@@ -839,7 +839,7 @@ fn format_for_info(
 const S_THRESHOLD: usize = 16;
 
 /// C++ `std::sort (first, last, comp)` (libstdc++).
-fn cpp_sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], less: F) {
+pub(crate) fn cpp_sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], less: F) {
     let n = v.len();
     if n > 1 {
         let lg = (usize::BITS - 1 - n.leading_zeros()) as usize;
