@@ -6,7 +6,8 @@
 //! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
 //! `ids`/`uuids` family, `_unique` and `_zshattributes`, and the milestone 6
 //! report stack (custom reports, `sort.cpp`, `setHeaderUnderline` and the
-//! column factory), and the milestone 7 hook scripts (`Hooks.cpp`).
+//! column factory), and the milestone 7 hook scripts (`Hooks.cpp`) and
+//! `synchronize` (local, git and configuration-error paths).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -3578,4 +3579,190 @@ fn undo_reverts_an_import_and_recurrence_generation_as_one() {
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0]["status"], "recurring");
     assert!(tasks[0].get("mask").is_none(), "{:?}", tasks[0]);
+}
+
+/// `task <args>` with `rc.verbose=sync`, as (stdout, stderr, exit code).
+fn sync_task(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let mut all = vec!["rc.verbose=sync"];
+    all.extend_from_slice(args);
+    let output = env.task(&all);
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+#[test]
+fn sync_local_server_dir_between_two_data_dirs() {
+    let server = tempfile::tempdir().unwrap();
+    let dir = server.path().display().to_string();
+    let rc = format!("sync.local.server_dir={dir}\nconfirmation=off\n");
+    let first = Env::new(&rc);
+    let second = Env::new(&rc);
+
+    quiet(&first, &["add", "one"]);
+    let (out, err, code) = sync_task(&first, &["synchronize"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    assert!(
+        out.starts_with(&format!("Syncing with {dir}\nSuccess!\nSent ")),
+        "{out}"
+    );
+    assert!(out.ends_with(" local operations to the server\n"), "{out}");
+
+    // Nothing more to send: no "Sent" line. `[initialize]` is ignored.
+    assert_eq!(
+        sync_task(&second, &["sync", "initialize"]),
+        (format!("Syncing with {dir}\nSuccess!\n"), String::new(), 0)
+    );
+    let tasks = export(&second, &[]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["description"], "one");
+
+    // Changes flow back.
+    quiet(&second, &["1", "done"]);
+    sync_task(&second, &["sync"]);
+    assert_eq!(
+        sync_task(&first, &["sync"]),
+        (format!("Syncing with {dir}\nSuccess!\n"), String::new(), 0)
+    );
+    assert_eq!(export(&first, &["status:completed"]).len(), 1);
+
+    // Without the `sync` verbosity token, sync is silent.
+    assert_eq!(
+        quiet(&first, &["sync"]),
+        (String::new(), String::new(), 0)
+    );
+}
+
+#[test]
+fn sync_deprecated_origin_and_purge_on_sync() {
+    let server = tempfile::tempdir().unwrap();
+    let dir = server.path().display().to_string();
+    let env = Env::new(&format!(
+        "sync.local.server_dir={dir}\nsync.server.origin=https://u:p@h\n"
+    ));
+    assert_eq!(
+        sync_task(&env, &["sync"]),
+        (
+            format!(
+                "sync.server.origin is deprecated. Use sync.server.url instead.\nSyncing with {dir}\nSuccess!\n"
+            ),
+            String::new(),
+            0
+        )
+    );
+    assert_eq!(
+        quiet(&env, &["sync"]),
+        (
+            "sync.server.origin is deprecated. Use sync.server.url instead.\n".into(),
+            String::new(),
+            0
+        )
+    );
+
+    // purge.on-sync expires deleted tasks older than 6 months.
+    let old = r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000009","description":"old","status":"deleted","entry":"20000101T000000Z","end":"20000101T000000Z","modified":"20000101T000000Z"}"#;
+    env.write("old.json", old);
+    let path = env.path("old.json").display().to_string();
+    quiet(&env, &["import", &path]);
+    assert_eq!(export(&env, &["status:deleted"]).len(), 1);
+    quiet(&env, &["rc.purge.on-sync=1", "sync"]);
+    assert_eq!(export(&env, &["status:deleted"]).len(), 0);
+}
+
+#[test]
+fn sync_git_backend() {
+    let has_git = Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !has_git {
+        eprintln!("git not available; skipping");
+        return;
+    }
+    let repo = tempfile::tempdir().unwrap();
+    let path = repo.path().display().to_string();
+    let rc = format!(
+        "sync.git.local_path={path}\nsync.git.branch=main\nsync.encryption_secret=s3cret\n"
+    );
+    let first = Env::new(&rc);
+    let second = Env::new(&rc);
+    quiet(&first, &["add", "via git"]);
+    let (out, err, code) = sync_task(&first, &["sync"]);
+    assert_eq!((err.as_str(), code), ("", 0));
+    assert!(
+        out.starts_with(&format!(
+            "Syncing with local git repository at {path}\nSuccess!\nSent "
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        sync_task(&second, &["sync"]),
+        (
+            format!("Syncing with local git repository at {path}\nSuccess!\n"),
+            String::new(),
+            0
+        )
+    );
+    assert_eq!(export(&second, &[])[0]["description"], "via git");
+
+    // With a remote configured, the message names the remote instead
+    // (`local_only` keeps the sync away from the network).
+    assert_eq!(
+        sync_task(
+            &second,
+            &["rc.sync.git.remote=nowhere", "rc.sync.git.local_only=1", "sync"]
+        ),
+        (
+            "Syncing with git remote nowhere\nSuccess!\n".into(),
+            String::new(),
+            0
+        )
+    );
+}
+
+#[test]
+fn sync_configuration_errors() {
+    let env = Env::new("");
+    let cases: &[(&[&str], &str)] = &[
+        (&[], "No sync.* settings are configured. See task-sync(5)."),
+        (&["rc.sync.aws.bucket=b"], "sync.aws.region is required"),
+        (
+            &["rc.sync.aws.bucket=b", "rc.sync.aws.region=r"],
+            "sync.encryption_secret is required",
+        ),
+        (
+            &[
+                "rc.sync.aws.bucket=b",
+                "rc.sync.aws.region=r",
+                "rc.sync.encryption_secret=e",
+            ],
+            "exactly one method of specifying AWS credentials is required",
+        ),
+        (&["rc.sync.gcp.bucket=b"], "sync.encryption_secret is required"),
+        (
+            &["rc.sync.server.url=http://localhost:1"],
+            "sync.server.client_id and sync.encryption_secret are required",
+        ),
+        (
+            &["rc.sync.server.origin=http://localhost:1"],
+            "sync.server.client_id and sync.encryption_secret are required",
+        ),
+        (&["rc.sync.git.local_path=x"], "sync.git.branch is required"),
+        (
+            &["rc.sync.git.local_path=x", "rc.sync.git.branch=main"],
+            "sync.encryption_secret is required",
+        ),
+    ];
+    for (overrides, message) in cases {
+        let mut args = vec!["rc.verbose=nothing"];
+        args.extend_from_slice(overrides);
+        args.push("synchronize");
+        let output = env.task(&args);
+        assert_eq!(stdout(&output), "", "{overrides:?}");
+        assert_eq!(stderr(&output), format!("{message}\n"), "{overrides:?}");
+        assert_eq!(output.status.code(), Some(2), "{overrides:?}");
+    }
 }
