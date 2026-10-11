@@ -999,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 34] = [
+    const PORTED: [&str; 36] = [
         "_columns",
         "_config",
         "_get",
@@ -1022,9 +1022,11 @@ mod tests {
         "count",
         "delete",
         "denotate",
+        "duplicate",
         "done",
         "export",
         "ids",
+        "import",
         "information",
         "log",
         "modify",
@@ -1297,6 +1299,8 @@ mod tests {
                     | "denotate"
                     | "append"
                     | "prepend"
+                    | "duplicate"
+                    | "import"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
