@@ -189,11 +189,11 @@ fn no_command_with_empty_default_command() {
 #[test]
 fn stub_command_is_not_implemented() {
     let env = Env::new("");
-    let output = env.task(&["calendar"]);
+    let output = env.task(&["news"]);
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        env.override_headers() + "Command 'calendar' is not yet implemented.\n"
+        env.override_headers() + "Command 'news' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -202,10 +202,10 @@ fn stub_command_is_not_implemented() {
 fn no_override_headers_without_taskrc_taskdata() {
     let env = Env::new("");
     std::fs::copy(env.rc(), env.home().join(".taskrc")).unwrap();
-    let output = env.command(&["calendar"]).output().unwrap();
+    let output = env.command(&["news"]).output().unwrap();
     assert_eq!(
         stderr(&output),
-        "Command 'calendar' is not yet implemented.\n"
+        "Command 'news' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -3867,4 +3867,233 @@ fn purge_recurrence_template_children() {
     assert_eq!(stdout(&output), "Purged 2 tasks.\n");
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(export(&env, &["rc.recurrence=off"]).len(), 0);
+}
+
+/// `calendar <MM> <YYYY>`: the month grid (C++ `CmdCalendar::renderMonths`),
+/// week numbers (`%U` with weekstart Sunday), `weekstart=monday`,
+/// `displayweeknumber=off` and the month-number / month-name arguments.
+#[test]
+fn calendar_month_grid_layout() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\n");
+    let (out, err, rc) = quiet(&env, &["calendar", "2", "2021", "rc.calendar.monthsperline:1"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\n       February 2021      \n\
+         \x20    Su Mo Tu We Th Fr Sa\n\
+         ---- -- -- -- -- -- -- --\n\
+         \x20  5     1  2  3  4  5  6\n\
+         \x20  6  7  8  9 10 11 12 13\n\
+         \x20  7 14 15 16 17 18 19 20\n\
+         \x20  8 21 22 23 24 25 26 27\n\
+         \x20  9 28\n\n"
+    );
+    let (out, err, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "feb",
+            "2021",
+            "rc.monthsperline:1",
+            "rc.weekstart:monday",
+            "rc.displayweeknumber:off",
+        ],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\n       February 2021      \n\
+         \x20Mo Tu We Th Fr Sa Su\n\
+         \x20-- -- -- -- -- -- --\n\
+         \x20 1  2  3  4  5  6  7\n\
+         \x20 8  9 10 11 12 13 14\n\
+         \x2015 16 17 18 19 20 21\n\
+         \x2022 23 24 25 26 27 28\n\n"
+    );
+    // Three months per line at width 80, headers centred in 26 columns.
+    let (out, _, rc) = quiet(&env, &["calendar", "12", "2021"]);
+    assert_eq!(rc, 0);
+    assert!(
+        out.starts_with(
+            "\n       December 2021             January 2022              February 2022      \n"
+        ),
+        "{out:?}"
+    );
+}
+
+/// `calendar y`, `calendar YYYY`, `calendar due` and `calendar.offset`.
+#[test]
+fn calendar_range_arguments() {
+    let env = Env::new("defaultwidth=80\ndetection=off\ncalendar.monthsperline=2\n");
+    let headers = |out: &str| -> Vec<String> {
+        out.lines()
+            .filter(|l| l.contains(" 20") && l.trim_start().starts_with(char::is_alphabetic))
+            .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect()
+    };
+    let (out, err, rc) = quiet(&env, &["calendar", "2021"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        headers(&out),
+        [
+            "January 2021 February 2021",
+            "March 2021 April 2021",
+            "May 2021 June 2021",
+            "July 2021 August 2021",
+            "September 2021 October 2021",
+            "November 2021 December 2021"
+        ]
+    );
+    let (out, _, rc) = quiet(&env, &["calendar", "11", "2021", "y"]);
+    assert_eq!(rc, 0);
+    assert_eq!(headers(&out).len(), 6);
+    assert_eq!(headers(&out)[0], "November 2021 December 2021");
+    assert_eq!(headers(&out)[5], "September 2022 October 2022");
+
+    // `due`: the oldest pending due date not tagged nocal.
+    quiet(&env, &["add", "a", "due:2021-05-03"]);
+    quiet(&env, &["add", "b", "due:2020-01-03", "+nocal"]);
+    let (out, _, rc) = quiet(&env, &["calendar", "due"]);
+    assert_eq!(rc, 0);
+    assert_eq!(headers(&out), ["May 2021 June 2021"]);
+
+    // A negative offset wraps into the previous year.
+    let (out, _, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "2",
+            "2021",
+            "rc.calendar.offset:on",
+            "rc.calendar.offset.value:-3",
+        ],
+    );
+    assert_eq!(rc, 0);
+    assert_eq!(headers(&out), ["November 2020 December 2020"]);
+}
+
+/// The C++ argument errors (exit status 2 through `Context::run`).
+#[test]
+fn calendar_argument_errors() {
+    let env = Env::new("");
+    let (out, err, rc) = quiet(&env, &["calendar", "donkey"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "Could not recognize argument 'donkey'.\n", 2)
+    );
+    let (out, err, rc) = quiet(&env, &["calendar", "13"]);
+    assert_eq!(
+        (out.as_str(), err.as_str(), rc),
+        ("", "Argument '13' is not a valid month.\n", 2)
+    );
+    let (_, err, rc) = quiet(
+        &env,
+        &["calendar", "rc.calendar.details:full", "rc.calendar.details.report:nope"],
+    );
+    assert_eq!(
+        (err.as_str(), rc),
+        (
+            "The setting 'calendar.details.report' must contain a single report name.\n",
+            2
+        )
+    );
+}
+
+/// `calendar.holidays=full` with holidays from an included
+/// `doc/rc/holidays.*.rc` file (resolved through the rc include path), and
+/// a multi-day `holiday.X.start`/`.end` entry.
+#[test]
+fn calendar_holidays_table_from_include() {
+    let env = Env::new(
+        "defaultwidth=80\ndetection=off\nfontunderline=off\ninclude holidays.en-US.rc\n\
+         holiday.zz.name=Donkey week\nholiday.zz.start=20210208\nholiday.zz.end=20210212\n",
+    );
+    let (out, err, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "1",
+            "2021",
+            "rc.monthsperline:2",
+            "rc.calendar.holidays:full",
+        ],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert!(
+        out.ends_with(
+            "\nDate       Holiday\n\
+             ---------- -----------------------------------\n\
+             2021-01-01 New Year's Day\n\
+             2021-01-18 Birthday of Martin Luther King, Jr.\n\
+             2021-02-08 Start of Donkey week\n\
+             2021-02-12 End of Donkey week\n\
+             2021-02-15 Washington's Birthday\n\n"
+        ),
+        "{out:?}"
+    );
+}
+
+/// `calendar.details=full` re-runs the details report as a child `task`
+/// process (C++ `::execute`) for the displayed range, excluding `+nocal`.
+#[test]
+fn calendar_details_report() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\n");
+    quiet(&env, &["add", "shown", "due:2021-05-03"]);
+    quiet(&env, &["add", "hidden", "due:2021-05-04", "+nocal"]);
+    quiet(&env, &["add", "later", "due:2021-07-04"]);
+    let (out, err, rc) = quiet(
+        &env,
+        &[
+            "calendar",
+            "5",
+            "2021",
+            "rc.monthsperline:1",
+            "rc.calendar.details:full",
+            "rc.calendar.details.report:list",
+        ],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert!(out.contains("2021-05-03 shown"), "{out:?}");
+    assert!(!out.contains("hidden"), "{out:?}");
+    assert!(!out.contains("later"), "{out:?}");
+    assert!(out.ends_with("\n1 task\n"), "{out:?}");
+}
+
+/// Colour: the legend, weekend/holiday/due cell colours and the
+/// `color.calendar.*` settings.
+#[test]
+fn calendar_colors_and_legend() {
+    let env = Env::new(
+        "defaultwidth=80\ndetection=off\nfontunderline=off\ncolor.alternate=\n\
+         color.calendar.weekend=red\ncolor.calendar.holiday=green\ncolor.calendar.due=blue\n\
+         color.calendar.weeknumber=\ncolor.label=\n\
+         calendar.holidays=sparse\nholiday.x.name=X\nholiday.x.date=20210203\n",
+    );
+    quiet(&env, &["add", "d", "due:2099-02-04"]);
+    let (out, err, rc) = quiet(
+        &env,
+        &["calendar", "2", "2099", "rc.monthsperline:1", "rc._forcecolor:on"],
+    );
+    assert_eq!((err.as_str(), rc), ("", 0));
+    // Sunday 1 Feb 2099 is a weekend, 4 Feb is due (rc.due is forced to 0).
+    assert!(out.contains("\x1b[31m 1\x1b[0m"), "{out:?}");
+    assert!(out.contains("\x1b[34m 4\x1b[0m"), "{out:?}");
+    assert!(out.ends_with(
+        "Legend: \x1b[38;5;15;48;5;25mtoday\x1b[0m, \x1b[31mweekend\x1b[0m, \
+         \x1b[34mdue\x1b[0m, \x1b[38;5;15;48;5;1mdue-today\x1b[0m, \
+         \x1b[38;5;0;48;5;9moverdue\x1b[0m, \x1b[38;5;25;48;5;15mscheduled\x1b[0m, \
+         \x1b[32mholiday\x1b[0m, weeknumber.\n"
+    ), "{out:?}");
+    // A holiday date in 2021 is coloured green.
+    let (out, _, _) = quiet(
+        &env,
+        &["calendar", "2", "2021", "rc.monthsperline:1", "rc._forcecolor:on"],
+    );
+    assert!(out.contains("\x1b[32m 3\x1b[0m"), "{out:?}");
+    // No legend without colour or with calendar.legend=off.
+    let (out, _, _) = quiet(
+        &env,
+        &["calendar", "2", "2099", "rc._forcecolor:on", "rc.calendar.legend:off"],
+    );
+    assert!(!out.contains("Legend"), "{out:?}");
 }
