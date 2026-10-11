@@ -43,7 +43,9 @@ pub fn utf8_codepoint(input: &str) -> u32 {
     let length = input.len();
 
     // U+xxxx, \uxxxx
-    if length >= 6 && ((input[0] == b'U' && input[1] == b'+') || (input[0] == b'\\' && input[1] == b'u')) {
+    if length >= 6
+        && ((input[0] == b'U' && input[1] == b'+') || (input[0] == b'\\' && input[1] == b'u'))
+    {
         xdigit(input[2]) << 12 | xdigit(input[3]) << 8 | xdigit(input[4]) << 4 | xdigit(input[5])
     } else if length >= 4 {
         xdigit(input[0]) << 12 | xdigit(input[1]) << 8 | xdigit(input[2]) << 4 | xdigit(input[3])
@@ -110,7 +112,9 @@ pub fn utf8_character(codepoint: u32) -> String {
         return String::new();
     }
 
-    char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER).to_string()
+    char::from_u32(codepoint)
+        .unwrap_or(char::REPLACEMENT_CHARACTER)
+        .to_string()
 }
 
 /// C++ `utf8_sequence`: the number of bytes in the UTF-8 sequence introduced
@@ -345,7 +349,8 @@ mod tests {
 
     const ASCII_TEXT_COLOR: &str = "This \x1b[1mis\x1b[0m a test";
     const UTF8_TEXT_COLOR: &str = "m\u{e1}s \x1b[1ms\u{e1}bado\x1b[0m mi\u{e9}rcoles";
-    const UTF8_WIDE_TEXT_COLOR: &str = "\u{6539}\x1b[1m\u{53d8}\u{5404}\u{79cd}\x1b[0m\u{989c}\u{8272}";
+    const UTF8_WIDE_TEXT_COLOR: &str =
+        "\u{6539}\x1b[1m\u{53d8}\u{5404}\u{79cd}\x1b[0m\u{989c}\u{8272}";
 
     #[test]
     fn test_strings_match_cpp() {
@@ -380,7 +385,11 @@ mod tests {
         // unsigned int utf8_length (const std::string&);
         assert_eq!(utf8_length(ASCII_TEXT) as i32, 14, "ASCII utf8_length");
         assert_eq!(utf8_length(UTF8_TEXT) as i32, 20, "UTF8 utf8_length");
-        assert_eq!(utf8_length(UTF8_WIDE_TEXT) as i32, 6, "UTF8 wide utf8_length");
+        assert_eq!(
+            utf8_length(UTF8_WIDE_TEXT) as i32,
+            6,
+            "UTF8 wide utf8_length"
+        );
     }
 
     #[test]
@@ -388,23 +397,51 @@ mod tests {
         // unsigned int utf8_width (const std::string&);
         assert_eq!(utf8_width(ASCII_TEXT) as i32, 14, "ASCII utf8_width");
         assert_eq!(utf8_width(UTF8_TEXT) as i32, 20, "UTF8 utf8_width");
-        assert_eq!(utf8_width(UTF8_WIDE_TEXT) as i32, 12, "UTF8 wide utf8_width");
+        assert_eq!(
+            utf8_width(UTF8_WIDE_TEXT) as i32,
+            12,
+            "UTF8 wide utf8_width"
+        );
     }
 
     #[test]
     fn text_length() {
         // unsigned int utf8_text_length (const std::string&);
-        assert_eq!(utf8_text_length(ASCII_TEXT_COLOR) as i32, 14, "ASCII utf8_text_length");
-        assert_eq!(utf8_text_length(UTF8_TEXT_COLOR) as i32, 20, "UTF8 utf8_text_length");
-        assert_eq!(utf8_text_length(UTF8_WIDE_TEXT_COLOR) as i32, 6, "UTF8 wide utf8_text_length");
+        assert_eq!(
+            utf8_text_length(ASCII_TEXT_COLOR) as i32,
+            14,
+            "ASCII utf8_text_length"
+        );
+        assert_eq!(
+            utf8_text_length(UTF8_TEXT_COLOR) as i32,
+            20,
+            "UTF8 utf8_text_length"
+        );
+        assert_eq!(
+            utf8_text_length(UTF8_WIDE_TEXT_COLOR) as i32,
+            6,
+            "UTF8 wide utf8_text_length"
+        );
     }
 
     #[test]
     fn text_width() {
         // unsigned int utf8_text_width (const std::string&);
-        assert_eq!(utf8_text_width(ASCII_TEXT_COLOR) as i32, 14, "ASCII utf8_text_width");
-        assert_eq!(utf8_text_width(UTF8_TEXT_COLOR) as i32, 20, "UTF8 utf8_text_width");
-        assert_eq!(utf8_text_width(UTF8_WIDE_TEXT_COLOR) as i32, 12, "UTF8 wide utf8_text_width");
+        assert_eq!(
+            utf8_text_width(ASCII_TEXT_COLOR) as i32,
+            14,
+            "ASCII utf8_text_width"
+        );
+        assert_eq!(
+            utf8_text_width(UTF8_TEXT_COLOR) as i32,
+            20,
+            "UTF8 utf8_text_width"
+        );
+        assert_eq!(
+            utf8_text_width(UTF8_WIDE_TEXT_COLOR) as i32,
+            12,
+            "UTF8 wide utf8_text_width"
+        );
     }
 
     #[test]
@@ -412,7 +449,11 @@ mod tests {
         // const std::string utf8_substr (const std::string&, unsigned int, unsigned int length = 0);
         assert_eq!(utf8_substr(ASCII_TEXT, 0, 2), "Th", "ASCII utf8_substr");
         assert_eq!(utf8_substr(UTF8_TEXT, 0, 2), "má", "UTF8 utf8_substr");
-        assert_eq!(utf8_substr(UTF8_WIDE_TEXT, 0, 2), "改变", "UTF8 wide utf8_substr");
+        assert_eq!(
+            utf8_substr(UTF8_WIDE_TEXT, 0, 2),
+            "改变",
+            "UTF8 wide utf8_substr"
+        );
     }
 
     #[test]
@@ -538,7 +579,10 @@ mod tests {
         assert_eq!(utf8_character(0xE9), "\u{e9}");
         assert_eq!(utf8_character(0x263A), "\u{263a}");
         assert_eq!(utf8_character(0x1F600), "\u{1f600}");
-        assert_eq!(utf8_character(0x10FFFF).as_bytes(), [0xF4, 0x8F, 0xBF, 0xBF]);
+        assert_eq!(
+            utf8_character(0x10FFFF).as_bytes(),
+            [0xF4, 0x8F, 0xBF, 0xBF]
+        );
         // NUL and out-of-range code points give an empty string, as in C++.
         assert_eq!(utf8_character(0), "");
         assert_eq!(utf8_character(0x110000), "");

@@ -44,7 +44,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs03.get_bool(), true, "untrue !~ 'foo' --> true");
 
     let vs04 = Variant::from_bool(vs0.op_nomatch(&v4, &task)?);
-    t.is(vs04.type_(), Type::Boolean, "untrue !~ 1234567890 --> boolean");
+    t.is(
+        vs04.type_(),
+        Type::Boolean,
+        "untrue !~ 1234567890 --> boolean",
+    );
     t.is(vs04.get_bool(), true, "untrue !~ 1234567890 --> true");
 
     let vs05 = Variant::from_bool(vs0.op_nomatch(&v5, &task)?);
@@ -68,7 +72,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs13.get_bool(), true, "8421 !~ 'foo' --> true");
 
     let vs14 = Variant::from_bool(vs1.op_nomatch(&v4, &task)?);
-    t.is(vs14.type_(), Type::Boolean, "8421 !~ 1234567890 --> boolean");
+    t.is(
+        vs14.type_(),
+        Type::Boolean,
+        "8421 !~ 1234567890 --> boolean",
+    );
     t.is(vs14.get_bool(), true, "8421 !~ 1234567890 --> true");
 
     let vs15 = Variant::from_bool(vs1.op_nomatch(&v5, &task)?);
@@ -92,7 +100,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs23.get_bool(), true, "3.14159 !~ 'foo' --> true");
 
     let vs24 = Variant::from_bool(vs2.op_nomatch(&v4, &task)?);
-    t.is(vs24.type_(), Type::Boolean, "3.14159 !~ 1234567890 --> boolean");
+    t.is(
+        vs24.type_(),
+        Type::Boolean,
+        "3.14159 !~ 1234567890 --> boolean",
+    );
     t.is(vs24.get_bool(), true, "3.14159 !~ 1234567890 --> true");
 
     let vs25 = Variant::from_bool(vs2.op_nomatch(&v5, &task)?);
@@ -116,7 +128,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs33.get_bool(), false, "foolish !~ 'foo' --> false");
 
     let vs34 = Variant::from_bool(vs3.op_nomatch(&v4, &task)?);
-    t.is(vs34.type_(), Type::Boolean, "foolish !~ 1234567890 --> boolean");
+    t.is(
+        vs34.type_(),
+        Type::Boolean,
+        "foolish !~ 1234567890 --> boolean",
+    );
     t.is(vs34.get_bool(), true, "foolish !~ 1234567890 --> true");
 
     let vs35 = Variant::from_bool(vs3.op_nomatch(&v5, &task)?);
@@ -214,7 +230,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v33.get_bool(), false, "'foo' !~ 'foo' --> false");
 
     let v34 = Variant::from_bool(v3.op_nomatch(&v4, &task)?);
-    t.is(v34.type_(), Type::Boolean, "'foo' !~ 1234567890 --> boolean");
+    t.is(
+        v34.type_(),
+        Type::Boolean,
+        "'foo' !~ 1234567890 --> boolean",
+    );
     t.is(v34.get_bool(), true, "'foo' !~ 1234567890 --> true");
 
     let v35 = Variant::from_bool(v3.op_nomatch(&v5, &task)?);
@@ -234,11 +254,19 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v42.get_bool(), true, "1234567890 !~ 3.14 --> true");
 
     let v43 = Variant::from_bool(v4.op_nomatch(&v3, &task)?);
-    t.is(v43.type_(), Type::Boolean, "1234567890 !~ 'foo' --> boolean");
+    t.is(
+        v43.type_(),
+        Type::Boolean,
+        "1234567890 !~ 'foo' --> boolean",
+    );
     t.is(v43.get_bool(), true, "1234567890 !~ 'foo' --> true");
 
     let v44 = Variant::from_bool(v4.op_nomatch(&v4, &task)?);
-    t.is(v44.type_(), Type::Boolean, "1234567890 !~ 1234567890 --> boolean");
+    t.is(
+        v44.type_(),
+        Type::Boolean,
+        "1234567890 !~ 1234567890 --> boolean",
+    );
     t.is(v44.get_bool(), false, "1234567890 !~ 1234567890 --> false");
 
     let v45 = Variant::from_bool(v4.op_nomatch(&v5, &task)?);

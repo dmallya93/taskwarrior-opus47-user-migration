@@ -6,7 +6,8 @@
 
 use crate::columns::col_type_string::ColumnTypeString;
 use crate::columns::column::{
-    column_base, label_prefix, render_string_right, Column, ModifyEnv, RenderEnv, MODIFICATION_LABEL,
+    column_base, label_prefix, render_string_right, Column, ModifyEnv, RenderEnv,
+    MODIFICATION_LABEL,
 };
 use crate::error::{Result, TwError};
 use crate::shared::color::Color;
@@ -91,9 +92,19 @@ impl Column for ColumnRecur {
         let style = self.style();
         if task.has(name) {
             if style == "default" || style == "duration" {
-                render_string_right(lines, width, color, &Duration::from_string(task.get_ref(name)).format_iso());
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &Duration::from_string(task.get_ref(name)).format_iso(),
+                );
             } else if style == "indicator" {
-                render_string_right(lines, width, color, &env.config().get("recurrence.indicator"));
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &env.config().get("recurrence.indicator"),
+                );
             }
         }
         Ok(())
@@ -120,7 +131,10 @@ impl Column for ColumnRecur {
             env.debug(&format!("{label}{name} <-- '{value}'"));
             task.set(name, value);
         } else {
-            return Err(TwError::Message(format("The duration value '{1}' is not supported.", &[&value])));
+            return Err(TwError::Message(format(
+                "The duration value '{1}' is not supported.",
+                &[&value],
+            )));
         }
 
         Ok(())
@@ -159,14 +173,29 @@ mod tests {
     fn duration_style() {
         let mut env = FakeRenderEnv::with_config(&[("recurrence.indicator", "R")]);
         let none = Color::new();
-        assert_eq!(run("recur", &mut recurring("weekly"), 4, &none, &mut env), ((3, 3), vec![" P7D".to_string()]));
         assert_eq!(
-            run("recur.duration", &mut recurring("monthly"), 4, &none, &mut env),
+            run("recur", &mut recurring("weekly"), 4, &none, &mut env),
+            ((3, 3), vec![" P7D".to_string()])
+        );
+        assert_eq!(
+            run(
+                "recur.duration",
+                &mut recurring("monthly"),
+                4,
+                &none,
+                &mut env
+            ),
             ((4, 4), vec!["P30D".to_string()])
         );
-        assert_eq!(run("recur", &mut recurring("2h"), 4, &none, &mut env), ((4, 4), vec!["PT2H".to_string()]));
+        assert_eq!(
+            run("recur", &mut recurring("2h"), 4, &none, &mut env),
+            ((4, 4), vec!["PT2H".to_string()])
+        );
         // An unparsable period is a zero duration.
-        assert_eq!(run("recur", &mut recurring("bogus"), 4, &none, &mut env), ((4, 4), vec!["PT0S".to_string()]));
+        assert_eq!(
+            run("recur", &mut recurring("bogus"), 4, &none, &mut env),
+            ((4, 4), vec!["PT0S".to_string()])
+        );
         let red = Color::parse("red").unwrap();
         assert_eq!(
             run("recur", &mut recurring("daily"), 4, &red, &mut env).1,
@@ -179,16 +208,34 @@ mod tests {
         let mut env = FakeRenderEnv::with_config(&[("recurrence.indicator", "R")]);
         let none = Color::new();
         assert_eq!(
-            run("recur.indicator", &mut recurring("weekly"), 1, &none, &mut env),
+            run(
+                "recur.indicator",
+                &mut recurring("weekly"),
+                1,
+                &none,
+                &mut env
+            ),
             ((1, 1), vec!["R".to_string()])
         );
         assert_eq!(
-            run("recur.indicator", &mut recurring("weekly"), 3, &none, &mut env),
+            run(
+                "recur.indicator",
+                &mut recurring("weekly"),
+                3,
+                &none,
+                &mut env
+            ),
             ((1, 1), vec!["  R".to_string()])
         );
         env.config.set("recurrence.indicator", "\u{21bb}");
         assert_eq!(
-            run("recur.indicator", &mut recurring("weekly"), 2, &none, &mut env),
+            run(
+                "recur.indicator",
+                &mut recurring("weekly"),
+                2,
+                &none,
+                &mut env
+            ),
             ((1, 1), vec![" \u{21bb}".to_string()])
         );
     }
@@ -197,7 +244,16 @@ mod tests {
     fn not_recurring() {
         let mut env = FakeRenderEnv::with_config(&[("recurrence.indicator", "R")]);
         for style in ["duration", "indicator"] {
-            assert_eq!(run(&format!("recur.{style}"), &mut Task::new(), 3, &Color::new(), &mut env), ((0, 0), vec![]));
+            assert_eq!(
+                run(
+                    &format!("recur.{style}"),
+                    &mut Task::new(),
+                    3,
+                    &Color::new(),
+                    &mut env
+                ),
+                ((0, 0), vec![])
+            );
         }
     }
 }

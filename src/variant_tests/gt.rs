@@ -129,7 +129,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v43.get_bool(), true, "1234567890 > 'foo' --> true");
 
     let v44 = Variant::from_bool(v4.op_gt(&v4)?);
-    t.is(v44.type_(), Type::Boolean, "1234567890 > 1234567890 --> boolean");
+    t.is(
+        v44.type_(),
+        Type::Boolean,
+        "1234567890 > 1234567890 --> boolean",
+    );
     t.is(v44.get_bool(), false, "1234567890 > 1234567890 --> false");
 
     let v45 = Variant::from_bool(v4.op_gt(&v5)?);

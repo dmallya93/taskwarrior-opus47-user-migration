@@ -352,7 +352,11 @@ pub fn get_dom_task(ctx: &mut Context, name: &str, task: Option<&Task>) -> Resul
 
     let size = elements.len();
 
-    let canonical = if size == 1 || size == 2 { ctx.cli2.canonicalize("attribute", &elements[0]) } else { None };
+    let canonical = if size == 1 || size == 2 {
+        ctx.cli2.canonicalize("attribute", &elements[0])
+    } else {
+        None
+    };
     if let Some(canonical) = canonical {
         // Now that 'ref' is the contextual task, and any ID/UUID is chopped off the
         // elements vector, DOM resolution is now simple.
@@ -361,13 +365,17 @@ pub fn get_dom_task(ctx: &mut Context, name: &str, task: Option<&Task>) -> Resul
         }
 
         if size == 1 && canonical == "urgency" {
-            return Ok(Some(Variant::from_real(f64::from(reference.urgency_c(ctx)?))));
+            return Ok(Some(Variant::from_real(f64::from(
+                reference.urgency_c(ctx)?,
+            ))));
         }
 
         // Special handling of status required for virtual waiting status
         // implementation. Remove in 3.0.0.
         if size == 1 && canonical == "status" {
-            return Ok(Some(Variant::from_string(Task::status_to_text(reference.get_status()?))));
+            return Ok(Some(Variant::from_string(Task::status_to_text(
+                reference.get_status()?,
+            ))));
         }
 
         // The "tags" property is deprecated, but it is documented as part of the DOM, so simulate it.
@@ -417,7 +425,11 @@ pub fn get_dom_task(ctx: &mut Context, name: &str, task: Option<&Task>) -> Resul
 
         if size == 2 && canonical == "tags" {
             let has = reference.has_tag(&elements[1], ctx)?;
-            return Ok(Some(Variant::from_string(if has { &elements[1] } else { "" })));
+            return Ok(Some(Variant::from_string(if has {
+                &elements[1]
+            } else {
+                ""
+            })));
         }
 
         if size == 2 && column.as_ref().is_some_and(|c| c.type_() == "date") {
@@ -445,7 +457,10 @@ pub fn get_dom_task(ctx: &mut Context, name: &str, task: Option<&Task>) -> Resul
                 if elements[2] == "entry" {
                     // annotation_1234567890
                     // 0          ^11
-                    return Ok(Some(Variant::from_time(strtoll(&key[11..]), VariantType::Date)?));
+                    return Ok(Some(Variant::from_time(
+                        strtoll(&key[11..]),
+                        VariantType::Date,
+                    )?));
                 } else if elements[2] == "description" {
                     return Ok(Some(Variant::from_string(description)));
                 }
@@ -528,14 +543,20 @@ impl<'a> ContextResolver<'a> {
     /// clone).
     pub fn new(ctx: &'a mut Context) -> Self {
         let task = ctx.current_task.clone().map(ResolverTask::Shared);
-        ContextResolver { ctx: RefCell::new(ctx), task }
+        ContextResolver {
+            ctx: RefCell::new(ctx),
+            task,
+        }
     }
 
     /// `domSource` with an explicit contextual task (C++ code that sets
     /// `currentTask` around an evaluation, e.g. `Filter::subset`), or
     /// `None` for a null `currentTask` (e.g. `Eval::compileExpression`).
     pub fn with_task(ctx: &'a mut Context, task: Option<&'a Task>) -> Self {
-        ContextResolver { ctx: RefCell::new(ctx), task: task.map(ResolverTask::Borrowed) }
+        ContextResolver {
+            ctx: RefCell::new(ctx),
+            task: task.map(ResolverTask::Borrowed),
+        }
     }
 
     /// The Context, e.g. to read it between evaluations.
@@ -576,7 +597,10 @@ impl DomResolver for ContextResolver<'_> {
 /// runs against the resolver's Context.
 impl VariantTask for ContextResolver<'_> {
     fn get_annotations(&self) -> BTreeMap<String, String> {
-        self.task.as_ref().map(|t| t.get().get_annotations()).unwrap_or_default()
+        self.task
+            .as_ref()
+            .map(|t| t.get().get_annotations())
+            .unwrap_or_default()
     }
 
     fn has_tag(&self, tag: &str) -> Result<bool> {
@@ -655,12 +679,16 @@ impl Dom {
 
     /// C++ `DOM::addSource`.
     pub fn add_source(&mut self, reference: &str, provider: Provider) {
-        self.node.get_or_insert_with(|| Box::new(Node::new())).add_source(reference, provider);
+        self.node
+            .get_or_insert_with(|| Box::new(Node::new()))
+            .add_source(reference, provider);
     }
 
     /// C++ `DOM::valid`.
     pub fn valid(&self, reference: &str) -> bool {
-        self.node.as_ref().is_some_and(|node| node.find(reference).is_some())
+        self.node
+            .as_ref()
+            .is_some_and(|node| node.find(reference).is_some())
     }
 
     /// C++ `DOM::get`: the provider's value, or `""` when the reference has
@@ -726,14 +754,21 @@ impl Default for Node {
 impl Node {
     /// C++ `DOM::Node ()` (member initialisers).
     pub fn new() -> Self {
-        Node { name: "Unknown".to_string(), provider: None, branches: Vec::new() }
+        Node {
+            name: "Unknown".to_string(),
+            provider: None,
+            branches: Vec::new(),
+        }
     }
 
     /// C++ `DOM::Node::addSource`.
     pub fn add_source(&mut self, reference: &str, provider: Provider) {
         let mut cursor = self;
         for element in Dom::decompose_reference(reference) {
-            let position = cursor.branches.iter().position(|branch| branch.name == element);
+            let position = cursor
+                .branches
+                .iter()
+                .position(|branch| branch.name == element);
             cursor = match position {
                 Some(index) => &mut cursor.branches[index],
                 None => {
@@ -813,7 +848,11 @@ impl Node {
 
     /// C++ `DOM::Node::dump`.
     pub fn dump(&self) -> String {
-        format!("DOM::Node ({} nodes)\n{}", self.count(), self.dump_node(self, 1))
+        format!(
+            "DOM::Node ({} nodes)\n{}",
+            self.count(),
+            self.dump_node(self, 1)
+        )
     }
 }
 

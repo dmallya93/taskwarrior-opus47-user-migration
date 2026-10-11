@@ -21,7 +21,8 @@ impl CmdZshAttributes {
             meta: CommandMeta {
                 keyword: "_zshattributes".into(),
                 usage: "task          _zshattributes".into(),
-                description: "Generates a list of all attributes, for zsh autocompletion purposes".into(),
+                description: "Generates a list of all attributes, for zsh autocompletion purposes"
+                    .into(),
                 read_only: true,
                 displays_id: false,
                 needs_gc: false,

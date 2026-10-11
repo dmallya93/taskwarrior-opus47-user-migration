@@ -98,7 +98,12 @@ pub fn feedback_affected_count(ctx: &mut Context, effect: &str, quantity: i32) {
 }
 
 /// [`feedback_affected_count`] writing to `out` (C++ `std::cout`).
-pub fn feedback_affected_count_to(ctx: &mut Context, effect: &str, quantity: i32, out: &mut dyn Write) {
+pub fn feedback_affected_count_to(
+    ctx: &mut Context,
+    effect: &str,
+    quantity: i32,
+    out: &mut dyn Write,
+) {
     if ctx.verbose("affected") {
         let _ = writeln!(out, "{}", format(effect, &[&quantity]));
     }
@@ -112,9 +117,18 @@ pub fn feedback_affected_task(ctx: &mut Context, effect: &str, task: &Task) {
 }
 
 /// [`feedback_affected_task`] writing to `out` (C++ `std::cout`).
-pub fn feedback_affected_task_to(ctx: &mut Context, effect: &str, task: &Task, out: &mut dyn Write) {
+pub fn feedback_affected_task_to(
+    ctx: &mut Context,
+    effect: &str,
+    task: &Task,
+    out: &mut dyn Write,
+) {
     if ctx.verbose("affected") {
-        let _ = writeln!(out, "{}", format(effect, &[&task.identifier(true), &task.get("description")]));
+        let _ = writeln!(
+            out,
+            "{}",
+            format(effect, &[&task.identifier(true), &task.get("description")])
+        );
     }
 }
 
@@ -229,10 +243,20 @@ pub fn feedback_unblocked_to(ctx: &mut Context, task: &Task, out: &mut dyn Write
             let blocking = i.get_dependency_tasks(&mut ctx.tdb2)?;
             if blocking.is_empty() {
                 if i.id != 0 {
-                    let _ = writeln!(out, "{}", format("Unblocked {1} '{2}'.", &[&i.id, &i.get("description")]));
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        format("Unblocked {1} '{2}'.", &[&i.id, &i.get("description")])
+                    );
                 } else {
-                    let _ =
-                        writeln!(out, "{}", format("Unblocked {1} '{2}'.", &[&i.get("uuid"), &i.get("description")]));
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        format(
+                            "Unblocked {1} '{2}'.",
+                            &[&i.get("uuid"), &i.get("description")]
+                        )
+                    );
                 }
             }
         }
@@ -310,13 +334,19 @@ pub fn on_project_change(ctx: &mut Context, task: &Task, scope: bool) -> Result<
             count_done * 100 / (count_done + count_pending)
         };
 
-        msg.push_str(&format("Project '{1}' is {2}% complete", &[&project, &percentage]));
+        msg.push_str(&format(
+            "Project '{1}' is {2}% complete",
+            &[&project, &percentage],
+        ));
         msg.push(' ');
 
         if count_pending == 1 && count_done == 0 {
             msg.push_str(&format("({1} task remaining).", &[&count_pending]));
         } else {
-            msg.push_str(&format("({1} of {2} tasks remaining).", &[&count_pending, &(count_pending + count_done)]));
+            msg.push_str(&format(
+                "({1} of {2} tasks remaining).",
+                &[&count_pending, &(count_pending + count_done)],
+            ));
         }
     }
 

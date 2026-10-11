@@ -103,8 +103,11 @@ impl Command for CmdReports {
         for report in &reports {
             let row = view.add_row();
             view.set(row, 0, report);
-            let description =
-                context.commands.get(report).map(|command| command.description().to_string()).unwrap_or_default();
+            let description = context
+                .commands
+                .get(report)
+                .map(|command| command.description().to_string())
+                .unwrap_or_default();
             view.set(row, 1, &description);
         }
 
@@ -129,7 +132,12 @@ mod tests {
         let mut context = Context::new();
         context
             .config
-            .parse(crate::context::CONFIGURATION_DEFAULTS, 1, &[crate::context::task_rcdir()], "")
+            .parse(
+                crate::context::CONFIGURATION_DEFAULTS,
+                1,
+                &[crate::context::task_rcdir()],
+                "",
+            )
             .unwrap();
         for (key, value) in [("defaultwidth", "80"), ("detection", "off")] {
             context.config.set(key, value);
@@ -150,24 +158,46 @@ mod tests {
             ("report.aaa.description", "My report"),
         ]);
         let mut output = String::new();
-        assert_eq!(CmdReports::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdReports::new()
+                .execute(&mut context, &mut output)
+                .unwrap(),
+            0
+        );
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines[0], "");
         assert_eq!(lines[1], "Report           Description");
-        assert_eq!(lines[2], "---------------- --------------------------------------------------");
+        assert_eq!(
+            lines[2],
+            "---------------- --------------------------------------------------"
+        );
         assert_eq!(lines[3], "aaa              My report");
         assert_eq!(lines[4], "active           Active tasks");
-        assert!(lines.contains(&"burndown.annual  Shows a graphical burndown chart, by annual"), "{output}");
-        assert!(lines.contains(&"next             Most urgent tasks"), "{output}");
-        assert!(output.ends_with("waiting          Waiting (hidden) tasks\n\n30 reports\n"), "{output}");
+        assert!(
+            lines.contains(&"burndown.annual  Shows a graphical burndown chart, by annual"),
+            "{output}"
+        );
+        assert!(
+            lines.contains(&"next             Most urgent tasks"),
+            "{output}"
+        );
+        assert!(
+            output.ends_with("waiting          Waiting (hidden) tasks\n\n30 reports\n"),
+            "{output}"
+        );
     }
 
     #[test]
     fn reports_without_blank_lines() {
         let mut context = context(&[("verbose", "nothing"), ("fontunderline", "off")]);
         let mut output = String::new();
-        CmdReports::new().execute(&mut context, &mut output).unwrap();
+        CmdReports::new()
+            .execute(&mut context, &mut output)
+            .unwrap();
         assert!(output.starts_with("Report "), "{output:?}");
-        assert!(output.ends_with("Waiting (hidden) tasks\n29 reports\n"), "{output:?}");
+        assert!(
+            output.ends_with("Waiting (hidden) tasks\n29 reports\n"),
+            "{output:?}"
+        );
     }
 }

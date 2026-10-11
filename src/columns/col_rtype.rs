@@ -6,7 +6,9 @@
 //! `Task::modify` never calls it).
 
 use crate::columns::col_type_string::ColumnTypeString;
-use crate::columns::column::{column_base, label_prefix, render_string_right, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, label_prefix, render_string_right, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::shared::configuration::Configuration;
@@ -148,7 +150,13 @@ mod tests {
             ((8, 8), vec!["  periodic".to_string()])
         );
         assert_eq!(
-            run("rtype.default", &mut with("rtype", "chained"), 7, &none, &mut env),
+            run(
+                "rtype.default",
+                &mut with("rtype", "chained"),
+                7,
+                &none,
+                &mut env
+            ),
             ((7, 7), vec!["chained".to_string()])
         );
         let red = Color::parse("red").unwrap();
@@ -163,23 +171,53 @@ mod tests {
         let mut env = FakeRenderEnv::with_config(&[("rtype.indicator", "R")]);
         let none = Color::new();
         assert_eq!(
-            run("rtype.indicator", &mut with("rtype", "periodic"), 1, &none, &mut env),
+            run(
+                "rtype.indicator",
+                &mut with("rtype", "periodic"),
+                1,
+                &none,
+                &mut env
+            ),
             ((1, 1), vec!["P".to_string()])
         );
         assert_eq!(
-            run("rtype.indicator", &mut with("rtype", "chained"), 3, &none, &mut env),
+            run(
+                "rtype.indicator",
+                &mut with("rtype", "chained"),
+                3,
+                &none,
+                &mut env
+            ),
             ((1, 1), vec!["  C".to_string()])
         );
         // C++ `std::string::operator[] (0)` on an empty value is the NUL, of
         // display width 0, so it is padded.
-        assert_eq!(run("rtype.indicator", &mut with("rtype", ""), 1, &none, &mut env), ((1, 1), vec![" \0".to_string()]));
+        assert_eq!(
+            run(
+                "rtype.indicator",
+                &mut with("rtype", ""),
+                1,
+                &none,
+                &mut env
+            ),
+            ((1, 1), vec![" \0".to_string()])
+        );
     }
 
     #[test]
     fn no_rtype() {
         let mut env = FakeRenderEnv::with_config(&[("rtype.indicator", "R")]);
         for style in ["default", "indicator"] {
-            assert_eq!(run(&format!("rtype.{style}"), &mut Task::new(), 3, &Color::new(), &mut env), ((0, 0), vec![]));
+            assert_eq!(
+                run(
+                    &format!("rtype.{style}"),
+                    &mut Task::new(),
+                    3,
+                    &Color::new(),
+                    &mut env
+                ),
+                ((0, 0), vec![])
+            );
         }
     }
 }

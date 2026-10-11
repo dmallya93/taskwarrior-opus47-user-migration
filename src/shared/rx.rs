@@ -112,7 +112,8 @@ pub const BACKREF_UNSUPPORTED: &str = "Back-references are not supported in regu
 
 /// Error for a lookahead assertion, valid in libstdc++ but unsupported by the
 /// `regex` crate (see the module-level `Deviation:`).
-pub const LOOKAHEAD_UNSUPPORTED: &str = "Lookahead assertions are not supported in regular expressions.";
+pub const LOOKAHEAD_UNSUPPORTED: &str =
+    "Lookahead assertions are not supported in regular expressions.";
 
 /// libstdc++ `regex_error (error_space)` text.
 const NFA_LIMIT: &str = "Number of NFA states exceeds limit. Please use shorter regex string, or use smaller brace expression, or make _GLIBCXX_REGEX_STATE_LIMIT larger.";
@@ -137,7 +138,11 @@ pub struct RX {
 impl Default for RX {
     /// C++ `RX::RX () = default`: empty pattern, `_case_sensitive {false}`.
     fn default() -> Self {
-        RX { compiled: OnceCell::new(), pattern: String::new(), case_sensitive: false }
+        RX {
+            compiled: OnceCell::new(),
+            pattern: String::new(),
+            case_sensitive: false,
+        }
     }
 }
 
@@ -145,7 +150,11 @@ impl Clone for RX {
     /// C++ `RX (const RX&)` / `operator=`: copies pattern and flag, not the
     /// compiled regex (`_compiled = false`).
     fn clone(&self) -> Self {
-        RX { compiled: OnceCell::new(), pattern: self.pattern.clone(), case_sensitive: self.case_sensitive }
+        RX {
+            compiled: OnceCell::new(),
+            pattern: self.pattern.clone(),
+            case_sensitive: self.case_sensitive,
+        }
     }
 }
 
@@ -175,7 +184,11 @@ impl RX {
     /// compilation is deferred to the first match, or forced with
     /// [`RX::compile`], which returns the error C++ would have thrown.
     pub fn new(pattern: impl Into<String>, case_sensitive: bool) -> Self {
-        RX { compiled: OnceCell::new(), pattern: pattern.into(), case_sensitive }
+        RX {
+            compiled: OnceCell::new(),
+            pattern: pattern.into(),
+            case_sensitive,
+        }
     }
 
     /// C++ `RX (const std::string& pattern)`: `case_sensitive = true`.
@@ -223,7 +236,9 @@ impl RX {
     pub fn matches_captures(&self, matches: &mut Vec<String>, text: &str) -> Result<bool> {
         let re = self.regex()?;
         let bytes = text.as_bytes();
-        for_each_match(re, bytes, |s, e| matches.push(String::from_utf8_lossy(&bytes[s..e]).into_owned()));
+        for_each_match(re, bytes, |s, e| {
+            matches.push(String::from_utf8_lossy(&bytes[s..e]).into_owned())
+        });
         Ok(!matches.is_empty())
     }
 
@@ -233,7 +248,12 @@ impl RX {
     /// Offsets are byte offsets and, as in C++, can fall inside a UTF-8
     /// sequence when the pattern matches part of a multi-byte character
     /// (e.g. `.`), so check `str::is_char_boundary` before slicing.
-    pub fn matches_offsets(&self, start: &mut Vec<i32>, end: &mut Vec<i32>, text: &str) -> Result<bool> {
+    pub fn matches_offsets(
+        &self,
+        start: &mut Vec<i32>,
+        end: &mut Vec<i32>,
+        text: &str,
+    ) -> Result<bool> {
         let re = self.regex()?;
         // C++ `push_back (it->position ())` narrows `ptrdiff_t` to `int`.
         for_each_match(re, text.as_bytes(), |s, e| {
@@ -360,25 +380,73 @@ struct ClassMask {
 fn lookup_classname(name: &[u8], icase: bool) -> Option<ClassMask> {
     let lower: Vec<u8> = name.iter().map(u8::to_ascii_lowercase).collect();
     let mask = match lower.as_slice() {
-        b"d" => ClassMask { base: IS_DIGIT, under: false },
-        b"w" => ClassMask { base: MASK_ALNUM, under: true },
-        b"s" => ClassMask { base: IS_SPACE, under: false },
-        b"alnum" => ClassMask { base: MASK_ALNUM, under: false },
-        b"alpha" => ClassMask { base: IS_ALPHA, under: false },
-        b"blank" => ClassMask { base: IS_BLANK, under: false },
-        b"cntrl" => ClassMask { base: IS_CNTRL, under: false },
-        b"digit" => ClassMask { base: IS_DIGIT, under: false },
-        b"graph" => ClassMask { base: MASK_GRAPH, under: false },
-        b"lower" => ClassMask { base: IS_LOWER, under: false },
-        b"print" => ClassMask { base: IS_PRINT, under: false },
-        b"punct" => ClassMask { base: IS_PUNCT, under: false },
-        b"space" => ClassMask { base: IS_SPACE, under: false },
-        b"upper" => ClassMask { base: IS_UPPER, under: false },
-        b"xdigit" => ClassMask { base: IS_XDIGIT, under: false },
+        b"d" => ClassMask {
+            base: IS_DIGIT,
+            under: false,
+        },
+        b"w" => ClassMask {
+            base: MASK_ALNUM,
+            under: true,
+        },
+        b"s" => ClassMask {
+            base: IS_SPACE,
+            under: false,
+        },
+        b"alnum" => ClassMask {
+            base: MASK_ALNUM,
+            under: false,
+        },
+        b"alpha" => ClassMask {
+            base: IS_ALPHA,
+            under: false,
+        },
+        b"blank" => ClassMask {
+            base: IS_BLANK,
+            under: false,
+        },
+        b"cntrl" => ClassMask {
+            base: IS_CNTRL,
+            under: false,
+        },
+        b"digit" => ClassMask {
+            base: IS_DIGIT,
+            under: false,
+        },
+        b"graph" => ClassMask {
+            base: MASK_GRAPH,
+            under: false,
+        },
+        b"lower" => ClassMask {
+            base: IS_LOWER,
+            under: false,
+        },
+        b"print" => ClassMask {
+            base: IS_PRINT,
+            under: false,
+        },
+        b"punct" => ClassMask {
+            base: IS_PUNCT,
+            under: false,
+        },
+        b"space" => ClassMask {
+            base: IS_SPACE,
+            under: false,
+        },
+        b"upper" => ClassMask {
+            base: IS_UPPER,
+            under: false,
+        },
+        b"xdigit" => ClassMask {
+            base: IS_XDIGIT,
+            under: false,
+        },
         _ => return None,
     };
     if icase && mask.base & (IS_LOWER | IS_UPPER) != 0 {
-        return Some(ClassMask { base: IS_ALPHA, under: false });
+        return Some(ClassMask {
+            base: IS_ALPHA,
+            under: false,
+        });
     }
     Some(mask)
 }
@@ -390,22 +458,142 @@ fn isctype(c: u8, f: ClassMask) -> bool {
 
 /// `regex_traits::lookup_collatename` name table: the index is the character.
 const COLLATE_NAMES: [&str; 128] = [
-    "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "alert", "backspace", "tab", "newline", "vertical-tab",
-    "form-feed", "carriage-return", "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN",
-    "EM", "SUB", "ESC", "IS4", "IS3", "IS2", "IS1", "space", "exclamation-mark", "quotation-mark", "number-sign",
-    "dollar-sign", "percent-sign", "ampersand", "apostrophe", "left-parenthesis", "right-parenthesis", "asterisk",
-    "plus-sign", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six",
-    "seven", "eight", "nine", "colon", "semicolon", "less-than-sign", "equals-sign", "greater-than-sign",
-    "question-mark", "commercial-at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
-    "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "left-square-bracket", "backslash",
-    "right-square-bracket", "circumflex", "underscore", "grave-accent", "a", "b", "c", "d", "e", "f", "g", "h",
-    "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-    "left-curly-bracket", "vertical-line", "right-curly-bracket", "tilde", "DEL",
+    "NUL",
+    "SOH",
+    "STX",
+    "ETX",
+    "EOT",
+    "ENQ",
+    "ACK",
+    "alert",
+    "backspace",
+    "tab",
+    "newline",
+    "vertical-tab",
+    "form-feed",
+    "carriage-return",
+    "SO",
+    "SI",
+    "DLE",
+    "DC1",
+    "DC2",
+    "DC3",
+    "DC4",
+    "NAK",
+    "SYN",
+    "ETB",
+    "CAN",
+    "EM",
+    "SUB",
+    "ESC",
+    "IS4",
+    "IS3",
+    "IS2",
+    "IS1",
+    "space",
+    "exclamation-mark",
+    "quotation-mark",
+    "number-sign",
+    "dollar-sign",
+    "percent-sign",
+    "ampersand",
+    "apostrophe",
+    "left-parenthesis",
+    "right-parenthesis",
+    "asterisk",
+    "plus-sign",
+    "comma",
+    "hyphen",
+    "period",
+    "slash",
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "colon",
+    "semicolon",
+    "less-than-sign",
+    "equals-sign",
+    "greater-than-sign",
+    "question-mark",
+    "commercial-at",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
+    "left-square-bracket",
+    "backslash",
+    "right-square-bracket",
+    "circumflex",
+    "underscore",
+    "grave-accent",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+    "left-curly-bracket",
+    "vertical-line",
+    "right-curly-bracket",
+    "tilde",
+    "DEL",
 ];
 
 /// `regex_traits::lookup_collatename`: the single character named `name`.
 fn lookup_collatename(name: &[u8]) -> Option<u8> {
-    COLLATE_NAMES.iter().position(|n| n.as_bytes() == name).map(|i| i as u8)
+    COLLATE_NAMES
+        .iter()
+        .position(|n| n.as_bytes() == name)
+        .map(|i| i as u8)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -454,8 +642,15 @@ enum ScanState {
 const ECMA_SPEC_CHAR: &[u8] = b"^$\\.*+?()[]{}|";
 
 /// `_M_ecma_escape_tbl`.
-const ECMA_ESCAPE_TBL: [(u8, u8); 7] =
-    [(b'0', 0), (b'b', 0x08), (b'f', 0x0c), (b'n', b'\n'), (b'r', b'\r'), (b't', b'\t'), (b'v', 0x0b)];
+const ECMA_ESCAPE_TBL: [(u8, u8); 7] = [
+    (b'0', 0),
+    (b'b', 0x08),
+    (b'f', 0x0c),
+    (b'n', b'\n'),
+    (b'r', b'\r'),
+    (b't', b'\t'),
+    (b'v', 0x0b),
+];
 
 type Res<T> = std::result::Result<T, String>;
 
@@ -667,7 +862,10 @@ impl<'a> Scanner<'a> {
             return err("Unexpected end of regex when escaping.");
         }
         let c = self.next_char();
-        let pos = ECMA_ESCAPE_TBL.iter().find(|(k, _)| *k == c).map(|(_, v)| *v);
+        let pos = ECMA_ESCAPE_TBL
+            .iter()
+            .find(|(k, _)| *k == c)
+            .map(|(_, v)| *v);
 
         if let Some(v) = pos.filter(|_| c != b'b' || self.state == ScanState::InBracket) {
             self.ord_char(v);
@@ -717,7 +915,8 @@ impl<'a> Scanner<'a> {
             let c = self.next_char();
             self.value.push(c);
         }
-        let ok = !self.at_end() && self.next_char() == ch && !self.at_end() && self.next_char() == b']';
+        let ok =
+            !self.at_end() && self.next_char() == ch && !self.at_end() && self.next_char() == b']';
         if !ok {
             // error_ctype for ':', error_collate otherwise; same text.
             return err("Unexpected end of character class.");
@@ -857,7 +1056,12 @@ struct Seq {
 
 impl Seq {
     fn single(id: usize, re: String, atomic: bool) -> Self {
-        Seq { start: id, end: id, re, atomic }
+        Seq {
+            start: id,
+            end: id,
+            re,
+            atomic,
+        }
     }
 
     /// The text as an operand of a quantifier.
@@ -968,7 +1172,11 @@ impl BracketMatcher {
             if self.char_set.contains(&translate_char(self.icase, ch)) {
                 return true;
             }
-            if self.range_set.iter().any(|&(f, l)| self.match_range(f, l, ch)) {
+            if self
+                .range_set
+                .iter()
+                .any(|&(f, l)| self.match_range(f, l, ch))
+            {
                 return true;
             }
             if isctype(ch, self.class_set) {
@@ -997,7 +1205,11 @@ fn byte_set_re(set: &[bool; 256]) -> String {
     let members: Vec<u8> = (0..=255u8).filter(|&b| set[b as usize]).collect();
     if members.len() == 1 {
         let b = members[0];
-        return if b.is_ascii_alphanumeric() { (b as char).to_string() } else { format!("\\x{b:02X}") };
+        return if b.is_ascii_alphanumeric() {
+            (b as char).to_string()
+        } else {
+            format!("\\x{b:02X}")
+        };
     }
     if members.is_empty() {
         return "[^\\x00-\\xFF]".to_string();
@@ -1052,7 +1264,11 @@ impl<'a> Compiler<'a> {
             icase,
             value: Vec::new(),
             stack: Vec::new(),
-            nfa: Nfa { states: Vec::new(), subexpr_count: 0, paren_stack: Vec::new() },
+            nfa: Nfa {
+                states: Vec::new(),
+                subexpr_count: 0,
+                paren_stack: Vec::new(),
+            },
             unsupported: None,
         };
         // `_StateSeqT __r (*_M_nfa, _M_nfa->_M_start ())`, start state 0.
@@ -1110,10 +1326,18 @@ impl<'a> Compiler<'a> {
             self.nfa.append_id(&mut alt2, end);
             // alt2 is `_M_next`, alt1 is `_M_alt`: alt1 is tried first.
             let alt = self.nfa.insert_alt(alt2.start, alt1.start)?;
-            self.stack.push(Seq { start: alt, end, re: String::new(), atomic: true });
+            self.stack.push(Seq {
+                start: alt,
+                end,
+                re: String::new(),
+                atomic: true,
+            });
         }
         if !alternatives.is_empty() {
-            let top = self.stack.last_mut().expect("regex compiler stack underflow");
+            let top = self
+                .stack
+                .last_mut()
+                .expect("regex compiler stack underflow");
             top.re = format!("(?:{})", alternatives.join("|"));
         }
         Ok(())
@@ -1240,7 +1464,11 @@ impl<'a> Compiler<'a> {
             if !self.match_token(Token::IntervalEnd)? {
                 return err("Unexpected end of brace expression.");
             }
-            let neg = if self.match_token(Token::Opt)? { "?" } else { "" };
+            let neg = if self.match_token(Token::Opt)? {
+                "?"
+            } else {
+                ""
+            };
             for _ in 0..min_rep {
                 let (s, t) = self.nfa.clone_seq(&r)?;
                 self.nfa.states[e.end].next = Some(s);
@@ -1383,7 +1611,11 @@ impl<'a> Compiler<'a> {
     }
 
     /// `_M_expression_term`.
-    fn expression_term(&mut self, last_char: &mut BracketState, matcher: &mut BracketMatcher) -> Res<bool> {
+    fn expression_term(
+        &mut self,
+        last_char: &mut BracketState,
+        matcher: &mut BracketMatcher,
+    ) -> Res<bool> {
         if self.match_token(Token::BracketEnd)? {
             return Ok(false);
         }
@@ -1471,7 +1703,10 @@ impl<'a> Compiler<'a> {
         let mut v: i32 = 0;
         for &c in &self.value {
             let digit = (c as char).to_digit(radix).map_or(-1, |d| d as i32);
-            v = match v.checked_mul(radix as i32).and_then(|x| x.checked_add(digit)) {
+            v = match v
+                .checked_mul(radix as i32)
+                .and_then(|x| x.checked_add(digit))
+            {
                 Some(x) => x,
                 None => return err("invalid back reference"),
             };
@@ -1509,17 +1744,26 @@ mod tests {
 
     impl UnitTest {
         fn new() -> Self {
-            UnitTest { counter: 0, failures: Vec::new() }
+            UnitTest {
+                counter: 0,
+                failures: Vec::new(),
+            }
         }
 
         fn ok(&mut self, expression: bool, name: impl AsRef<str>) {
             self.counter += 1;
             if !expression {
-                self.failures.push(format!("not ok {} - {}", self.counter, name.as_ref()));
+                self.failures
+                    .push(format!("not ok {} - {}", self.counter, name.as_ref()));
             }
         }
 
-        fn is<A: PartialEq<E> + Debug, E: Debug>(&mut self, actual: A, expected: E, name: impl AsRef<str>) {
+        fn is<A: PartialEq<E> + Debug, E: Debug>(
+            &mut self,
+            actual: A,
+            expected: E,
+            name: impl AsRef<str>,
+        ) {
             self.counter += 1;
             if actual != expected {
                 self.failures.push(format!(
@@ -1540,7 +1784,10 @@ mod tests {
         /// assertions differs from the C++ file's.
         fn finish(self, expected: usize) {
             assert!(self.failures.is_empty(), "{}", self.failures.join("\n"));
-            assert_eq!(self.counter, expected, "assertion count differs from the C++ test");
+            assert_eq!(
+                self.counter, expected,
+                "assertion count differs from the C++ test"
+            );
         }
     }
 
@@ -1562,10 +1809,21 @@ mod tests {
         ut.ok(r1.matches(&text).unwrap(), format!("{text} =~ /i. /"));
 
         let mut matches: Vec<String> = Vec::new();
-        ut.ok(r1.matches_captures(&mut matches, &text).unwrap(), format!("{text} =~ /i. /"));
+        ut.ok(
+            r1.matches_captures(&mut matches, &text).unwrap(),
+            format!("{text} =~ /i. /"),
+        );
         ut.ok(matches.len() == 2, "2 match");
-        ut.is(matches.first().map(String::as_str), Some("is "), "$1 == is\\s");
-        ut.is(matches.get(1).map(String::as_str), Some("is "), "$1 == is\\s");
+        ut.is(
+            matches.first().map(String::as_str),
+            Some("is "),
+            "$1 == is\\s",
+        );
+        ut.is(
+            matches.get(1).map(String::as_str),
+            Some("is "),
+            "$1 == is\\s",
+        );
 
         text = String::from("abcdefghijklmnopqrstuvwxyz");
 
@@ -1591,21 +1849,37 @@ mod tests {
         let mut start: Vec<i32> = Vec::new();
         let mut end: Vec<i32> = Vec::new();
         let r8 = RX::new("e..", true);
-        ut.ok(r8.matches_captures(&mut results, &text).unwrap(), "e.. there are matches");
-        ut.ok(r8.matches_offsets(&mut start, &mut end, &text).unwrap(), "e.. there are matches");
+        ut.ok(
+            r8.matches_captures(&mut results, &text).unwrap(),
+            "e.. there are matches",
+        );
+        ut.ok(
+            r8.matches_offsets(&mut start, &mut end, &text).unwrap(),
+            "e.. there are matches",
+        );
         ut.is(results.len(), 4usize, "e.. == 4 matches");
-        ut.is(results.first().map(String::as_str), Some("est"), "e..[0] == 'est'");
+        ut.is(
+            results.first().map(String::as_str),
+            Some("est"),
+            "e..[0] == 'est'",
+        );
         ut.is(start.first().copied(), Some(11), "e..[0] == 11->");
         ut.is(end.first().copied(), Some(14), "e..[0] == ->14");
 
         results.clear();
         let r9 = RX::new("e", true);
-        ut.ok(r9.matches_captures(&mut results, &text).unwrap(), "e there are matches");
+        ut.ok(
+            r9.matches_captures(&mut results, &text).unwrap(),
+            "e there are matches",
+        );
         ut.is(results.len(), 6usize, "e == 6 matches");
 
         start.clear();
         end.clear();
-        ut.ok(r9.matches_offsets(&mut start, &mut end, &text).unwrap(), "e there are matches");
+        ut.ok(
+            r9.matches_offsets(&mut start, &mut end, &text).unwrap(),
+            "e there are matches",
+        );
         ut.is(start.len(), 6usize, "e == 6 matches");
 
         // #else (Linux): \b word boundaries.
@@ -1617,14 +1891,20 @@ mod tests {
         ut.ok(r11.matches(&text).unwrap(), format!("{text} =~ /the\\b/"));
 
         let r12 = RX::with_pattern("\\bthe\\b");
-        ut.ok(r12.matches(&text).unwrap(), format!("{text} =~ /\\bthe\\b/"));
+        ut.ok(
+            r12.matches(&text).unwrap(),
+            format!("{text} =~ /\\bthe\\b/"),
+        );
 
         // #else (not DARWIN).
         ut.skip(" =~ /D\\d/");
 
         text = String::from("D0");
         let r14 = RX::with_pattern("D[[:digit:]]");
-        ut.ok(r14.matches(&text).unwrap(), format!("{text} =~ /D[[:digit:]]/"));
+        ut.ok(
+            r14.matches(&text).unwrap(),
+            format!("{text} =~ /D[[:digit:]]/"),
+        );
 
         text = String::from("D0");
         let r15 = RX::with_pattern("D[0-9]");
@@ -1634,7 +1914,12 @@ mod tests {
     }
 
     /// (pattern, case_sensitive, subject, C++ spans or C++ error text).
-    type Golden = (&'static str, bool, &'static str, std::result::Result<&'static [(i32, i32)], &'static str>);
+    type Golden = (
+        &'static str,
+        bool,
+        &'static str,
+        std::result::Result<&'static [(i32, i32)], &'static str>,
+    );
 
     /// Output of the C++ `RX` logic under GCC 11.4 libstdc++ (see the module
     /// documentation).
@@ -1843,7 +2128,8 @@ mod tests {
                     let mut end = Vec::new();
                     match rx.matches_offsets(&mut start, &mut end, text) {
                         Ok(any) => {
-                            let got: Vec<(i32, i32)> = start.iter().copied().zip(end.iter().copied()).collect();
+                            let got: Vec<(i32, i32)> =
+                                start.iter().copied().zip(end.iter().copied()).collect();
                             if got != spans || any == spans.is_empty() {
                                 failures.push(format!("{label}: spans {got:?}, C++ {spans:?}"));
                             }
@@ -1855,21 +2141,32 @@ mod tests {
                             let bytes = text.as_bytes();
                             let want: Vec<String> = spans
                                 .iter()
-                                .map(|&(s, e)| String::from_utf8_lossy(&bytes[s as usize..e as usize]).into_owned())
+                                .map(|&(s, e)| {
+                                    String::from_utf8_lossy(&bytes[s as usize..e as usize])
+                                        .into_owned()
+                                })
                                 .collect();
                             if captured != want {
-                                failures.push(format!("{label}: captures {captured:?}, C++ {want:?}"));
+                                failures
+                                    .push(format!("{label}: captures {captured:?}, C++ {want:?}"));
                             }
                         }
-                        Err(e) => failures.push(format!("{label}: error {:?}, C++ spans {spans:?}", message(e))),
+                        Err(e) => failures.push(format!(
+                            "{label}: error {:?}, C++ spans {spans:?}",
+                            message(e)
+                        )),
                     }
                 }
                 Err(what) => {
                     let errors = [
                         rx.compile().err().map(message),
                         rx.matches(text).err().map(message),
-                        rx.matches_captures(&mut Vec::new(), text).err().map(message),
-                        rx.matches_offsets(&mut Vec::new(), &mut Vec::new(), text).err().map(message),
+                        rx.matches_captures(&mut Vec::new(), text)
+                            .err()
+                            .map(message),
+                        rx.matches_offsets(&mut Vec::new(), &mut Vec::new(), text)
+                            .err()
+                            .map(message),
                     ];
                     for got in errors {
                         if got.as_deref() != Some(what) {
@@ -1900,9 +2197,15 @@ mod tests {
         assert!(m("^[^[:alnum:]]$", "_"));
         assert_eq!(translate(b"[[:digit:]]", false).unwrap(), "[\\x30-\\x39]");
         assert_eq!(translate(b"\\d", false).unwrap(), "[\\x30-\\x39]");
-        assert_eq!(translate(b"\\w", false).unwrap(), "[\\x30-\\x39\\x41-\\x5A\\x5F\\x61-\\x7A]");
+        assert_eq!(
+            translate(b"\\w", false).unwrap(),
+            "[\\x30-\\x39\\x41-\\x5A\\x5F\\x61-\\x7A]"
+        );
         assert_eq!(translate(b"\\s", false).unwrap(), "[\\x09-\\x0D\\x20]");
-        assert_eq!(translate(b".", false).unwrap(), "[\\x00-\\x09\\x0B-\\x0C\\x0E-\\xFF]");
+        assert_eq!(
+            translate(b".", false).unwrap(),
+            "[\\x00-\\x09\\x0B-\\x0C\\x0E-\\xFF]"
+        );
     }
 
     /// `\<` and `\>` are the literal `<` and `>` (libstdc++ ECMAScript
@@ -1970,9 +2273,18 @@ mod tests {
 
         // Construction never fails; the C++ throw surfaces on use.
         let bad = RX::new("(", true);
-        assert_eq!(message(bad.compile().unwrap_err()), "Parenthesis is not closed.");
-        assert_eq!(message(bad.matches("(").unwrap_err()), "Parenthesis is not closed.");
-        assert_eq!(message(bad.clone().compile().unwrap_err()), "Parenthesis is not closed.");
+        assert_eq!(
+            message(bad.compile().unwrap_err()),
+            "Parenthesis is not closed."
+        );
+        assert_eq!(
+            message(bad.matches("(").unwrap_err()),
+            "Parenthesis is not closed."
+        );
+        assert_eq!(
+            message(bad.clone().compile().unwrap_err()),
+            "Parenthesis is not closed."
+        );
         assert!(RX::new("a", true).compile().is_ok());
     }
 
@@ -1995,7 +2307,9 @@ mod tests {
         assert_eq!(matches, ["x", "b", "b"]);
         let mut start = Vec::new();
         let mut end = Vec::new();
-        assert!(!RX::with_pattern("z").matches_offsets(&mut start, &mut end, "abc").unwrap());
+        assert!(!RX::with_pattern("z")
+            .matches_offsets(&mut start, &mut end, "abc")
+            .unwrap());
         assert!(start.is_empty() && end.is_empty());
     }
 
@@ -2014,7 +2328,9 @@ mod tests {
 
         let mut start = Vec::new();
         let mut end = Vec::new();
-        assert!(RX::with_pattern("é").matches_offsets(&mut start, &mut end, "aé").unwrap());
+        assert!(RX::with_pattern("é")
+            .matches_offsets(&mut start, &mut end, "aé")
+            .unwrap());
         assert_eq!((start, end), (vec![1], vec![3]));
     }
 
@@ -2022,26 +2338,45 @@ mod tests {
     #[test]
     fn deviations() {
         // Back-references and lookahead are valid in C++.
-        assert_eq!(message(RX::with_pattern("(a)\\1").compile().unwrap_err()), BACKREF_UNSUPPORTED);
-        assert_eq!(message(RX::with_pattern("(?=a)a").compile().unwrap_err()), LOOKAHEAD_UNSUPPORTED);
-        assert_eq!(message(RX::with_pattern("a(?!b)").compile().unwrap_err()), LOOKAHEAD_UNSUPPORTED);
+        assert_eq!(
+            message(RX::with_pattern("(a)\\1").compile().unwrap_err()),
+            BACKREF_UNSUPPORTED
+        );
+        assert_eq!(
+            message(RX::with_pattern("(?=a)a").compile().unwrap_err()),
+            LOOKAHEAD_UNSUPPORTED
+        );
+        assert_eq!(
+            message(RX::with_pattern("a(?!b)").compile().unwrap_err()),
+            LOOKAHEAD_UNSUPPORTED
+        );
         // The first unsupported construct is reported...
-        assert_eq!(message(RX::with_pattern("(?=a)(a)\\1").compile().unwrap_err()), LOOKAHEAD_UNSUPPORTED);
+        assert_eq!(
+            message(RX::with_pattern("(?=a)(a)\\1").compile().unwrap_err()),
+            LOOKAHEAD_UNSUPPORTED
+        );
         // ...unless C++ fails later in the pattern.
-        assert_eq!(message(RX::with_pattern("(a)\\1[").compile().unwrap_err()), "Unexpected character in bracket expression.");
+        assert_eq!(
+            message(RX::with_pattern("(a)\\1[").compile().unwrap_err()),
+            "Unexpected character in bracket expression."
+        );
 
         // C++ `a??` on "aa": (0,0) (0,1) (1,1) (1,2) (2,2); the non-null retry
         // after an empty match finds nothing here.
         let mut start = Vec::new();
         let mut end = Vec::new();
-        RX::with_pattern("a??").matches_offsets(&mut start, &mut end, "aa").unwrap();
+        RX::with_pattern("a??")
+            .matches_offsets(&mut start, &mut end, "aa")
+            .unwrap();
         assert_eq!((start, end), (vec![0, 1, 2], vec![0, 1, 2]));
 
         // C++ `a||b` on "ab": (0,1) (1,1) (1,2) (2,2); the empty middle
         // alternative wins at 1, and the C++ non-null retry finds "b".
         let mut start = Vec::new();
         let mut end = Vec::new();
-        RX::with_pattern("a||b").matches_offsets(&mut start, &mut end, "ab").unwrap();
+        RX::with_pattern("a||b")
+            .matches_offsets(&mut start, &mut end, "ab")
+            .unwrap();
         assert_eq!((start, end), (vec![0, 1, 2], vec![1, 1, 2]));
     }
 }

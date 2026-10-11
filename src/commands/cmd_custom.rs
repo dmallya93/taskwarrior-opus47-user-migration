@@ -251,7 +251,10 @@ impl Command for CmdCustom {
 
                 if maxlines != 0 && (maxlines as i64) < filtered.len() as i64 {
                     out.push_str(", ");
-                    out.push_str(&format("truncated to {1} lines", &[&(maxlines - table_header)]));
+                    out.push_str(&format(
+                        "truncated to {1} lines",
+                        &[&(maxlines - table_header)],
+                    ));
                 }
 
                 out.push('\n');
@@ -280,10 +283,17 @@ impl Command for CmdCustom {
             let warning = Color::parse(&context.config.get("color.warning"))?;
             eprintln!(
                 "{}",
-                warning.colorize(&format("Found existing '*.data' files in {1}", &[&location]))
+                warning.colorize(&format(
+                    "Found existing '*.data' files in {1}",
+                    &[&location]
+                ))
             );
-            eprintln!("  Taskwarrior's storage format changed in 3.0, requiring a manual migration.");
-            eprintln!("  See https://taskwarrior.org/docs/upgrade-3/. Run `task import-v2` to import");
+            eprintln!(
+                "  Taskwarrior's storage format changed in 3.0, requiring a manual migration."
+            );
+            eprintln!(
+                "  See https://taskwarrior.org/docs/upgrade-3/. Run `task import-v2` to import"
+            );
             eprintln!("  the tasks into the Taskwarrior-3.x format");
         }
 
@@ -313,7 +323,9 @@ fn validate_sort_columns(context: &mut Context, columns: &mut [String]) {
 ////////////////////////////////////////////////////////////////////////////////
 /// The versions of the C++ `NewsItem::all ()` items (`version2_6_0` …
 /// `version3_5_0`); every one of those functions adds at least one item.
-const NEWS_ITEM_VERSIONS: [&str; 7] = ["2.6.0", "3.0.0", "3.1.0", "3.2.0", "3.3.0", "3.4.0", "3.5.0"];
+const NEWS_ITEM_VERSIONS: [&str; 7] = [
+    "2.6.0", "3.0.0", "3.1.0", "3.2.0", "3.3.0", "3.4.0", "3.5.0",
+];
 
 ////////////////////////////////////////////////////////////////////////////////
 /// C++ `CmdNews::should_nag`: whether to remind the user to read
@@ -339,7 +351,9 @@ pub fn should_nag(context: &mut Context) -> bool {
     }
 
     // Check if there are actually any interesting news items to show.
-    NEWS_ITEM_VERSIONS.iter().any(|v| Version::new(v) > news_version)
+    NEWS_ITEM_VERSIONS
+        .iter()
+        .any(|v| Version::new(v) > news_version)
 }
 
 #[cfg(test)]

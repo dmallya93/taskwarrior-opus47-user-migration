@@ -104,7 +104,11 @@ impl Default for ViewTask {
 
 impl std::fmt::Debug for ViewTask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let names: Vec<String> = self.columns.iter().map(|c| format!("{}.{}", c.name(), c.style())).collect();
+        let names: Vec<String> = self
+            .columns
+            .iter()
+            .map(|c| format!("{}.{}", c.name(), c.style()))
+            .collect();
         f.debug_struct("ViewTask")
             .field("columns", &names)
             .field("width", &self.width)
@@ -292,7 +296,12 @@ impl ViewTask {
     /// # Errors
     /// Errors from the columns' `measure`/`render` and from
     /// [`rules::auto_colorize`].
-    pub fn render(&mut self, ctx: &mut Context, data: &mut [Task], sequence: &[usize]) -> Result<String> {
+    pub fn render(
+        &mut self,
+        ctx: &mut Context,
+        data: &mut [Task],
+        sequence: &[usize],
+    ) -> Result<String> {
         let timer = Timer::new();
 
         let obfuscate = ctx.config.get_boolean("obfuscate");
@@ -377,7 +386,12 @@ impl ViewTask {
         let mut overage = width - sum_minimal - all_extra;
         ctx.debug(&format(
             "ViewTask::render min={1} ideal={2} overage={3} width={4}",
-            &[&(sum_minimal + all_extra), &(sum_ideal + all_extra), &overage, &width],
+            &[
+                &(sum_minimal + all_extra),
+                &(sum_ideal + all_extra),
+                &overage,
+                &width,
+            ],
         ));
 
         let mut widths: Vec<i64> = Vec::new();
@@ -457,14 +471,21 @@ impl ViewTask {
             }
         }
 
-        let widths: Vec<usize> = widths.iter().map(|&w| usize::try_from(w).unwrap_or(0)).collect();
+        let widths: Vec<usize> = widths
+            .iter()
+            .map(|&w| usize::try_from(w).unwrap_or(0))
+            .collect();
 
         // Compose column headers.
         let mut max_lines = 0usize;
         let mut headers: Vec<Vec<String>> = Vec::with_capacity(self.columns.len());
         for (c, column) in self.columns.iter().enumerate() {
             let mut header = Vec::new();
-            let color = if self.sort[c] { self.sort_header } else { self.header };
+            let color = if self.sort[c] {
+                self.sort_header
+            } else {
+                self.header
+            };
             column.render_header(&mut header, widths[c], &color, ctx);
 
             if header.len() > max_lines {
@@ -479,10 +500,26 @@ impl ViewTask {
         let intra = spaces(i64::from(self.intra_padding));
 
         let color = ctx.color();
-        let extra_odd = if color { self.extra_odd.colorize(&extra) } else { extra.clone() };
-        let extra_even = if color { self.extra_even.colorize(&extra) } else { extra.clone() };
-        let intra_odd = if color { self.intra_odd.colorize(&intra) } else { intra.clone() };
-        let intra_even = if color { self.intra_even.colorize(&intra) } else { intra.clone() };
+        let extra_odd = if color {
+            self.extra_odd.colorize(&extra)
+        } else {
+            extra.clone()
+        };
+        let extra_even = if color {
+            self.extra_even.colorize(&extra)
+        } else {
+            extra.clone()
+        };
+        let intra_odd = if color {
+            self.intra_odd.colorize(&intra)
+        } else {
+            intra.clone()
+        };
+        let intra_even = if color {
+            self.intra_even.colorize(&intra)
+        } else {
+            intra.clone()
+        };
 
         let mut out = String::new();
         self.lines = 0;
@@ -614,7 +651,6 @@ impl ViewTask {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     //! Port of `test/view_test.cpp`, plus layout cases the C++ test does not
@@ -670,7 +706,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         set_stdout_tty_override(Some(tty));
         let mut ctx = Context::new();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, false).unwrap();
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, false)
+            .unwrap();
 
         // Ensure environment has no influence.
         let env = EnvGuard::save(&["TASKDATA", "TASKRC"]);
@@ -678,7 +716,9 @@ mod tests {
         std::env::remove_var("TASKRC");
 
         // Set up configuration.
-        ctx.config.parse(CONFIGURATION_DEFAULTS, 0, &[task_rcdir()], "").unwrap();
+        ctx.config
+            .parse(CONFIGURATION_DEFAULTS, 0, &[task_rcdir()], "")
+            .unwrap();
         // C++ `set (key, true)` resolves to the int overload: "1".
         ctx.config.set("fontunderline", 1);
         ctx.config.set("tag.indicator", "+");
@@ -694,7 +734,13 @@ mod tests {
         ctx.terminal_width = 0;
         ctx.terminal_height = 1;
 
-        Fixture { ctx, _tty: TtyReset, _env: env, _dir: dir, _lock: lock }
+        Fixture {
+            ctx,
+            _tty: TtyReset,
+            _env: env,
+            _dir: dir,
+            _lock: lock,
+        }
     }
 
     /// The body of C++ `view_test.cpp`; returns the rendered view.
@@ -806,7 +852,8 @@ mod tests {
     fn countdown() -> String {
         use crate::shared::datetime::Datetime;
         use crate::shared::duration::Duration;
-        let s = Duration::from_seconds(Datetime::from_epoch(1_234_567_890) - Datetime::new()).format_vague(true);
+        let s = Duration::from_seconds(Datetime::from_epoch(1_234_567_890) - Datetime::new())
+            .format_vague(true);
         assert_eq!(s.len(), 8, "countdown {s:?}");
         s
     }
@@ -822,14 +869,26 @@ mod tests {
         let count = countdown();
         let h = |label: &str| format!("\x1b[33m{label}\x1b[0m");
         let header: Vec<String> = [
-            "ID", "UUID    ", "Project    ", "Priority", "Tags   ", "Tag", "Description                       ",
-            "R", "St", "Count   ", "A", "Urgency",
+            "ID",
+            "UUID    ",
+            "Project    ",
+            "Priority",
+            "Tags   ",
+            "Tag",
+            "Description                       ",
+            "R",
+            "St",
+            "Count   ",
+            "A",
+            "Urgency",
         ]
         .iter()
         .map(|l| h(l))
         .collect();
-        let dashes: Vec<String> =
-            [2, 8, 11, 8, 7, 3, 34, 1, 2, 8, 1, 7].iter().map(|&w| h(&"-".repeat(w))).collect();
+        let dashes: Vec<String> = [2, 8, 11, 8, 7, 3, 34, 1, 2, 8, 1, 7]
+            .iter()
+            .map(|&w| h(&"-".repeat(w)))
+            .collect();
         let expected = format!(
             "    {}\n    {}\n\
              \x20    8 c44cb9c3 Garden                           Another description                  P                   0\n\
@@ -852,8 +911,18 @@ mod tests {
         // Additional: the exact table, underlined header and alternating rows.
         let count = countdown();
         let header: Vec<String> = [
-            "ID", "UUID    ", "Project    ", "Priority", "Tags   ", "Tag", "Description                       ",
-            "R", "St", "Count   ", "A", "Urgency",
+            "ID",
+            "UUID    ",
+            "Project    ",
+            "Priority",
+            "Tags   ",
+            "Tag",
+            "Description                       ",
+            "R",
+            "St",
+            "Count   ",
+            "A",
+            "Urgency",
         ]
         .iter()
         .map(|l| format!("\x1b[4;33m{l}\x1b[0m"))
@@ -866,19 +935,71 @@ mod tests {
         let mut expected = format!("    {}\n", header.join(" "));
         expected += &row(
             232,
-            &[" 8", "c44cb9c3", "Garden     ", "        ", "       ", "   ", "Another description               ", " ", "P ", "        ", " ", "      0"],
+            &[
+                " 8",
+                "c44cb9c3",
+                "Garden     ",
+                "        ",
+                "       ",
+                "   ",
+                "Another description               ",
+                " ",
+                "P ",
+                "        ",
+                " ",
+                "      0",
+            ],
         );
         expected += &row(
             233,
-            &["11", "f30cb9c3", "Garden Care", "        ", "       ", "   ", "This is the description text      ", "R", "P ", "        ", " ", "      0"],
+            &[
+                "11",
+                "f30cb9c3",
+                "Garden Care",
+                "        ",
+                "       ",
+                "   ",
+                "This is the description text      ",
+                "R",
+                "P ",
+                "        ",
+                " ",
+                "      0",
+            ],
         );
         expected += &row(
             232,
-            &[" 1", "2a64f6e0", "Home       ", "H       ", "one two", "[2]", "This is the description text      ", " ", "P ", &count, "A", "      0"],
+            &[
+                " 1",
+                "2a64f6e0",
+                "Home       ",
+                "H       ",
+                "one two",
+                "[2]",
+                "This is the description text      ",
+                " ",
+                "P ",
+                &count,
+                "A",
+                "      0",
+            ],
         );
         expected += &row(
             232,
-            &["  ", "        ", "           ", "        ", "       ", "   ", "  2009-02-13 This is an annotation", " ", "  ", "        ", " ", "       "],
+            &[
+                "  ",
+                "        ",
+                "           ",
+                "        ",
+                "       ",
+                "   ",
+                "  2009-02-13 This is an annotation",
+                " ",
+                "  ",
+                "        ",
+                " ",
+                "       ",
+            ],
         );
         assert_eq!(out, expected);
     }
@@ -917,21 +1038,34 @@ mod tests {
         // minimum only applies with annotations); ideal 2, 22; extra 1.
         v.width(20);
         let out = v.render(&mut f.ctx, &mut data, &[0]).unwrap();
-        assert_eq!(out, "ID Description\n-- -----------------\n 1 alpha beta gamma\n   delta\n");
+        assert_eq!(
+            out,
+            "ID Description\n-- -----------------\n 1 alpha beta gamma\n   delta\n"
+        );
         assert_eq!(v.lines(), 4);
         assert_eq!(v.rows(), 1);
-        assert!(f.ctx.debug_messages.iter().any(|m| m == "ViewTask::render min=14 ideal=25 overage=6 width=20"));
+        assert!(f
+            .ctx
+            .debug_messages
+            .iter()
+            .any(|m| m == "ViewTask::render min=14 ideal=25 overage=6 width=20"));
 
         // Exactly the minimum.
         let mut v = view(&f.ctx, &["id", "description"]);
         v.width(14);
         let out = v.render(&mut f.ctx, &mut data, &[0]).unwrap();
-        assert_eq!(out, "ID Description\n-- -----------\n 1 alpha beta\n   gamma delta\n");
+        assert_eq!(
+            out,
+            "ID Description\n-- -----------\n 1 alpha beta\n   gamma delta\n"
+        );
 
         // Width 0 is unlimited; everything fits.
         let mut v = view(&f.ctx, &["id", "description"]);
         let out = v.render(&mut f.ctx, &mut data, &[0]).unwrap();
-        assert_eq!(out, "ID Description\n-- ----------------------\n 1 alpha beta gamma delta\n");
+        assert_eq!(
+            out,
+            "ID Description\n-- ----------------------\n 1 alpha beta gamma delta\n"
+        );
     }
 
     #[test]
@@ -944,14 +1078,20 @@ mod tests {
         let mut v = view(&f.ctx, &["project", "description"]);
         v.width(16);
         let out = v.render(&mut f.ctx, &mut data, &[0]).unwrap();
-        assert_eq!(out, "Project Description\n------- --------\nHome    alpha\n        beta\n");
+        assert_eq!(
+            out,
+            "Project Description\n------- --------\nHome    alpha\n        beta\n"
+        );
         assert!(f.ctx.errors.is_empty());
 
         // Case 2: both shortened to 7, then by half the rest (rounded up): 5, 5.
         let mut v = view(&f.ctx, &["project", "description"]);
         v.width(12);
         let out = v.render(&mut f.ctx, &mut data, &[0]).unwrap();
-        assert_eq!(out, "Project Description\n----- -----\nHome  alpha\n      beta\n");
+        assert_eq!(
+            out,
+            "Project Description\n----- -----\nHome  alpha\n      beta\n"
+        );
         assert!(f.ctx.errors.is_empty());
 
         // No solution: queued as an error, rendering continues at 7, 7.
@@ -962,7 +1102,10 @@ mod tests {
             f.ctx.errors,
             vec!["The report has a minimum width of 19 and does not fit in the available width of 2.".to_string()]
         );
-        assert_eq!(out, "Project Description\n------- -------\nHome    alpha\n        beta\n");
+        assert_eq!(
+            out,
+            "Project Description\n------- -------\nHome    alpha\n        beta\n"
+        );
     }
 
     #[test]
@@ -977,13 +1120,20 @@ mod tests {
         f.ctx.config.set("print.empty.columns", 1);
         let mut v = view(&f.ctx, &["id", "project", "description"]);
         let out = v.render(&mut f.ctx, &mut data, &[0, 1]).unwrap();
-        assert_eq!(out, "ID Project Description\n-- ------- -----------\n 1         one\n 2         two\n");
+        assert_eq!(
+            out,
+            "ID Project Description\n-- ------- -----------\n 1         one\n 2         two\n"
+        );
     }
 
     #[test]
     fn breaks_margins_padding_and_truncation() {
         let mut f = plain_fixture();
-        let mut data = vec![task(1, "A", "one"), task(2, "A", "two"), task(3, "B", "three")];
+        let mut data = vec![
+            task(1, "A", "one"),
+            task(2, "A", "two"),
+            task(3, "B", "three"),
+        ];
 
         let mut v = view(&f.ctx, &["id", "project", "description"]);
         v.left_margin(2);
@@ -1002,7 +1152,10 @@ mod tests {
         let mut v = view(&f.ctx, &["id", "project", "description"]);
         v.truncate_rows(2);
         let out = v.render(&mut f.ctx, &mut data, &[0, 1, 2]).unwrap();
-        assert_eq!(out, "ID Project Description\n-- ------- -----------\n 1 A       one\n 2 A       two\n");
+        assert_eq!(
+            out,
+            "ID Project Description\n-- ------- -----------\n 1 A       one\n 2 A       two\n"
+        );
         assert_eq!((v.lines(), v.rows()), (4, 2));
 
         // Line limit inside the headers.
@@ -1016,7 +1169,10 @@ mod tests {
         let mut v = view(&f.ctx, &["id", "project", "description"]);
         v.truncate_lines(3);
         let out = v.render(&mut f.ctx, &mut data, &[0, 1, 2]).unwrap();
-        assert_eq!(out, "ID Project Description\n-- ------- -----------\n 1 A       one\n");
+        assert_eq!(
+            out,
+            "ID Project Description\n-- ------- -----------\n 1 A       one\n"
+        );
         assert_eq!((v.lines(), v.rows()), (3, 0));
     }
 
@@ -1027,7 +1183,10 @@ mod tests {
         let mut data = vec![task(1, "Home", "secret plan")];
         let mut v = view(&f.ctx, &["id", "project", "description"]);
         let out = v.render(&mut f.ctx, &mut data, &[0]).unwrap();
-        assert_eq!(out, "ID Project Description\n-- ------- -----------\n 1 xxxx    xxxxxx xxxx\n");
+        assert_eq!(
+            out,
+            "ID Project Description\n-- ------- -----------\n 1 xxxx    xxxxxx xxxx\n"
+        );
     }
 
     #[test]
@@ -1041,7 +1200,10 @@ mod tests {
 
         let mut v = ViewTask::new();
         v.add(factory("id", "test", &f.ctx.config).unwrap(), true);
-        v.add(factory("description", "test", &f.ctx.config).unwrap(), false);
+        v.add(
+            factory("description", "test", &f.ctx.config).unwrap(),
+            false,
+        );
         v.color_sort_header(&blue);
         v.color_header(&red);
         v.extra_padding(1);

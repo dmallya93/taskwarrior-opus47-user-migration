@@ -25,14 +25,19 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new(), diags: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+            diags: Vec::new(),
+        }
     }
 
     /// C++ `UnitTest::ok`.
     fn ok(&mut self, expression: bool, name: &str) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -116,7 +121,11 @@ fn dom_test_cpp() {
     t.is(v.get_string(), "value", "DOM get 'name' --> 'value'");
 
     let v = dom.get("name.next");
-    t.is(v.get_string(), "value.next", "DOM get 'name.next' --> 'value.next'");
+    t.is(
+        v.get_string(),
+        "value.next",
+        "DOM get 'name.next' --> 'value.next'",
+    );
 
     let v = dom.get("name.size");
     t.is(v.get_integer(), 6, "DOM get 'name.size' --> 6");
@@ -281,12 +290,21 @@ impl Fixture {
             crate::cli2::with_cli2(&mut ctx, |cli2, ctx| cli2.analyze(ctx)).unwrap();
         }
 
-        Fixture { ctx, dir: TempDir::new().unwrap(), _statics: statics, _env: env, _lock: lock }
+        Fixture {
+            ctx,
+            dir: TempDir::new().unwrap(),
+            _statics: statics,
+            _env: env,
+            _lock: lock,
+        }
     }
 
     fn open(&mut self) {
         let location = self.dir.path().to_str().unwrap().to_string();
-        self.ctx.tdb2.open_replica_at(&location, true, true).unwrap();
+        self.ctx
+            .tdb2
+            .open_replica_at(&location, true, true)
+            .unwrap();
     }
 
     fn add(&mut self, json: &str) -> Task {
@@ -348,7 +366,10 @@ fn context_free_tw_context_system_references() {
     assert_eq!(string(f.get("tw.program")), s("/usr/bin/task"));
     assert_eq!(string(f.get("context.program")), s("/usr/bin/task"));
     assert_eq!(string(f.get("tw.args")), s("/usr/bin/task calc 1 + rc.foo"));
-    assert_eq!(string(f.get("context.args")), s("/usr/bin/task calc 1 + rc.foo"));
+    assert_eq!(
+        string(f.get("context.args")),
+        s("/usr/bin/task calc 1 + rc.foo")
+    );
 
     // terminal_width/height win when set.
     f.ctx.terminal_width = 123;
@@ -408,14 +429,23 @@ fn task_attribute_references() {
     assert_eq!(integer(f.get_task("id", Some(task))), int(7));
     let urgency = f.get_task("urgency", Some(task)).unwrap();
     assert_eq!(urgency.type_(), VariantType::Real);
-    assert_eq!(urgency.get_real(), f64::from(task.urgency_c(&mut f.ctx).unwrap()));
+    assert_eq!(
+        urgency.get_real(),
+        f64::from(task.urgency_c(&mut f.ctx).unwrap())
+    );
 
     // Plain string attributes, and abbreviations through canonicalize.
-    assert_eq!(string(f.get_task("description", Some(task))), s("rich task"));
+    assert_eq!(
+        string(f.get_task("description", Some(task))),
+        s("rich task")
+    );
     assert_eq!(string(f.get_task("desc", Some(task))), s("rich task"));
     assert_eq!(string(f.get_task("project", Some(task))), s("home"));
     assert_eq!(string(f.get_task("status", Some(task))), s("pending"));
-    assert_eq!(string(f.get_task("uuid", Some(task))), s("a8a2f0a1-7c4e-4a5b-9d6e-1234567890ab"));
+    assert_eq!(
+        string(f.get_task("uuid", Some(task))),
+        s("a8a2f0a1-7c4e-4a5b-9d6e-1234567890ab")
+    );
 
     // tags: the deprecated whole-list form and single tags (virtual too).
     assert_eq!(string(f.get_task("tags", Some(task))), s("alpha,beta"));
@@ -443,11 +473,18 @@ fn task_attribute_references() {
         ("minute", date.minute()),
         ("second", date.second()),
     ] {
-        assert_eq!(integer(f.get_task(&format!("due.{element}"), Some(task))), int(i64::from(expected)), "{element}");
+        assert_eq!(
+            integer(f.get_task(&format!("due.{element}"), Some(task))),
+            int(i64::from(expected)),
+            "{element}"
+        );
     }
     // An unset date is the epoch.
     let epoch = Datetime::from_epoch(0);
-    assert_eq!(integer(f.get_task("end.year", Some(task))), int(i64::from(epoch.year())));
+    assert_eq!(
+        integer(f.get_task("end.year", Some(task))),
+        int(i64::from(epoch.year()))
+    );
     // An unknown element falls through to the context-free lookup.
     assert!(f.get_task("due.nope", Some(task)).is_none());
     // Elements only apply to date columns.
@@ -455,9 +492,15 @@ fn task_attribute_references() {
 
     // Durations: recur (whatever its column type) and duration UDAs.
     let recur = f.get_task("recur", Some(task)).unwrap();
-    assert_eq!((recur.type_(), recur.get_duration()), (VariantType::Duration, 604800));
+    assert_eq!(
+        (recur.type_(), recur.get_duration()),
+        (VariantType::Duration, 604800)
+    );
     let span = f.get_task("span", Some(task)).unwrap();
-    assert_eq!((span.type_(), span.get_duration()), (VariantType::Duration, 86400));
+    assert_eq!(
+        (span.type_(), span.get_duration()),
+        (VariantType::Duration, 86400)
+    );
 
     // Numeric UDA, and unset UDAs are "" whatever their type.
     let size = f.get_task("size", Some(task)).unwrap();
@@ -467,17 +510,31 @@ fn task_attribute_references() {
 
     // Annotations.
     assert_eq!(integer(f.get_task("annotations.count", Some(task))), int(2));
-    assert_eq!(string(f.get_task("annotations.1.description", Some(task))), s("first note"));
-    assert_eq!(string(f.get_task("annotations.2.description", Some(task))), s("second note"));
+    assert_eq!(
+        string(f.get_task("annotations.1.description", Some(task))),
+        s("first note")
+    );
+    assert_eq!(
+        string(f.get_task("annotations.2.description", Some(task))),
+        s("second note")
+    );
     let entry = f.get_task("annotations.1.entry", Some(task)).unwrap();
     assert_eq!(entry.type_(), VariantType::Date);
     let first_key = task.get_annotations().keys().next().unwrap().clone();
     assert_eq!(entry.get_date(), first_key[11..].parse::<i64>().unwrap());
     let entry_date = Datetime::from_epoch(entry.get_date());
-    assert_eq!(integer(f.get_task("annotations.1.entry.year", Some(task))), int(i64::from(entry_date.year())));
-    assert_eq!(integer(f.get_task("annotations.1.entry.second", Some(task))), int(i64::from(entry_date.second())));
+    assert_eq!(
+        integer(f.get_task("annotations.1.entry.year", Some(task))),
+        int(i64::from(entry_date.year()))
+    );
+    assert_eq!(
+        integer(f.get_task("annotations.1.entry.second", Some(task))),
+        int(i64::from(entry_date.second()))
+    );
     assert!(f.get_task("annotations.3.entry", Some(task)).is_none());
-    assert!(f.get_task("annotations.0.description", Some(task)).is_none());
+    assert!(f
+        .get_task("annotations.0.description", Some(task))
+        .is_none());
     assert!(f.get_task("annotations.1.nope", Some(task)).is_none());
     assert!(f.get_task("annotations.1.entry.nope", Some(task)).is_none());
 
@@ -518,22 +575,43 @@ fn id_and_uuid_references_load_from_tdb2() {
         integer(f.get_task("2.due.year", None)),
         int(i64::from(Datetime::from_epoch(two.get_date("due")).year()))
     );
-    assert_eq!(string(f.get_task(&format!("{}.description", one.get("uuid")), None)), s("first"));
+    assert_eq!(
+        string(f.get_task(&format!("{}.description", one.get("uuid")), None)),
+        s("first")
+    );
     // A partial UUID (the Lexer accepts 8+ hex digits).
-    assert_eq!(string(f.get_task(&format!("{}.description", &two.get("uuid")[..8]), None)), s("second"));
-    assert_eq!(integer(f.get_task(&format!("{}.annotations.count", one.get("uuid")), None)), int(0));
+    assert_eq!(
+        string(f.get_task(&format!("{}.description", &two.get("uuid")[..8]), None)),
+        s("second")
+    );
+    assert_eq!(
+        integer(f.get_task(&format!("{}.annotations.count", one.get("uuid")), None)),
+        int(0)
+    );
 
     // Relative to a task: another ID loads it, the task's own ID uses it.
     let mut edited = one.clone();
     edited.set("description", "first (edited)");
-    assert_eq!(string(f.get_task("1.description", Some(&edited))), s("first (edited)"));
-    assert_eq!(string(f.get_task("2.description", Some(&edited))), s("second"));
-    assert_eq!(string(f.get_task(&format!("{}.description", one.get("uuid")), Some(&edited))), s("first (edited)"));
+    assert_eq!(
+        string(f.get_task("1.description", Some(&edited))),
+        s("first (edited)")
+    );
+    assert_eq!(
+        string(f.get_task("2.description", Some(&edited))),
+        s("second")
+    );
+    assert_eq!(
+        string(f.get_task(&format!("{}.description", one.get("uuid")), Some(&edited))),
+        s("first (edited)")
+    );
 
     // An unknown ID leaves the contextual task (if any) as the reference,
     // with the ID element eaten.
     assert!(f.get_task("99.description", None).is_none());
-    assert_eq!(string(f.get_task("99.description", Some(&edited))), s("first (edited)"));
+    assert_eq!(
+        string(f.get_task("99.description", Some(&edited))),
+        s("first (edited)")
+    );
     // ID 0 is never loaded.
     assert_eq!(string(f.get_task("0.description", Some(&two))), s("second"));
     // A decimal is not an ID: no element is eaten, and 'tw.1'-like names are
@@ -560,17 +638,39 @@ fn context_resolver_is_dom_source() {
     // With a task: attributes resolve and virtual tags see the Context.
     {
         let mut r = ContextResolver::with_task(&mut f.ctx, Some(&task));
-        assert_eq!(r.resolve("description").unwrap().unwrap().get_string(), "rich task");
+        assert_eq!(
+            r.resolve("description").unwrap().unwrap().get_string(),
+            "rich task"
+        );
         let current = r.current_task().expect("a current task");
         assert!(current.has_tag("alpha").unwrap());
-        assert!(current.has_tag("UDA").unwrap(), "UDA columns come from the Context");
+        assert!(
+            current.has_tag("UDA").unwrap(),
+            "UDA columns come from the Context"
+        );
         assert_eq!(current.get_annotations().len(), 2);
 
         let e = Eval::new();
-        assert!(e.evaluate_infix_expression("project == 'home'", &mut r).unwrap().get_bool());
-        assert!(e.evaluate_infix_expression("tags _hastag_ UDA", &mut r).unwrap().get_bool());
-        assert_eq!(e.evaluate_infix_expression("id * 2", &mut r).unwrap().get_integer(), 6);
-        assert_eq!(e.evaluate_infix_expression("due.year", &mut r).unwrap().get_integer(), 2026);
+        assert!(e
+            .evaluate_infix_expression("project == 'home'", &mut r)
+            .unwrap()
+            .get_bool());
+        assert!(e
+            .evaluate_infix_expression("tags _hastag_ UDA", &mut r)
+            .unwrap()
+            .get_bool());
+        assert_eq!(
+            e.evaluate_infix_expression("id * 2", &mut r)
+                .unwrap()
+                .get_integer(),
+            6
+        );
+        assert_eq!(
+            e.evaluate_infix_expression("due.year", &mut r)
+                .unwrap()
+                .get_integer(),
+            2026
+        );
     }
 
     // ContextResolver::new reads ctx.current_task.
@@ -594,18 +694,31 @@ fn context_resolver_is_dom_source() {
         let mut e = Eval::new();
         e.debug(true);
         let mut r = ContextResolver::new(&mut f.ctx);
-        assert_eq!(e.evaluate_infix_expression("rc.foo", &mut r).unwrap().get_string(), "bar");
+        assert_eq!(
+            e.evaluate_infix_expression("rc.foo", &mut r)
+                .unwrap()
+                .get_string(),
+            "bar"
+        );
     }
     assert!(
-        f.ctx.debug_messages.iter().any(|m| m == "Eval identifier source 'rc.foo' → ↑'bar'"),
+        f.ctx
+            .debug_messages
+            .iter()
+            .any(|m| m == "Eval identifier source 'rc.foo' → ↑'bar'"),
         "{:?}",
         f.ctx.debug_messages
     );
 
     // A getDOM throw aborts the evaluation (here: no replica for '1.').
     let mut r = ContextResolver::new(&mut f.ctx);
-    assert!(Eval::new().evaluate_infix_expression("1.description", &mut r).is_err());
+    assert!(Eval::new()
+        .evaluate_infix_expression("1.description", &mut r)
+        .is_err());
     let mut compiled = Eval::new();
     let tokens = vec![("1.description".to_string(), LexerType::dom)];
-    assert!(compiled.compile_expression(&tokens, &mut r).is_err(), "the parsePrimitive lookup throws too");
+    assert!(
+        compiled.compile_expression(&tokens, &mut r).is_err(),
+        "the parsePrimitive lookup throws too"
+    );
 }

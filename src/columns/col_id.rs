@@ -99,7 +99,9 @@ mod tests {
     fn measure(id: i32) -> (usize, usize) {
         let mut task = Task::new();
         task.id = id;
-        ColumnID::new().measure(&mut task, &mut FakeRenderEnv::with_config(&[])).unwrap()
+        ColumnID::new()
+            .measure(&mut task, &mut FakeRenderEnv::with_config(&[]))
+            .unwrap()
     }
 
     #[test]
@@ -121,9 +123,13 @@ mod tests {
         let mut lines = Vec::new();
         let mut task = Task::new();
         task.id = 12;
-        ColumnID::new().render(&mut lines, &mut task, 4, &Color::new(), &mut env).unwrap();
+        ColumnID::new()
+            .render(&mut lines, &mut task, 4, &Color::new(), &mut env)
+            .unwrap();
         task.id = 0;
-        ColumnID::new().render(&mut lines, &mut task, 4, &Color::new(), &mut env).unwrap();
+        ColumnID::new()
+            .render(&mut lines, &mut task, 4, &Color::new(), &mut env)
+            .unwrap();
         assert_eq!(lines, vec!["  12", "   -"]);
     }
 }

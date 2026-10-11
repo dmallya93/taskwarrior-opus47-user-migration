@@ -84,7 +84,13 @@ impl Fixture {
         }
 
         let ctx = initialized(&full);
-        Fixture { ctx, _dir: dir, _mml: mml, _env: env, _lock: lock }
+        Fixture {
+            ctx,
+            _dir: dir,
+            _mml: mml,
+            _env: env,
+            _lock: lock,
+        }
     }
 
     /// `sort_tasks` over all of `data`, returning the descriptions in order.
@@ -120,7 +126,11 @@ fn names(list: &[&str]) -> Vec<String> {
 #[test]
 fn id_both_directions_and_default_ascending() {
     let mut f = Fixture::new(&[], &[]);
-    let mut data = vec![with_id(task("c", &[]), 3), with_id(task("a", &[]), 1), with_id(task("b", &[]), 2)];
+    let mut data = vec![
+        with_id(task("c", &[]), 3),
+        with_id(task("a", &[]), 1),
+        with_id(task("b", &[]), 2),
+    ];
     assert_eq!(f.sorted(&mut data, "id"), names(&["a", "b", "c"]));
     assert_eq!(f.sorted(&mut data, "id+"), names(&["a", "b", "c"]));
     assert_eq!(f.sorted(&mut data, "id-"), names(&["c", "b", "a"]));
@@ -132,7 +142,9 @@ fn id_both_directions_and_default_ascending() {
 #[test]
 fn string_fields_compare_bytewise() {
     let mut f = Fixture::new(&[], &[]);
-    for field in ["project", "status", "tags", "uuid", "parent", "imask", "mask"] {
+    for field in [
+        "project", "status", "tags", "uuid", "parent", "imask", "mask",
+    ] {
         let mut data = vec![
             task("1", &[(field, "beta")]),
             task("2", &[(field, "Zed")]),
@@ -140,13 +152,32 @@ fn string_fields_compare_bytewise() {
             task("4", &[(field, "")]),
         ];
         // Empty first ascending: plain string comparison.
-        assert_eq!(f.sorted(&mut data, &format!("{field}+")), names(&["4", "2", "3", "1"]), "{field}");
-        assert_eq!(f.sorted(&mut data, &format!("{field}-")), names(&["1", "3", "2", "4"]), "{field}");
+        assert_eq!(
+            f.sorted(&mut data, &format!("{field}+")),
+            names(&["4", "2", "3", "1"]),
+            "{field}"
+        );
+        assert_eq!(
+            f.sorted(&mut data, &format!("{field}-")),
+            names(&["1", "3", "2", "4"]),
+            "{field}"
+        );
     }
 
-    let mut data = vec![task("beta", &[]), task("Zed", &[]), task("alpha", &[]), task("", &[])];
-    assert_eq!(f.sorted(&mut data, "description+"), names(&["", "Zed", "alpha", "beta"]));
-    assert_eq!(f.sorted(&mut data, "description-"), names(&["beta", "alpha", "Zed", ""]));
+    let mut data = vec![
+        task("beta", &[]),
+        task("Zed", &[]),
+        task("alpha", &[]),
+        task("", &[]),
+    ];
+    assert_eq!(
+        f.sorted(&mut data, "description+"),
+        names(&["", "Zed", "alpha", "beta"])
+    );
+    assert_eq!(
+        f.sorted(&mut data, "description-"),
+        names(&["beta", "alpha", "Zed", ""])
+    );
 }
 
 #[test]
@@ -159,14 +190,22 @@ fn mixed_keys_break_ties_in_order() {
         with_id(task("h4", &[("project", "home")]), 4),
         with_id(task("n3", &[]), 3),
     ];
-    assert_eq!(f.sorted(&mut data, "project+,id-"), names(&["n3", "h4", "h1", "w5", "w2"]));
-    assert_eq!(f.sorted(&mut data, "project-,id+"), names(&["w2", "w5", "h1", "h4", "n3"]));
+    assert_eq!(
+        f.sorted(&mut data, "project+,id-"),
+        names(&["n3", "h4", "h1", "w5", "w2"])
+    );
+    assert_eq!(
+        f.sorted(&mut data, "project-,id+"),
+        names(&["w2", "w5", "h1", "h4", "n3"])
+    );
 }
 
 #[test]
 fn all_equal_keys_keep_input_order() {
     let mut f = Fixture::new(&[], &[]);
-    let mut data: Vec<Task> = (0..20).map(|i| task(&format!("t{i:02}"), &[("project", "p")])).collect();
+    let mut data: Vec<Task> = (0..20)
+        .map(|i| task(&format!("t{i:02}"), &[("project", "p")]))
+        .collect();
     let expected: Vec<String> = (0..20).map(|i| format!("t{i:02}")).collect();
     assert_eq!(f.sorted(&mut data, "project,id"), expected);
     // An unsorted order vector is a permutation that stays as given.
@@ -178,7 +217,17 @@ fn all_equal_keys_keep_input_order() {
 #[test]
 fn dates_put_set_values_first_and_compare_epoch_strings() {
     let mut f = Fixture::new(&[], &[]);
-    for field in ["due", "end", "entry", "start", "until", "wait", "modified", "scheduled", "when"] {
+    for field in [
+        "due",
+        "end",
+        "entry",
+        "start",
+        "until",
+        "wait",
+        "modified",
+        "scheduled",
+        "when",
+    ] {
         let mut data = vec![
             task("none", &[]),
             task("200", &[(field, "200")]),
@@ -186,8 +235,16 @@ fn dates_put_set_values_first_and_compare_epoch_strings() {
             task("300", &[(field, "300")]),
         ];
         // Lexical epoch comparison ("1000" < "200"), unset last both ways.
-        assert_eq!(f.sorted(&mut data, &format!("{field}+")), names(&["1000", "200", "300", "none"]), "{field}");
-        assert_eq!(f.sorted(&mut data, &format!("{field}-")), names(&["300", "200", "1000", "none"]), "{field}");
+        assert_eq!(
+            f.sorted(&mut data, &format!("{field}+")),
+            names(&["1000", "200", "300", "none"]),
+            "{field}"
+        );
+        assert_eq!(
+            f.sorted(&mut data, &format!("{field}-")),
+            names(&["300", "200", "1000", "none"]),
+            "{field}"
+        );
     }
 }
 
@@ -201,8 +258,16 @@ fn recur_and_duration_udas_compare_parsed_durations() {
             task("none", &[]),
             task("P1D", &[(field, "P1D")]),
         ];
-        assert_eq!(f.sorted(&mut data, &format!("{field}+")), names(&["none", "P1D", "2d", "weekly"]), "{field}");
-        assert_eq!(f.sorted(&mut data, &format!("{field}-")), names(&["weekly", "2d", "P1D", "none"]), "{field}");
+        assert_eq!(
+            f.sorted(&mut data, &format!("{field}+")),
+            names(&["none", "P1D", "2d", "weekly"]),
+            "{field}"
+        );
+        assert_eq!(
+            f.sorted(&mut data, &format!("{field}-")),
+            names(&["weekly", "2d", "P1D", "none"]),
+            "{field}"
+        );
 
         // Different strings with the same duration are equivalent and stop
         // the key scan (later keys are not consulted); identical strings
@@ -252,9 +317,15 @@ fn depends_sorts_on_first_dependency_id() {
     ];
     // on1 and on2+1 tie on the first dependency's ID; description breaks it.
     let (asc, desc) = if id1 < id3 {
-        (["none", "on1", "on2+1", "on3"], ["on3", "on2+1", "on1", "none"])
+        (
+            ["none", "on1", "on2+1", "on3"],
+            ["on3", "on2+1", "on1", "none"],
+        )
     } else {
-        (["none", "on3", "on1", "on2+1"], ["on2+1", "on1", "on3", "none"])
+        (
+            ["none", "on3", "on1", "on2+1"],
+            ["on2+1", "on1", "on3", "none"],
+        )
     };
     assert_eq!(f.sorted(&mut data, "depends+,description+"), names(&asc));
     assert_eq!(f.sorted(&mut data, "depends-,description-"), names(&desc));
@@ -266,10 +337,19 @@ fn urgency_compares_computed_values() {
     let mut data = vec![
         task("plain", &[("status", "pending")]),
         task("project", &[("status", "pending"), ("project", "p")]),
-        task("next", &[("status", "pending"), ("tags", "next"), ("tag_next", "x")]),
+        task(
+            "next",
+            &[("status", "pending"), ("tags", "next"), ("tag_next", "x")],
+        ),
     ];
-    assert_eq!(f.sorted(&mut data, "urgency-"), names(&["next", "project", "plain"]));
-    assert_eq!(f.sorted(&mut data, "urgency+"), names(&["plain", "project", "next"]));
+    assert_eq!(
+        f.sorted(&mut data, "urgency-"),
+        names(&["next", "project", "plain"])
+    );
+    assert_eq!(
+        f.sorted(&mut data, "urgency+"),
+        names(&["plain", "project", "next"])
+    );
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -286,14 +366,23 @@ fn numeric_uda_compares_strtof() {
         task("2e1", &[("est", "2e1")]),
     ];
     // Unset is strtof ("") == 0.
-    assert_eq!(f.sorted(&mut data, "est"), names(&["-1", "none", "9.5", "10", "2e1"]));
-    assert_eq!(f.sorted(&mut data, "est-"), names(&["2e1", "10", "9.5", "none", "-1"]));
+    assert_eq!(
+        f.sorted(&mut data, "est"),
+        names(&["-1", "none", "9.5", "10", "2e1"])
+    );
+    assert_eq!(
+        f.sorted(&mut data, "est-"),
+        names(&["2e1", "10", "9.5", "none", "-1"])
+    );
 }
 
 #[test]
 fn string_uda_with_values_uses_reversed_value_order() {
     let mut f = Fixture::new(&[], &[]);
-    assert_eq!(Task::custom_order().get("size").unwrap(), &names(&["L", "M", "S"]));
+    assert_eq!(
+        Task::custom_order().get("size").unwrap(),
+        &names(&["L", "M", "S"])
+    );
     let mut data = vec![
         with_id(task("S", &[("size", "S")]), 1),
         with_id(task("none", &[]), 2),
@@ -301,8 +390,14 @@ fn string_uda_with_values_uses_reversed_value_order() {
         with_id(task("M", &[("size", "M")]), 4),
     ];
     // Values not in the list (including "") take position end ().
-    assert_eq!(f.sorted(&mut data, "size+"), names(&["L", "M", "S", "none"]));
-    assert_eq!(f.sorted(&mut data, "size-"), names(&["none", "S", "M", "L"]));
+    assert_eq!(
+        f.sorted(&mut data, "size+"),
+        names(&["L", "M", "S", "none"])
+    );
+    assert_eq!(
+        f.sorted(&mut data, "size-"),
+        names(&["none", "S", "M", "L"])
+    );
 
     // Two different values both missing from the list are equivalent, and
     // later keys are not consulted.
@@ -322,18 +417,34 @@ fn string_uda_with_values_uses_reversed_value_order() {
 #[test]
 fn string_uda_without_values_puts_empty_last() {
     let mut f = Fixture::new(&[], &[]);
-    let mut data =
-        vec![task("none", &[]), task("b", &[("plain", "b")]), task("a", &[("plain", "a")]), task("none2", &[])];
-    assert_eq!(f.sorted(&mut data, "plain+"), names(&["a", "b", "none", "none2"]));
-    assert_eq!(f.sorted(&mut data, "plain-"), names(&["b", "a", "none", "none2"]));
+    let mut data = vec![
+        task("none", &[]),
+        task("b", &[("plain", "b")]),
+        task("a", &[("plain", "a")]),
+        task("none2", &[]),
+    ];
+    assert_eq!(
+        f.sorted(&mut data, "plain+"),
+        names(&["a", "b", "none", "none2"])
+    );
+    assert_eq!(
+        f.sorted(&mut data, "plain-"),
+        names(&["b", "a", "none", "none2"])
+    );
 }
 
 #[test]
 fn other_column_types_fall_through_to_the_next_key() {
     let mut f = Fixture::new(&[], &[]);
     let mut data = vec![
-        with_id(task("a", &[("ref", "ffffffff-0000-4000-8000-000000000000")]), 2),
-        with_id(task("b", &[("ref", "00000000-0000-4000-8000-000000000000")]), 1),
+        with_id(
+            task("a", &[("ref", "ffffffff-0000-4000-8000-000000000000")]),
+            2,
+        ),
+        with_id(
+            task("b", &[("ref", "00000000-0000-4000-8000-000000000000")]),
+            1,
+        ),
     ];
     assert_eq!(f.sorted(&mut data, "ref,id"), names(&["b", "a"]));
     assert_eq!(f.sorted(&mut data, "ref"), names(&["a", "b"]));
@@ -368,7 +479,9 @@ fn unknown_field_is_an_error_only_when_reached() {
 fn random_uses_configured_seed_and_libstdcxx_hash() {
     set_sort_random_seed(0);
     let mut f = Fixture::new(&["rc.debug.random.seed:42"], &[]);
-    let uuids: Vec<String> = (0..12).map(|i| format!("dddddddd-0000-4000-8000-{i:012}")).collect();
+    let uuids: Vec<String> = (0..12)
+        .map(|i| format!("dddddddd-0000-4000-8000-{i:012}"))
+        .collect();
     let mut data: Vec<Task> = uuids.iter().map(|u| task(u, &[("uuid", u)])).collect();
     let mut expected = uuids.clone();
     expected.sort_by_key(|u| std_hash(&format!("{u}42")).to_string());
@@ -389,7 +502,12 @@ fn random_uses_configured_seed_and_libstdcxx_hash() {
 fn random_seed_parsing_follows_stoul() {
     set_sort_random_seed(0);
     let mut f = Fixture::new(&[], &[]);
-    for (text, seed) in [(" 7x", 7u32), ("+12", 12), ("-1", u32::MAX), ("4294967297", 1)] {
+    for (text, seed) in [
+        (" 7x", 7u32),
+        ("+12", 12),
+        ("-1", u32::MAX),
+        ("4294967297", 1),
+    ] {
         set_sort_random_seed(0);
         f.ctx.config.set("debug.random.seed", text);
         sort_tasks(&mut f.ctx, &mut [], &mut [], "random").unwrap();
@@ -398,7 +516,13 @@ fn random_seed_parsing_follows_stoul() {
     for text in ["abc", "-", "99999999999999999999999"] {
         set_sort_random_seed(0);
         f.ctx.config.set("debug.random.seed", text);
-        assert!(matches!(sort_tasks(&mut f.ctx, &mut [], &mut [], "id"), Err(TwError::Runtime(_))), "{text}");
+        assert!(
+            matches!(
+                sort_tasks(&mut f.ctx, &mut [], &mut [], "id"),
+                Err(TwError::Runtime(_))
+            ),
+            "{text}"
+        );
     }
     // Unset: a random seed is drawn.
     set_sort_random_seed(0);
@@ -455,7 +579,11 @@ fn stable_sort_matches_libstdcxx() {
         for &o in &order {
             fnv(&mut order_hash, o as u64);
         }
-        assert_eq!((calls, order_hash), (calls_expected, order_expected), "n={n} mode={mode}");
+        assert_eq!(
+            (calls, order_hash),
+            (calls_expected, order_expected),
+            "n={n} mode={mode}"
+        );
     }
 }
 
@@ -468,13 +596,26 @@ fn pairs(list: &[(&str, i32)]) -> Vec<(String, i32)> {
 
 #[test]
 fn sort_projects_inserts_children_after_latest_parent() {
-    let all: BTreeMap<String, i32> =
-        [("a", 5), ("a.b", 2), ("a.c", 1), ("x.y.z", 3), ("m", 4)].iter().map(|(n, c)| (n.to_string(), *c)).collect();
+    let all: BTreeMap<String, i32> = [("a", 5), ("a.b", 2), ("a.c", 1), ("x.y.z", 3), ("m", 4)]
+        .iter()
+        .map(|(n, c)| (n.to_string(), *c))
+        .collect();
     let mut sorted = Vec::new();
     sort_projects(&mut sorted, &all);
     // Each child goes directly below its parent, so later siblings come
     // first (C++ list insert); missing parents are appended with count 1.
-    assert_eq!(sorted, pairs(&[("a", 5), ("a.c", 1), ("a.b", 2), ("m", 4), ("x", 1), ("x.y", 1), ("x.y.z", 3)]));
+    assert_eq!(
+        sorted,
+        pairs(&[
+            ("a", 5),
+            ("a.c", 1),
+            ("a.b", 2),
+            ("m", 4),
+            ("x", 1),
+            ("x.y", 1),
+            ("x.y.z", 3)
+        ])
+    );
 
     // Existing content is kept and searched for parents.
     let mut sorted = pairs(&[("p", 9), ("q", 8)]);
@@ -485,7 +626,9 @@ fn sort_projects_inserts_children_after_latest_parent() {
 
 #[test]
 fn sort_projects_bool_counts_flags() {
-    let all: BTreeMap<String, bool> = [("h.w".to_string(), true), ("k".to_string(), false)].into_iter().collect();
+    let all: BTreeMap<String, bool> = [("h.w".to_string(), true), ("k".to_string(), false)]
+        .into_iter()
+        .collect();
     let mut sorted = Vec::new();
     sort_projects_bool(&mut sorted, &all);
     assert_eq!(sorted, pairs(&[("h", 1), ("h.w", 1), ("k", 0)]));

@@ -50,7 +50,12 @@ impl ColumnTypeString {
     /// # Errors
     /// `The '{1}' attribute does not allow a value of '{2}'.` when
     /// `validate` rejects the (evaluated) value, and any Eval error.
-    pub fn modify_string(this: &dyn Column, task: &mut Task, value: &str, env: &mut dyn ModifyEnv) -> Result<()> {
+    pub fn modify_string(
+        this: &dyn Column,
+        task: &mut Task,
+        value: &str,
+        env: &mut dyn ModifyEnv,
+    ) -> Result<()> {
         let label = MODIFICATION_LABEL;
         let name = this.name();
 
@@ -71,13 +76,19 @@ impl ColumnTypeString {
                 task.set(name, &str_value);
                 env.debug(&format!("{label}{name} <-- '{str_value}' <-- '{value}'"));
             } else {
-                return Err(TwError::Message(format(STRING_INVALID_MOD, &[&name, &value])));
+                return Err(TwError::Message(format(
+                    STRING_INVALID_MOD,
+                    &[&name, &value],
+                )));
             }
         } else if this.validate(value) {
             task.set(name, value);
             env.debug(&format!("{label}{name} <-- '{value}'"));
         } else {
-            return Err(TwError::Message(format(STRING_INVALID_MOD, &[&name, &value])));
+            return Err(TwError::Message(format(
+                STRING_INVALID_MOD,
+                &[&name, &value],
+            )));
         }
 
         Ok(())
@@ -134,9 +145,15 @@ mod tests {
         // Not a lone DOM token: stored as given.
         c.modify(&mut task, "rc.a b", &mut env).unwrap();
         assert_eq!(task.get("x"), "rc.a b");
-        assert_eq!(env.debug, vec![label("x <-- 'hello'"), label("x <-- 'rc.a b'")]);
+        assert_eq!(
+            env.debug,
+            vec![label("x <-- 'hello'"), label("x <-- 'rc.a b'")]
+        );
         let err = c.modify(&mut task, "", &mut env).unwrap_err();
-        assert_eq!(err.to_string(), "The 'x' attribute does not allow a value of ''.");
+        assert_eq!(
+            err.to_string(),
+            "The 'x' attribute does not allow a value of ''."
+        );
         assert_eq!(task.get("x"), "rc.a b");
     }
 
@@ -144,8 +161,10 @@ mod tests {
     fn modify_dom_reference() {
         let c = column();
         let mut env = FakeModifyEnv::default();
-        env.dom.insert("rc.a".to_string(), Variant::from_string("A"));
-        env.dom.insert("rc.empty".to_string(), Variant::from_string(""));
+        env.dom
+            .insert("rc.a".to_string(), Variant::from_string("A"));
+        env.dom
+            .insert("rc.empty".to_string(), Variant::from_string(""));
         let mut task = Task::new();
         ColumnTypeString::modify_string(&c, &mut task, "rc.a", &mut env).unwrap();
         assert_eq!(task.get("x"), "A");
@@ -156,6 +175,9 @@ mod tests {
         assert_eq!(task.get("x"), "rc.missing");
         // The error names the original value, not the evaluated one.
         let err = ColumnTypeString::modify_string(&c, &mut task, "rc.empty", &mut env).unwrap_err();
-        assert_eq!(err.to_string(), "The 'x' attribute does not allow a value of 'rc.empty'.");
+        assert_eq!(
+            err.to_string(),
+            "The 'x' attribute does not allow a value of 'rc.empty'."
+        );
     }
 }

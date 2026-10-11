@@ -11,7 +11,9 @@ use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
 use crate::dependency::dependency_chain_on_complete;
 use crate::error::Result;
-use crate::feedback::{feedback_affected_count, feedback_affected_task, feedback_unblocked, on_project_change};
+use crate::feedback::{
+    feedback_affected_count, feedback_affected_task, feedback_unblocked, on_project_change,
+};
 use crate::filter::Filter;
 use crate::recur::update_recurrence_mask;
 use crate::shared::format::format;
@@ -58,7 +60,8 @@ impl CmdDelete {
     /// (STRING_CMD_DELETE_CONFIRM_R)) || config.getBoolean
     /// ("recurrence.confirmation")`.
     fn recurrence_confirmed(ctx: &mut Context) -> bool {
-        (ctx.config.get("recurrence.confirmation") == "prompt" && confirm(STRING_CMD_DELETE_CONFIRM_R))
+        (ctx.config.get("recurrence.confirmation") == "prompt"
+            && confirm(STRING_CMD_DELETE_CONFIRM_R))
             || ctx.config.get_boolean("recurrence.confirmation")
     }
 
@@ -111,7 +114,11 @@ impl Command for CmdDelete {
         let mut project_changes = ProjectChanges::new();
 
         if filtered.len() > 1 {
-            feedback_affected_count(context, "This command will alter {1} tasks.", filtered.len() as i32);
+            feedback_affected_count(
+                context,
+                "This command will alter {1} tasks.",
+                filtered.len() as i32,
+            );
         }
         let quantity = filtered.len() as u32;
         for mut task in filtered {
@@ -150,7 +157,10 @@ impl Command for CmdDelete {
                             }
 
                             // Delete the parent
-                            let mut parent = context.tdb2.get_by_uuid(task.get_ref("parent"))?.unwrap_or_default();
+                            let mut parent = context
+                                .tdb2
+                                .get_by_uuid(task.get_ref("parent"))?
+                                .unwrap_or_default();
                             parent.set_status(Status::Deleted);
                             if !parent.has("end") {
                                 parent.set_as_now("end");
@@ -201,7 +211,11 @@ impl Command for CmdDelete {
 
         feedback_affected_count(
             context,
-            if count == 1 { "Deleted {1} task." } else { "Deleted {1} tasks." },
+            if count == 1 {
+                "Deleted {1} task."
+            } else {
+                "Deleted {1} tasks."
+            },
             count,
         );
 
@@ -262,7 +276,11 @@ mod tests {
     fn no_tasks_specified() {
         let mut f = fixture("", &["99", "delete"]);
         assert_eq!(f.run(&CmdDelete::new()).unwrap(), 1);
-        assert!(f.ctx.footnotes.iter().any(|m| m == "No tasks specified."), "{:?}", f.ctx.footnotes);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "No tasks specified."),
+            "{:?}",
+            f.ctx.footnotes
+        );
     }
 
     #[test]
@@ -295,7 +313,10 @@ mod tests {
         let rc = f.run(&CmdDelete::new()).unwrap();
         let shown = end_console_override();
         assert_eq!(rc, 1);
-        assert_eq!(shown, "Delete task 1 'one'? (yes/no/all/quit) Task not deleted.\n");
+        assert_eq!(
+            shown,
+            "Delete task 1 'one'? (yes/no/all/quit) Task not deleted.\n"
+        );
         assert_eq!(f.task(TWO).get("status"), "pending");
     }
 

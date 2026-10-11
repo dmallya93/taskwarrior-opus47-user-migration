@@ -134,7 +134,10 @@ pub fn handle_recurrence(ctx: &mut Context) -> Result<()> {
             tdb2::modify(ctx, &mut t)?;
 
             if ctx.verbose("recur") {
-                ctx.footnote(&format("Creating recurring task instance '{1}'", &[&t.get("description")]));
+                ctx.footnote(&format(
+                    "Creating recurring task instance '{1}'",
+                    &[&t.get("description")],
+                ));
             }
         }
     }
@@ -217,7 +220,10 @@ fn byte_at(period: &str, index: usize) -> u8 {
 
 /// The last byte of `period`, `'\0'` when empty.
 fn last_byte(period: &str) -> u8 {
-    period.len().checked_sub(1).map_or(0, |i| byte_at(period, i))
+    period
+        .len()
+        .checked_sub(1)
+        .map_or(0, |i| byte_at(period, i))
 }
 
 /// C++ `int increment = strtol (...)`: `long` truncated to `int`.
@@ -227,7 +233,10 @@ fn strtol_int(text: &str) -> i32 {
 
 /// The C++ invalid-period message.
 fn invalid_period(period: &str, increment: i32) -> String {
-    format("Recurrence period '{1}' is equivalent to {2} and hence invalid.", &[&period, &increment])
+    format(
+        "Recurrence period '{1}' is equivalent to {2} and hence invalid.",
+        &[&period, &increment],
+    )
 }
 
 /// C++ `while (!Datetime::valid (y, m, d)) --d;`: end-of-month clamping.
@@ -300,7 +309,11 @@ pub fn get_next_recurrence(
         d = clamp_day(y, m, d);
 
         return Ok(Some(Datetime::from_ymdhms(y, m, d, ho, mi, se)));
-    } else if first == b'P' && last == b'M' && period.len() >= 2 && Lexer::is_all_digits(&period[1..period.len() - 1]) {
+    } else if first == b'P'
+        && last == b'M'
+        && period.len() >= 2
+        && Lexer::is_all_digits(&period[1..period.len() - 1])
+    {
         let increment = strtol_int(&period[1..period.len() - 1]);
 
         if increment <= 0 {
@@ -384,7 +397,10 @@ pub fn get_next_recurrence(
     let mut idx = 0usize;
     let mut p = Duration::new();
     if !p.parse(period, &mut idx) {
-        footnote(&format("Warning: The recurrence value '{1}' is not valid.", &[&period]));
+        footnote(&format(
+            "Warning: The recurrence value '{1}' is not valid.",
+            &[&period],
+        ));
         return Ok(None);
     }
 

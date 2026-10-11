@@ -50,13 +50,17 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        }
     }
 
     fn ok(&mut self, expression: bool, name: &str) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -115,7 +119,13 @@ impl Upstream {
 
         let dir = TempDir::new().unwrap();
         let ctx = Context::new();
-        Upstream { ctx, dir, attributes, env: Some(env), _lock: lock }
+        Upstream {
+            ctx,
+            dir,
+            attributes,
+            env: Some(env),
+            _lock: lock,
+        }
     }
 }
 
@@ -140,7 +150,12 @@ fn tdb2_test_cpp() {
     context.config.set("gc", 1);
     context.config.set("debug", 1);
 
-    context.tdb2.open_replica_at(&location, /*create_if_missing=*/ true, /*read_write=*/ true).unwrap();
+    context
+        .tdb2
+        .open_replica_at(
+            &location, /*create_if_missing=*/ true, /*read_write=*/ true,
+        )
+        .unwrap();
 
     // Try reading an empty database.
     let mut pending = context.tdb2.pending_tasks().unwrap().len();
@@ -164,11 +179,15 @@ fn tdb2_test_cpp() {
         "the C++ Task constructor throws on the FF4-style input"
     );
     t.check();
-    assert_eq!(t.counter, TDB2_TEST_EXECUTED_IN_CPP, "number of assertions executed in C++");
+    assert_eq!(
+        t.counter, TDB2_TEST_EXECUTED_IN_CPP,
+        "number of assertions executed in C++"
+    );
 
     // Deviation: C++ stops at the throw above. Continue with the JSON form of
     // the intended task so the add/modify assertions are exercised too.
-    let mut task = Task::from_input(context, r#"{"description":"description","name":"value"}"#).unwrap();
+    let mut task =
+        Task::from_input(context, r#"{"description":"description","name":"value"}"#).unwrap();
     crate::tdb2::add(context, &mut task).unwrap();
 
     pending = context.tdb2.pending_tasks().unwrap().len();
@@ -208,15 +227,28 @@ fn tdb2_test_cpp() {
     // `modified` update short. `TDB2::modify` sets the changed "description"
     // with `Task::set_value` (auto-modified + description: +2), and also
     // "modified" when the clock ticked over (+1), so 7 + 2 = 9 or 10.
-    t.ok(num_local_changes == 9 || num_local_changes == 10, "TDB2 after set, 7 or 8 local changes");
+    t.ok(
+        num_local_changes == 9 || num_local_changes == 10,
+        "TDB2 after set, 7 or 8 local changes",
+    );
 
     // Reset for reuse: C++ unlinks the database and reopens it in place; a
     // fresh directory is the equivalent without removing an open SQLite file.
     let reset = f.dir.path().join("reset");
-    context.tdb2.open_replica_at(reset.to_str().unwrap(), /*create_if_missing=*/ true, /*read_write=*/ true).unwrap();
+    context
+        .tdb2
+        .open_replica_at(
+            reset.to_str().unwrap(),
+            /*create_if_missing=*/ true,
+            /*read_write=*/ true,
+        )
+        .unwrap();
 
     t.check();
-    assert_eq!(t.counter, TDB2_TEST_ASSERTIONS, "number of assertions executed");
+    assert_eq!(
+        t.counter, TDB2_TEST_ASSERTIONS,
+        "number of assertions executed"
+    );
 }
 
 /// C++ `uuid2str`.
@@ -257,14 +289,24 @@ fn tc_cpp_test_cpp() {
     let mut str: String;
 
     let mut replica = Tdb2::new();
-    replica.open_replica_at(tmp.path().to_str().unwrap(), true, true).unwrap();
+    replica
+        .open_replica_at(tmp.path().to_str().unwrap(), true, true)
+        .unwrap();
     let uuid = Uuid::new_v4();
     let uuid2 = Uuid::new_v4();
-    t.is(uuid2str(uuid).len(), 36usize, "uuid string is the right length");
+    t.is(
+        uuid2str(uuid).len(),
+        36usize,
+        "uuid string is the right length",
+    );
 
     let mut ops = Operations::new();
     let mut task = TaskData::create(uuid, &mut ops);
-    t.is(uuid2str(task.get_uuid()), uuid2str(uuid), "new task has correct uuid");
+    t.is(
+        uuid2str(task.get_uuid()),
+        uuid2str(uuid),
+        "new task has correct uuid",
+    );
     task.update("status", Some("pending".into()), &mut ops);
     task.update("description", Some("a task".into()), &mut ops);
     task.update("description", Some("a cool task".into()), &mut ops);
@@ -282,23 +324,40 @@ fn tc_cpp_test_cpp() {
     t.is(str.as_str(), "status", "ops[1] property is 'status'");
     t.ok(take(op[1].get_value(), &mut str), "get_value succeeds");
     t.is(str.as_str(), "pending", "ops[1] value is 'pending'");
-    t.ok(!take(op[1].get_old_value(), &mut str), "get_old_value has no old value");
+    t.ok(
+        !take(op[1].get_old_value(), &mut str),
+        "get_old_value has no old value",
+    );
 
     t.is(op[2].is_update(), true, "ops[2] is update");
     t.is(op[2].get_uuid(), uuid2str(uuid), "ops[2] has correct uuid");
     str = op[2].get_property();
-    t.is(str.as_str(), "description", "ops[2] property is 'description'");
+    t.is(
+        str.as_str(),
+        "description",
+        "ops[2] property is 'description'",
+    );
     t.ok(take(op[2].get_value(), &mut str), "get_value succeeds");
     t.is(str.as_str(), "a task", "ops[2] value is 'a task'");
-    t.ok(!take(op[2].get_old_value(), &mut str), "get_old_value has no old value");
+    t.ok(
+        !take(op[2].get_old_value(), &mut str),
+        "get_old_value has no old value",
+    );
 
     t.is(op[3].is_update(), true, "ops[3] is update");
     t.is(op[3].get_uuid(), uuid2str(uuid), "ops[3] has correct uuid");
     str = op[3].get_property();
-    t.is(str.as_str(), "description", "ops[3] property is 'description'");
+    t.is(
+        str.as_str(),
+        "description",
+        "ops[3] property is 'description'",
+    );
     t.ok(take(op[3].get_value(), &mut str), "get_value succeeds");
     t.is(str.as_str(), "a cool task", "ops[3] value is 'a cool task'");
-    t.ok(take(op[3].get_old_value(), &mut str), "get_old_value succeeds");
+    t.ok(
+        take(op[3].get_old_value(), &mut str),
+        "get_old_value succeeds",
+    );
     t.is(str.as_str(), "a task", "ops[3] old value is 'a task'");
 
     t.is(op[4].is_undo_point(), true, "ops[4] is undo_point");
@@ -318,19 +377,42 @@ fn tc_cpp_test_cpp() {
 
     replica.commit_operations(ops).unwrap();
     let maybe_task2 = replica.get_task_data(Uuid::new_v4()).unwrap();
-    t.ok(maybe_task2.is_none(), "looking up a random uuid gets nothing");
+    t.ok(
+        maybe_task2.is_none(),
+        "looking up a random uuid gets nothing",
+    );
 
     // The last operation deleted the task, but we want to see the task, so undo it..
     let undo_ops = replica.get_undo_operations().unwrap();
-    t.ok(replica.commit_reversed_operations(undo_ops).unwrap(), "undo committed successfully");
+    t.ok(
+        replica.commit_reversed_operations(undo_ops).unwrap(),
+        "undo committed successfully",
+    );
 
     let maybe_task3 = replica.get_task_data(uuid).unwrap();
-    t.ok(maybe_task3.is_some(), "looking up the original uuid get TaskData");
+    t.ok(
+        maybe_task3.is_some(),
+        "looking up the original uuid get TaskData",
+    );
     let task3 = maybe_task3.unwrap_or_else(|| TaskData::create(uuid, &mut Operations::new()));
-    t.is(uuid2str(task3.get_uuid()), uuid2str(uuid), "reloaded task has correct uuid");
-    t.ok(get(&task3, "description", &mut str), "reloaded task has a description");
-    t.is(str.as_str(), "a cool task", "reloaded task has correct description");
-    t.ok(get(&task3, "status", &mut str), "reloaded task has a status");
+    t.is(
+        uuid2str(task3.get_uuid()),
+        uuid2str(uuid),
+        "reloaded task has correct uuid",
+    );
+    t.ok(
+        get(&task3, "description", &mut str),
+        "reloaded task has a description",
+    );
+    t.is(
+        str.as_str(),
+        "a cool task",
+        "reloaded task has correct description",
+    );
+    t.ok(
+        get(&task3, "status", &mut str),
+        "reloaded task has a status",
+    );
     t.is(str.as_str(), "pending", "reloaded task has correct status");
 
     t.is(task3.properties().count(), 2usize, "task has 2 properties");
@@ -341,7 +423,9 @@ fn tc_cpp_test_cpp() {
     task4.update("description", Some("another".into()), &mut ops2);
     replica.commit_operations(ops2).unwrap();
 
-    let all_tasks = rt().block_on(replica.replica().unwrap().all_task_data()).unwrap();
+    let all_tasks = rt()
+        .block_on(replica.replica().unwrap().all_task_data())
+        .unwrap();
     t.is(all_tasks.len(), 2usize, "now there are 2 tasks");
     for (key, task) in &all_tasks {
         t.ok(*key == task.get_uuid(), "all_tasks is fully populated");
@@ -355,40 +439,83 @@ fn tc_cpp_test_cpp() {
     if let Err(err) = replica.sync_to_local("/does/not/exist", false) {
         let msg = err.to_string();
         t.ok(
-            msg.contains("/does/not/exist/taskchampion-local-sync-server.sqlite3") && msg.contains("Error code 14"),
+            msg.contains("/does/not/exist/taskchampion-local-sync-server.sqlite3")
+                && msg.contains("Error code 14"),
             "error message has full context",
         );
     }
 
     t.check();
-    assert_eq!(t.counter, TC_CPP_TEST_ASSERTIONS, "number of assertions executed");
+    assert_eq!(
+        t.counter, TC_CPP_TEST_ASSERTIONS,
+        "number of assertions executed"
+    );
 
     // Native mapping: TaskData -> Task (C++ Task::parseTC) ...
     let reloaded = Task::from_task_data(replica.get_task_data(uuid).unwrap().unwrap());
-    t.is(reloaded.get("uuid"), uuid2str(uuid), "Task from TaskData has the uuid");
-    t.is(reloaded.get("description"), "a cool task", "Task from TaskData has the description");
-    t.is(reloaded.get("status"), "pending", "Task from TaskData has the status");
-    t.is(reloaded.all().len(), 3usize, "Task from TaskData has 2 properties plus uuid");
+    t.is(
+        reloaded.get("uuid"),
+        uuid2str(uuid),
+        "Task from TaskData has the uuid",
+    );
+    t.is(
+        reloaded.get("description"),
+        "a cool task",
+        "Task from TaskData has the description",
+    );
+    t.is(
+        reloaded.get("status"),
+        "pending",
+        "Task from TaskData has the status",
+    );
+    t.is(
+        reloaded.all().len(),
+        3usize,
+        "Task from TaskData has 2 properties plus uuid",
+    );
 
     // ... the working set: only the pending task gets an ID ...
     replica.rebuild_working_set(true).unwrap();
     replica.invalidate_cached_info();
-    t.is(replica.id(&uuid2str(uuid)).unwrap(), 1, "pending task has working-set ID 1");
-    t.is(replica.id(&uuid2str(uuid2)).unwrap(), 0, "task without status has no working-set ID");
+    t.is(
+        replica.id(&uuid2str(uuid)).unwrap(),
+        1,
+        "pending task has working-set ID 1",
+    );
+    t.is(
+        replica.id(&uuid2str(uuid2)).unwrap(),
+        0,
+        "task without status has no working-set ID",
+    );
 
     // ... Tdb2 lookups map TaskData to Task with the ID ...
-    let mut by_uuid = replica.get_by_uuid(&uuid2str(uuid)).unwrap().unwrap_or_default();
+    let mut by_uuid = replica
+        .get_by_uuid(&uuid2str(uuid))
+        .unwrap()
+        .unwrap_or_default();
     t.is(by_uuid.id, 1, "get_by_uuid sets the working-set ID");
-    t.is(replica.pending_tasks().unwrap().len(), 1usize, "one pending task");
+    t.is(
+        replica.pending_tasks().unwrap().len(),
+        1usize,
+        "one pending task",
+    );
 
     // ... and Task -> TaskData on modify.
     by_uuid.set("description", "changed");
     replica.modify_task(&mut by_uuid).unwrap();
     let data = replica.get_task_data(uuid).unwrap().unwrap();
-    t.is(data.get("description"), Some("changed"), "modify_task updates the TaskData");
+    t.is(
+        data.get("description"),
+        Some("changed"),
+        "modify_task updates the TaskData",
+    );
     t.ok(data.has("modified"), "modify_task stamps modified");
     t.is(data.get("uuid"), None, "uuid is not stored as a property");
-    t.is(replica.all_tasks().unwrap().len(), 2usize, "all_tasks maps both TaskData");
+    t.is(
+        replica.all_tasks().unwrap().len(),
+        2usize,
+        "all_tasks maps both TaskData",
+    );
 
     t.check();
     assert_eq!(

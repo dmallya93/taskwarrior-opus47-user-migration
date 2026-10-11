@@ -50,7 +50,10 @@ fn status_for(result: std::thread::Result<Result<i32>>) -> (i32, Option<String>)
 
         // catch (const std::string& error) / catch (rust::Error& err)
         Ok(Err(
-            err @ (TwError::Message(_) | TwError::Io(_) | TwError::NotImplemented(_) | TwError::TaskChampion(_)),
+            err @ (TwError::Message(_)
+            | TwError::Io(_)
+            | TwError::NotImplemented(_)
+            | TwError::TaskChampion(_)),
         )) => (-1, Some(format!("{err}\n"))),
 
         // catch (...)
@@ -115,16 +118,24 @@ mod tests {
         );
         assert_eq!(
             status_for(Ok(Err(TwError::NotImplemented("add".into())))),
-            (-1, Some("Command 'add' is not yet implemented.\n".to_string()))
+            (
+                -1,
+                Some("Command 'add' is not yet implemented.\n".to_string())
+            )
         );
         assert_eq!(
             status_for(Ok(Err(TwError::Io(std::io::Error::other("disk"))))),
             (-1, Some("disk\n".to_string()))
         );
         let unknown = Some("Unknown error. Please report.\n".to_string());
-        assert_eq!(status_for(Ok(Err(TwError::Status(4)))), (-2, unknown.clone()));
         assert_eq!(
-            status_for(Ok(Err(TwError::Runtime("Parenthesis is not closed.".into())))),
+            status_for(Ok(Err(TwError::Status(4)))),
+            (-2, unknown.clone())
+        );
+        assert_eq!(
+            status_for(Ok(Err(TwError::Runtime(
+                "Parenthesis is not closed.".into()
+            )))),
             (-2, unknown.clone())
         );
         assert_eq!(status_for(Err(Box::new("panic"))), (-2, unknown));

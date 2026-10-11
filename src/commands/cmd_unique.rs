@@ -69,7 +69,9 @@ impl Command for CmdUnique {
 
         // Find <attribute>.
         // Just the first arg.
-        let words = context.cli2.get_words(&context.config, &mut context.debug_messages);
+        let words = context
+            .cli2
+            .get_words(&context.config, &mut context.debug_messages);
         let Some(attribute) = words.first() else {
             return Err(TwError::Message(
                 "An attribute must be specified.  See 'task _columns'.".to_string(),
@@ -77,7 +79,9 @@ impl Command for CmdUnique {
         };
 
         let Some(canonical) = context.cli2.canonicalize("attribute", attribute) else {
-            return Err(TwError::Message("You must specify an attribute or UDA.".to_string()));
+            return Err(TwError::Message(
+                "You must specify an attribute or UDA.".to_string(),
+            ));
         };
 
         // Find the unique set of matching tasks (C++ `std::set`: byte order).

@@ -112,7 +112,15 @@ impl Command for CmdInfo {
             // id
             let mut row = view.add_row();
             view.set(row, 0, "ID");
-            view.set(row, 1, &if task.id != 0 { task.id.to_string() } else { "-".to_string() });
+            view.set(
+                row,
+                1,
+                &if task.id != 0 {
+                    task.id.to_string()
+                } else {
+                    "-".to_string()
+                },
+            );
 
             let status = Lexer::uc_first(Task::status_to_text(task.get_status()?));
 
@@ -126,7 +134,9 @@ impl Command for CmdInfo {
                 for (key, value) in task.get_annotations() {
                     description.push('\n');
                     description.push_str(&" ".repeat(indent.max(0) as usize));
-                    description.push_str(&Datetime::from_string(&key[11..], "")?.to_string(&dateformatanno));
+                    description.push_str(
+                        &Datetime::from_string(&key[11..], "")?.to_string(&dateformatanno),
+                    );
                     description.push(' ');
                     description.push_str(&value);
                 }
@@ -156,7 +166,11 @@ impl Command for CmdInfo {
                 if !blocked.is_empty() {
                     let mut message = String::new();
                     for block in &blocked {
-                        message.push_str(&format!("{} {}\n", block.id, block.get_ref("description")));
+                        message.push_str(&format!(
+                            "{} {}\n",
+                            block.id,
+                            block.get_ref("description")
+                        ));
                     }
 
                     row = view.add_row();
@@ -171,7 +185,11 @@ impl Command for CmdInfo {
                 if !blocking.is_empty() {
                     let mut message = String::new();
                     for block in &blocking {
-                        message.push_str(&format!("{} {}\n", block.id, block.get_ref("description")));
+                        message.push_str(&format!(
+                            "{} {}\n",
+                            block.id,
+                            block.get_ref("description")
+                        ));
                     }
 
                     row = view.add_row();
@@ -209,7 +227,8 @@ impl Command for CmdInfo {
                 let created = task.get("entry");
                 if !created.is_empty() {
                     let dt = Datetime::from_epoch(c_strtoll(&created));
-                    age = Duration::from_seconds(now.to_epoch() - dt.to_epoch()).format_vague(false);
+                    age =
+                        Duration::from_seconds(now.to_epoch() - dt.to_epoch()).format_vague(false);
                 }
 
                 view.set(row, 1, &format!("{entry} ({age})"));
@@ -229,7 +248,11 @@ impl Command for CmdInfo {
                 if valid_date(task, name) {
                     row = view.add_row();
                     view.set(row, 0, label);
-                    view.set(row, 1, &Datetime::from_epoch(task.get_date(name)).to_string(&dateformat));
+                    view.set(
+                        row,
+                        1,
+                        &Datetime::from_epoch(task.get_date(name)).to_string(&dateformat),
+                    );
                 }
             }
 
@@ -239,8 +262,13 @@ impl Command for CmdInfo {
                 view.set(row, 0, "Last modified");
 
                 let modified = Datetime::from_epoch(task.get_date("modified"));
-                let age = Duration::from_seconds(now.to_epoch() - modified.to_epoch()).format_vague(false);
-                view.set(row, 1, &format!("{} ({age})", modified.to_string(&dateformat)));
+                let age = Duration::from_seconds(now.to_epoch() - modified.to_epoch())
+                    .format_vague(false);
+                view.set(
+                    row,
+                    1,
+                    &format!("{} ({age})", modified.to_string(&dateformat)),
+                );
             }
 
             // tags ...
@@ -298,7 +326,9 @@ impl Command for CmdInfo {
                                 let mut iso = Duration::new();
                                 let mut cursor = 0usize;
                                 if iso.parse(&value, &mut cursor) {
-                                    value = Variant::from_time(iso.to_time_t(), VariantType::Duration)?.to_string();
+                                    value =
+                                        Variant::from_time(iso.to_time_t(), VariantType::Duration)?
+                                            .to_string();
                                 } else {
                                     value = "PT0S".to_string();
                                 }
@@ -348,21 +378,66 @@ impl Command for CmdInfo {
                 urgency_details.add(""); // Result
 
                 let ud = &mut urgency_details;
-                urgency_term(ud, "project", task.urgency_project(), Task::urgency_project_coefficient());
-                urgency_term(ud, "active", task.urgency_active(), Task::urgency_active_coefficient());
-                urgency_term(ud, "scheduled", task.urgency_scheduled(), Task::urgency_scheduled_coefficient());
-                urgency_term(ud, "waiting", task.urgency_waiting(), Task::urgency_waiting_coefficient());
-                urgency_term(ud, "blocked", task.urgency_blocked(), Task::urgency_blocked_coefficient());
-                urgency_term(ud, "blocking", task.urgency_blocking(), Task::urgency_blocking_coefficient());
+                urgency_term(
+                    ud,
+                    "project",
+                    task.urgency_project(),
+                    Task::urgency_project_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "active",
+                    task.urgency_active(),
+                    Task::urgency_active_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "scheduled",
+                    task.urgency_scheduled(),
+                    Task::urgency_scheduled_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "waiting",
+                    task.urgency_waiting(),
+                    Task::urgency_waiting_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "blocked",
+                    task.urgency_blocked(),
+                    Task::urgency_blocked_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "blocking",
+                    task.urgency_blocking(),
+                    Task::urgency_blocking_coefficient(),
+                );
                 urgency_term(
                     ud,
                     "annotations",
                     task.urgency_annotations(),
                     Task::urgency_annotations_coefficient(),
                 );
-                urgency_term(ud, "tags", task.urgency_tags(), Task::urgency_tags_coefficient());
-                urgency_term(ud, "due", task.urgency_due(), Task::urgency_due_coefficient());
-                urgency_term(ud, "age", task.urgency_age(), Task::urgency_age_coefficient());
+                urgency_term(
+                    ud,
+                    "tags",
+                    task.urgency_tags(),
+                    Task::urgency_tags_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "due",
+                    task.urgency_due(),
+                    Task::urgency_due_coefficient(),
+                );
+                urgency_term(
+                    ud,
+                    "age",
+                    task.urgency_age(),
+                    Task::urgency_age_coefficient(),
+                );
 
                 // Tag, Project- and UDA-specific coefficients.
                 for (key, coefficient) in Task::coefficients() {
@@ -375,7 +450,12 @@ impl Command for CmdInfo {
                                 if task_project_name == project
                                     || task_project_name.starts_with(&format!("{project}."))
                                 {
-                                    urgency_term(ud, &format!("PROJECT {project}"), 1.0, coefficient);
+                                    urgency_term(
+                                        ud,
+                                        &format!("PROJECT {project}"),
+                                        1.0,
+                                        coefficient,
+                                    );
                                 }
                             }
                         }
@@ -395,7 +475,12 @@ impl Command for CmdInfo {
                             if let Some(end) = key.find(".coefficient") {
                                 let keyword = substr(&key, 21, end.wrapping_sub(21));
                                 if task.get_ref("description").contains(keyword) {
-                                    urgency_term(ud, &format!("KEYWORD {keyword}"), 1.0, coefficient);
+                                    urgency_term(
+                                        ud,
+                                        &format!("KEYWORD {keyword}"),
+                                        1.0,
+                                        coefficient,
+                                    );
                                 }
                             }
                         }
@@ -478,7 +563,14 @@ impl Command for CmdInfo {
                     let group_end = i;
                     // C++ `i--` followed by the loop's `i++` leaves `i` at `group_end`.
 
-                    let msg = format_for_info(&operations, group_start, group_end, &dateformat, &mut last_timestamp, context)?;
+                    let msg = format_for_info(
+                        &operations,
+                        group_start,
+                        group_end,
+                        &dateformat,
+                        &mut last_timestamp,
+                        context,
+                    )?;
 
                     let Some(msg) = msg else {
                         continue;
@@ -607,7 +699,13 @@ fn format_for_info(
     context: &Context,
 ) -> Result<Option<String>> {
     let render = |prop: &str, value: &str| {
-        crate::feedback::render_attribute(&context.columns, &context.config, prop, value, dateformat)
+        crate::feedback::render_attribute(
+            &context.columns,
+            &context.config,
+            prop,
+            value,
+            dateformat,
+        )
     };
 
     let mut out = String::new();
@@ -633,7 +731,10 @@ fn format_for_info(
             } else if Task::is_tag_attr(&prop) {
                 out.push_str(&format("Tag '{1}' deleted.\n", &[&Task::attr2tag(&prop)]));
             } else if Task::is_dep_attr(&prop) {
-                out.push_str(&format("Dependency on '{1}' deleted.\n", &[&Task::attr2dep(&prop)]));
+                out.push_str(&format(
+                    "Dependency on '{1}' deleted.\n",
+                    &[&Task::attr2dep(&prop)],
+                ));
             } else if prop == "start" {
                 let started = Datetime::from_epoch(*last_start);
                 let mut stopped = timestamp;
@@ -675,7 +776,10 @@ fn format_for_info(
             } else if Task::is_tag_attr(&prop) {
                 out.push_str(&format("Tag '{1}' added.\n", &[&Task::attr2tag(&prop)]));
             } else if Task::is_dep_attr(&prop) {
-                out.push_str(&format("Dependency on '{1}' added.\n", &[&Task::attr2dep(&prop)]));
+                out.push_str(&format(
+                    "Dependency on '{1}' added.\n",
+                    &[&Task::attr2dep(&prop)],
+                ));
             } else {
                 // Record the last start time for later duration calculation.
                 if prop == "start" {
@@ -707,7 +811,11 @@ fn format_for_info(
 
                 out.push_str(&format(
                     "{1} changed from '{2}' to '{3}'.",
-                    &[&Lexer::uc_first(&prop), &render(&prop, old_value), &render(&prop, value)],
+                    &[
+                        &Lexer::uc_first(&prop),
+                        &render(&prop, old_value),
+                        &render(&prop, value),
+                    ],
                 ));
                 out.push('\n');
             }
@@ -740,7 +848,13 @@ fn cpp_sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], less: F) {
     }
 }
 
-fn introsort_loop<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, mut last: usize, mut depth: usize, less: &F) {
+fn introsort_loop<T, F: Fn(&T, &T) -> bool>(
+    v: &mut [T],
+    first: usize,
+    mut last: usize,
+    mut depth: usize,
+    less: &F,
+) {
     while last - first > S_THRESHOLD {
         if depth == 0 {
             heap_sort(&mut v[first..last], less);
@@ -753,7 +867,12 @@ fn introsort_loop<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, mut last:
     }
 }
 
-fn unguarded_partition_pivot<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, last: usize, less: &F) -> usize {
+fn unguarded_partition_pivot<T, F: Fn(&T, &T) -> bool>(
+    v: &mut [T],
+    first: usize,
+    last: usize,
+    less: &F,
+) -> usize {
     let mid = first + (last - first) / 2;
     move_median_to_first(v, first, first + 1, mid, last - 1, less);
     unguarded_partition(v, first + 1, last, first, less)
@@ -808,7 +927,12 @@ fn unguarded_partition<T, F: Fn(&T, &T) -> bool>(
     }
 }
 
-fn final_insertion_sort<T, F: Fn(&T, &T) -> bool>(v: &mut [T], first: usize, last: usize, less: &F) {
+fn final_insertion_sort<T, F: Fn(&T, &T) -> bool>(
+    v: &mut [T],
+    first: usize,
+    last: usize,
+    less: &F,
+) {
     if last - first > S_THRESHOLD {
         insertion_sort(v, first, first + S_THRESHOLD, less);
         for i in first + S_THRESHOLD..last {
@@ -934,12 +1058,23 @@ mod tests {
 
     #[test]
     fn substr_clamps_like_cpp() {
-        assert_eq!(substr("urgency.user.tag.coefficient", 17, 16usize.wrapping_sub(17)), "coefficient");
-        assert_eq!(substr("urgency.user.tag.foo.coefficient", 17, 20 - 17), "foo");
+        assert_eq!(
+            substr("urgency.user.tag.coefficient", 17, 16usize.wrapping_sub(17)),
+            "coefficient"
+        );
+        assert_eq!(
+            substr("urgency.user.tag.foo.coefficient", 17, 20 - 17),
+            "foo"
+        );
         assert_eq!(substr("abc", 0, 13), "abc");
     }
 
-    fn update(property: &str, value: Option<&str>, old_value: Option<&str>, timestamp: i64) -> Operation {
+    fn update(
+        property: &str,
+        value: Option<&str>,
+        old_value: Option<&str>,
+        timestamp: i64,
+    ) -> Operation {
         use taskchampion::chrono::{TimeZone, Utc};
         Operation::from(taskchampion::Operation::Update {
             uuid: taskchampion::Uuid::from_u128(1),
@@ -977,7 +1112,9 @@ mod tests {
             update("project", None, Some("P"), 100),
         ];
         let mut last = 0;
-        let msg = format_for_info(&ops, 0, ops.len(), "", &mut last, &context).unwrap().unwrap();
+        let msg = format_for_info(&ops, 0, ops.len(), "", &mut last, &context)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             msg,
             "Description changed from 'old' to 'new'.\n\
@@ -994,8 +1131,14 @@ mod tests {
         );
 
         // Only ignored properties: nothing to show.
-        let ops = vec![update("modified", Some("5"), None, 100), update("depends", Some("x"), None, 100)];
-        assert_eq!(format_for_info(&ops, 0, 2, "", &mut last, &context).unwrap(), None);
+        let ops = vec![
+            update("modified", Some("5"), None, 100),
+            update("depends", Some("x"), None, 100),
+        ];
+        assert_eq!(
+            format_for_info(&ops, 0, 2, "", &mut last, &context).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -1003,23 +1146,41 @@ mod tests {
         let context = info_context();
         let mut last = 0;
         let start = vec![update("start", Some("1700049600"), None, 1700049600)];
-        let msg = format_for_info(&start, 0, 1, "Y-M-D", &mut last, &context).unwrap().unwrap();
+        let msg = format_for_info(&start, 0, 1, "Y-M-D", &mut last, &context)
+            .unwrap()
+            .unwrap();
         assert_eq!(msg, "Start set to '2023-11-15'.\n");
         assert_eq!(last, 1700049600);
 
         // Stop: duration from the last start to the deleting timestamp.
         let stop = vec![update("start", None, Some("1700049600"), 1700053200)];
-        let msg = format_for_info(&stop, 0, 1, "Y-M-D", &mut last, &context).unwrap().unwrap();
+        let msg = format_for_info(&stop, 0, 1, "Y-M-D", &mut last, &context)
+            .unwrap()
+            .unwrap();
         assert_eq!(msg, "Start deleted (duration: 1:00:00).\n");
 
         // An `end` set in the same group is the stop time (#2514).
-        let done = vec![update("start", None, Some("1700049600"), 1700060000), update("end", Some("1700049660"), None, 1700060000)];
-        let msg = format_for_info(&done, 0, 2, "Y-M-D", &mut last, &context).unwrap().unwrap();
-        assert_eq!(msg, "Start deleted (duration: 0:01:00).\nEnd set to '2023-11-15'.\n");
+        let done = vec![
+            update("start", None, Some("1700049600"), 1700060000),
+            update("end", Some("1700049660"), None, 1700060000),
+        ];
+        let msg = format_for_info(&done, 0, 2, "Y-M-D", &mut last, &context)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            msg,
+            "Start deleted (duration: 0:01:00).\nEnd set to '2023-11-15'.\n"
+        );
 
         // An `end` deleted in the same group: C++ std::bad_optional_access.
-        let bad = vec![update("start", None, Some("1700049600"), 1700060000), update("end", None, Some("1700049660"), 1700060000)];
-        assert!(matches!(format_for_info(&bad, 0, 2, "", &mut last, &context), Err(TwError::Runtime(_))));
+        let bad = vec![
+            update("start", None, Some("1700049600"), 1700060000),
+            update("end", None, Some("1700049660"), 1700060000),
+        ];
+        assert!(matches!(
+            format_for_info(&bad, 0, 2, "", &mut last, &context),
+            Err(TwError::Runtime(_))
+        ));
     }
 
     #[test]

@@ -35,7 +35,10 @@ impl ColumnProject {
         parent.base.label = "Project".to_string();
         parent.base.styles = strings(&["full", "parent", "indented"]);
         parent.base.examples = strings(&["home.garden", "home", "  home.garden"]);
-        ColumnProject { parent, hyphenate: config.get_boolean("hyphenate") }
+        ColumnProject {
+            parent,
+            hyphenate: config.get_boolean("hyphenate"),
+        }
     }
 }
 
@@ -153,34 +156,57 @@ mod render_tests {
         }
         let m = column.measure(&mut task, &mut env).unwrap();
         let mut lines = Vec::new();
-        column.render(&mut lines, &mut task, width, &Color::new(), &mut env).unwrap();
+        column
+            .render(&mut lines, &mut task, width, &Color::new(), &mut env)
+            .unwrap();
         (m, lines)
     }
 
     #[test]
     fn full() {
-        assert_eq!(run("full", "home.garden", 13), ((11, 11), vec!["home.garden  ".to_string()]));
-        assert_eq!(run("default", "home.garden", 11), ((11, 11), vec!["home.garden".to_string()]));
+        assert_eq!(
+            run("full", "home.garden", 13),
+            ((11, 11), vec!["home.garden  ".to_string()])
+        );
+        assert_eq!(
+            run("default", "home.garden", 11),
+            ((11, 11), vec!["home.garden".to_string()])
+        );
         // No project: nothing measured or rendered.
         assert_eq!(run("full", "", 5), ((0, 0), vec![]));
     }
 
     #[test]
     fn parent() {
-        assert_eq!(run("parent", "home.garden.shed", 6), ((4, 4), vec!["home  ".to_string()]));
+        assert_eq!(
+            run("parent", "home.garden.shed", 6),
+            ((4, 4), vec!["home  ".to_string()])
+        );
         assert_eq!(run("parent", "home", 4), ((4, 4), vec!["home".to_string()]));
     }
 
     #[test]
     fn indented() {
-        assert_eq!(run("indented", "home.garden", 8), ((6, 8), vec!["  garden".to_string()]));
-        assert_eq!(run("indented", "a.b.c", 5), ((1, 5), vec!["    c".to_string()]));
-        assert_eq!(run("indented", "home", 4), ((4, 4), vec!["home".to_string()]));
+        assert_eq!(
+            run("indented", "home.garden", 8),
+            ((6, 8), vec!["  garden".to_string()])
+        );
+        assert_eq!(
+            run("indented", "a.b.c", 5),
+            ((1, 5), vec!["    c".to_string()])
+        );
+        assert_eq!(
+            run("indented", "home", 4),
+            ((4, 4), vec!["home".to_string()])
+        );
     }
 
     #[test]
     fn wraps_at_width() {
         // No spaces: hard break at the width (no hyphen with hyphenate off).
-        assert_eq!(run("full", "abcdefgh", 4), ((8, 8), vec!["abcd".to_string(), "efgh".to_string()]));
+        assert_eq!(
+            run("full", "abcdefgh", 4),
+            ((8, 8), vec!["abcd".to_string(), "efgh".to_string()])
+        );
     }
 }

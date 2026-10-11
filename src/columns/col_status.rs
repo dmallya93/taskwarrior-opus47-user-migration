@@ -5,7 +5,9 @@
 //! inherited from `ColumnTypeString`.
 
 use crate::columns::col_type_string::ColumnTypeString;
-use crate::columns::column::{column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::shared::configuration::Configuration;
@@ -138,16 +140,27 @@ mod tests {
         }
         let m = column.measure(&mut task, &mut env).unwrap();
         let mut lines = Vec::new();
-        column.render(&mut lines, &mut task, width, &Color::new(), &mut env).unwrap();
+        column
+            .render(&mut lines, &mut task, width, &Color::new(), &mut env)
+            .unwrap();
         (m, lines)
     }
 
     #[test]
     fn long() {
         assert_eq!(run("long", "", 9), ((7, 7), vec!["Pending  ".to_string()]));
-        assert_eq!(run("default", "completed", 9), ((9, 9), vec!["Completed".to_string()]));
-        assert_eq!(run("long", "deleted", 7), ((7, 7), vec!["Deleted".to_string()]));
-        assert_eq!(run("long", "recurring", 9), ((9, 9), vec!["Recurring".to_string()]));
+        assert_eq!(
+            run("default", "completed", 9),
+            ((9, 9), vec!["Completed".to_string()])
+        );
+        assert_eq!(
+            run("long", "deleted", 7),
+            ((7, 7), vec!["Deleted".to_string()])
+        );
+        assert_eq!(
+            run("long", "recurring", 9),
+            ((9, 9), vec!["Recurring".to_string()])
+        );
         // A pending task with a future wait is virtually waiting.
         let column = factory("status.long", "list", &Configuration::new()).unwrap();
         let mut env = FakeRenderEnv::with_config(&[]);
@@ -156,16 +169,24 @@ mod tests {
         task.set("wait", "4102444800"); // 2100-01-01
         assert_eq!(column.measure(&mut task, &mut env).unwrap(), (7, 7));
         let mut lines = Vec::new();
-        column.render(&mut lines, &mut task, 7, &Color::new(), &mut env).unwrap();
+        column
+            .render(&mut lines, &mut task, 7, &Color::new(), &mut env)
+            .unwrap();
         assert_eq!(lines, vec!["Waiting"]);
     }
 
     #[test]
     fn short() {
         assert_eq!(run("short", "pending", 2), ((1, 1), vec!["P ".to_string()]));
-        assert_eq!(run("short", "completed", 1), ((1, 1), vec!["C".to_string()]));
+        assert_eq!(
+            run("short", "completed", 1),
+            ((1, 1), vec!["C".to_string()])
+        );
         assert_eq!(run("short", "deleted", 1), ((1, 1), vec!["D".to_string()]));
-        assert_eq!(run("short", "recurring", 1), ((1, 1), vec!["R".to_string()]));
+        assert_eq!(
+            run("short", "recurring", 1),
+            ((1, 1), vec!["R".to_string()])
+        );
     }
 
     #[test]
@@ -175,6 +196,8 @@ mod tests {
         let mut task = Task::new();
         task.set("status", "bogus");
         assert!(column.measure(&mut task, &mut env).is_err());
-        assert!(column.render(&mut Vec::new(), &mut task, 7, &Color::new(), &mut env).is_err());
+        assert!(column
+            .render(&mut Vec::new(), &mut task, 7, &Color::new(), &mut env)
+            .is_err());
     }
 }

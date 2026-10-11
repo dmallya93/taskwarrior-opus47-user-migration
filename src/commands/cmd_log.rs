@@ -67,12 +67,16 @@ impl Command for CmdLog {
 
         // Cannot log recurring tasks.
         if task.has("recur") {
-            return Err(TwError::Message("You cannot log recurring tasks.".to_string()));
+            return Err(TwError::Message(
+                "You cannot log recurring tasks.".to_string(),
+            ));
         }
 
         // Cannot log waiting tasks.
         if task.has("wait") {
-            return Err(TwError::Message("You cannot log waiting tasks.".to_string()));
+            return Err(TwError::Message(
+                "You cannot log waiting tasks.".to_string(),
+            ));
         }
 
         tdb2::add(context, &mut task)?;

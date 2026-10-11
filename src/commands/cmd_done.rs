@@ -11,7 +11,9 @@ use crate::commands::command::{Category, Command, CommandMeta};
 use crate::context::Context;
 use crate::dependency::dependency_chain_on_complete;
 use crate::error::Result;
-use crate::feedback::{feedback_affected_count, feedback_affected_task, feedback_unblocked, on_project_change};
+use crate::feedback::{
+    feedback_affected_count, feedback_affected_task, feedback_unblocked, on_project_change,
+};
 use crate::filter::Filter;
 use crate::nag::nag;
 use crate::recur::update_recurrence_mask;
@@ -77,7 +79,11 @@ impl Command for CmdDone {
         let mut project_changes = ProjectChanges::new();
 
         if filtered.len() > 1 {
-            feedback_affected_count(context, "This command will alter {1} tasks.", filtered.len() as i32);
+            feedback_affected_count(
+                context,
+                "This command will alter {1} tasks.",
+                filtered.len() as i32,
+            );
         }
 
         let quantity = filtered.len() as u32;
@@ -157,7 +163,11 @@ impl Command for CmdDone {
 
         feedback_affected_count(
             context,
-            if count == 1 { "Completed {1} task." } else { "Completed {1} tasks." },
+            if count == 1 {
+                "Completed {1} task."
+            } else {
+                "Completed {1} tasks."
+            },
             count,
         );
         Ok(rc)
@@ -209,7 +219,10 @@ mod tests {
 
     #[test]
     fn started_task_is_stopped_with_journal_annotation() {
-        let mut f = fixture("journal.time=on\njournal.time.stop.annotation=Halted\n", &["1", "done"]);
+        let mut f = fixture(
+            "journal.time=on\njournal.time.stop.annotation=Halted\n",
+            &["1", "done"],
+        );
         assert_eq!(f.run(&CmdDone::new()).unwrap(), 0);
         let t = f.task(ONE);
         assert!(!t.has("start"));
@@ -240,7 +253,10 @@ mod tests {
         let rc = f.run(&CmdDone::new()).unwrap();
         let shown = end_console_override();
         assert_eq!(rc, 1);
-        assert_eq!(shown, "Task aaaaaaaa 'three' is neither pending nor waiting.\n");
+        assert_eq!(
+            shown,
+            "Task aaaaaaaa 'three' is neither pending nor waiting.\n"
+        );
         assert_eq!(f.task(THREE).get("end"), "1767312000");
     }
 
@@ -248,7 +264,11 @@ mod tests {
     fn no_tasks_specified() {
         let mut f = fixture("", &["99", "done"]);
         assert_eq!(f.run(&CmdDone::new()).unwrap(), 1);
-        assert!(f.ctx.footnotes.iter().any(|m| m == "No tasks specified."), "{:?}", f.ctx.footnotes);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "No tasks specified."),
+            "{:?}",
+            f.ctx.footnotes
+        );
     }
 
     #[test]
@@ -258,8 +278,14 @@ mod tests {
         let rc = f.run(&CmdDone::new()).unwrap();
         let shown = end_console_override();
         assert_eq!(rc, 1);
-        assert!(shown.contains("Complete task 1 'one'? (yes/no/all/quit) Task not completed.\n"), "{shown}");
-        assert!(shown.ends_with("Complete task 2 'two'? (yes/no/all/quit) Task not completed.\n"), "{shown}");
+        assert!(
+            shown.contains("Complete task 1 'one'? (yes/no/all/quit) Task not completed.\n"),
+            "{shown}"
+        );
+        assert!(
+            shown.ends_with("Complete task 2 'two'? (yes/no/all/quit) Task not completed.\n"),
+            "{shown}"
+        );
         assert_eq!(f.task(ONE).get("status"), "pending");
         assert_eq!(f.task(TWO).get("status"), "pending");
     }
@@ -288,7 +314,11 @@ mod tests {
     fn nag_when_more_urgent_task_remains() {
         let mut f = fixture("nag=Be good.\n", &["2", "done"]);
         assert_eq!(f.run(&CmdDone::new()).unwrap(), 0);
-        assert!(f.ctx.footnotes.iter().any(|m| m == "Be good."), "{:?}", f.ctx.footnotes);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "Be good."),
+            "{:?}",
+            f.ctx.footnotes
+        );
     }
 
     #[test]

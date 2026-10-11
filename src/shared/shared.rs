@@ -306,11 +306,7 @@ pub fn extract_line_with_surrogate(
             }
             // [case 2] one |two --> last_last == 32, last != 32, ws != 0
             else if last_last_character == b' ' && last_character != b' ' && last_ws != 0 {
-                line = substr(
-                    bytes_of,
-                    *offset,
-                    (last_bytes - *offset).wrapping_sub(1),
-                );
+                line = substr(bytes_of, *offset, (last_bytes - *offset).wrapping_sub(1));
                 *offset = last_bytes;
                 break;
             } else if last_last_character != b' ' && last_character != b' ' {
@@ -402,7 +398,10 @@ pub fn close_enough(reference: &str, attempt: &str, min_length: u32) -> bool {
 
     // A partial match will suffice.
     if attempt.len() < reference.len() && attempt.len() >= min_length as usize {
-        return compare_bytes_insensitive(&reference.as_bytes()[..attempt.len()], attempt.as_bytes());
+        return compare_bytes_insensitive(
+            &reference.as_bytes()[..attempt.len()],
+            attempt.as_bytes(),
+        );
     }
 
     false
@@ -444,7 +443,6 @@ pub fn find_from(text: &str, pattern: &str, begin: usize, sensitive: bool) -> Op
 /// [`find_from`] over raw bytes, for callers (C++ `Task::substitute`) whose
 /// `std::string` may hold a byte sequence that is not valid UTF-8 mid-way.
 pub fn find_bytes_from(text: &[u8], p: &[u8], begin: usize, sensitive: bool) -> Option<usize> {
-
     // Implement a sensitive find, which is really just a loop withing a loop,
     // comparing lower-case versions of each character in turn.
     if !sensitive {
@@ -485,8 +483,16 @@ pub fn find_bytes_from(text: &[u8], p: &[u8], begin: usize, sensitive: bool) -> 
 /// C++ `listDiff` (template in `shared.h`): returns `(leftOnly, rightOnly)`,
 /// the elements of each list absent from the other, in original order.
 pub fn list_diff<T: PartialEq + Clone>(left: &[T], right: &[T]) -> (Vec<T>, Vec<T>) {
-    let left_only = left.iter().filter(|l| !right.contains(l)).cloned().collect();
-    let right_only = right.iter().filter(|r| !left.contains(r)).cloned().collect();
+    let left_only = left
+        .iter()
+        .filter(|l| !right.contains(l))
+        .cloned()
+        .collect();
+    let right_only = right
+        .iter()
+        .filter(|r| !left.contains(r))
+        .cloned()
+        .collect();
     (left_only, right_only)
 }
 
@@ -583,7 +589,9 @@ thread_local! {
 /// they write to stdout, on this thread, until [`end_console_override`].
 #[cfg(test)]
 pub(crate) fn begin_console_override(input: &str) {
-    CONSOLE_OVERRIDE.with(|c| *c.borrow_mut() = Some((std::io::Cursor::new(input.as_bytes().to_vec()), Vec::new())));
+    CONSOLE_OVERRIDE.with(|c| {
+        *c.borrow_mut() = Some((std::io::Cursor::new(input.as_bytes().to_vec()), Vec::new()))
+    });
 }
 
 /// Test-only: ends [`begin_console_override`], returning the captured stdout.
@@ -797,7 +805,11 @@ pub fn execute<S: AsRef<str>>(executable: &str, args: &[S], input: &str) -> Resu
 
             let rc = libc::execvp(exe.as_ptr(), argv.as_ptr());
             let reason = CStr::from_ptr(libc::strerror(errno())).to_bytes();
-            libc::write(libc::STDERR_FILENO, failure_prefix.as_ptr().cast(), failure_prefix.len());
+            libc::write(
+                libc::STDERR_FILENO,
+                failure_prefix.as_ptr().cast(),
+                failure_prefix.len(),
+            );
             libc::write(libc::STDERR_FILENO, reason.as_ptr().cast(), reason.len());
             libc::write(libc::STDERR_FILENO, b"\n".as_ptr().cast(), 1);
             libc::_exit(rc);
@@ -827,7 +839,9 @@ pub fn execute<S: AsRef<str>>(executable: &str, args: &[S], input: &str) -> Resu
     let status = if libc::WIFEXITED(status) {
         libc::WEXITSTATUS(status)
     } else {
-        return Err(TwError::Message("Error: Could not get Hook exit status!".to_string()));
+        return Err(TwError::Message(
+            "Error: Could not get Hook exit status!".to_string(),
+        ));
     };
 
     // SAFETY: We're done, return to default.
@@ -882,7 +896,10 @@ fn execute_parent(pin_write: libc::c_int, pout_read: libc::c_int, input: &[u8]) 
             // NOTE: Timeout chosen arbitrarily - we don't time out execute() calls.
             // select() is run over and over again unless the child exits or closes
             // its pipes.
-            let mut tv = libc::timeval { tv_sec: 5, tv_usec: 0 };
+            let mut tv = libc::timeval {
+                tv_sec: 5,
+                tv_usec: 0,
+            };
 
             // SAFETY: valid fd_set and timeval pointers.
             let select_retval = unsafe {
@@ -936,7 +953,8 @@ fn execute_parent(pin_write: libc::c_int, pout_read: libc::c_int, input: &[u8]) 
             // SAFETY: rfds was filled by select above.
             if read_retval != 0 && unsafe { libc::FD_ISSET(pout_read, &rfds) } {
                 // SAFETY: reading into a valid buffer, leaving room for the C++ NUL.
-                read_retval = unsafe { libc::read(pout_read, buf.as_mut_ptr().cast(), buf.len() - 1) };
+                read_retval =
+                    unsafe { libc::read(pout_read, buf.as_mut_ptr().cast(), buf.len() - 1) };
                 if read_retval == -1 {
                     if is_retryable(errno()) {
                         continue;
@@ -1185,7 +1203,10 @@ pub fn is_ipv6_address(input: &str) -> Option<(String, i32)> {
     let bytes = input.as_bytes();
     let mut c = 0;
 
-    if is_char(bytes, b'[', &mut c) && is_ipv6_block_set(bytes, &mut c) && is_char(bytes, b']', &mut c) {
+    if is_char(bytes, b'[', &mut c)
+        && is_ipv6_block_set(bytes, &mut c)
+        && is_char(bytes, b']', &mut c)
+    {
         let colon = c;
         if is_char(bytes, b':', &mut c) && is_port(bytes, &mut c) && is_eos(bytes, c) {
             let address = substr(bytes, 1, colon - 2);
@@ -1222,7 +1243,11 @@ mod tests {
     fn wrap_text_cases() {
         // void wrapText (std::vector <std::string>& lines, const std::string& text, const int width, bool hyphenate)
         let lines = wrap("This is a test of the line wrapping code.", 10, true);
-        assert_eq!(lines.len(), 5, "wrapText 'This is a test of the line wrapping code.' -> total 5 lines");
+        assert_eq!(
+            lines.len(),
+            5,
+            "wrapText 'This is a test of the line wrapping code.' -> total 5 lines"
+        );
         assert_eq!(lines[0], "This is a", "wrapText line 0 -> 'This is a'");
         assert_eq!(lines[1], "test of", "wrapText line 1 -> 'test of'");
         assert_eq!(lines[2], "the line", "wrapText line 2 -> 'the line'");
@@ -1230,7 +1255,11 @@ mod tests {
         assert_eq!(lines[4], "code.", "wrapText line 4 -> 'code.'");
 
         let lines = wrap("This ☺ is a test of utf8 line extraction.", 7, true);
-        assert_eq!(lines.len(), 7, "wrapText 'This ☺ is a test of utf8 line extraction.' -> total 7 lines");
+        assert_eq!(
+            lines.len(),
+            7,
+            "wrapText 'This ☺ is a test of utf8 line extraction.' -> total 7 lines"
+        );
         assert_eq!(lines[0], "This ☺", "wrapText line 0 -> 'This ☺'");
         assert_eq!(lines[1], "is a", "wrapText line 1 -> 'is a'");
         assert_eq!(lines[2], "test of", "wrapText line 2 -> 'test of'");
@@ -1240,8 +1269,15 @@ mod tests {
         assert_eq!(lines[6], "tion.", "wrapText line 6 -> 'tion.'");
 
         let lines = wrap("one two three\n  four", 13, true);
-        assert_eq!(lines.len(), 2, "wrapText 'one two three\\n  four' -> 2 lines");
-        assert_eq!(lines[0], "one two three", "wrapText line 0 -> 'one two three'");
+        assert_eq!(
+            lines.len(),
+            2,
+            "wrapText 'one two three\\n  four' -> 2 lines"
+        );
+        assert_eq!(
+            lines[0], "one two three",
+            "wrapText line 0 -> 'one two three'"
+        );
         assert_eq!(lines[1], "  four", "wrapText line 1 -> '  four'");
 
         // wrapText appends to the caller's vector.
@@ -1256,40 +1292,79 @@ mod tests {
         let text = "This ☺ is a test of utf8 line extraction.";
         let mut offset = 0;
         let line = extract_line(text, 7, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("This ☺"), "extractLine 7 'This ☺ is a test of utf8 line extraction.' -> 'This ☺'");
+        assert_eq!(
+            line.as_deref(),
+            Some("This ☺"),
+            "extractLine 7 'This ☺ is a test of utf8 line extraction.' -> 'This ☺'"
+        );
 
         let text = "line 1\nlengthy second line that exceeds width";
         let mut offset = 0;
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("line 1"), "extractLine 10 'line 1\\nlengthy second line that exceeds width' -> 'line 1'");
+        assert_eq!(
+            line.as_deref(),
+            Some("line 1"),
+            "extractLine 10 'line 1\\nlengthy second line that exceeds width' -> 'line 1'"
+        );
 
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("lengthy"), "extractLine 10 'lengthy second line that exceeds width' -> 'lengthy'");
+        assert_eq!(
+            line.as_deref(),
+            Some("lengthy"),
+            "extractLine 10 'lengthy second line that exceeds width' -> 'lengthy'"
+        );
 
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("second"), "extractLine 10 'second line that exceeds width' -> 'second'");
+        assert_eq!(
+            line.as_deref(),
+            Some("second"),
+            "extractLine 10 'second line that exceeds width' -> 'second'"
+        );
 
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("line that"), "extractLine 10 'line that exceeds width' -> 'line that'");
+        assert_eq!(
+            line.as_deref(),
+            Some("line that"),
+            "extractLine 10 'line that exceeds width' -> 'line that'"
+        );
 
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("exceeds"), "extractLine 10 'exceeds width' -> 'exceeds'");
+        assert_eq!(
+            line.as_deref(),
+            Some("exceeds"),
+            "extractLine 10 'exceeds width' -> 'exceeds'"
+        );
 
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("width"), "extractLine 10 'width' -> 'width'");
+        assert_eq!(
+            line.as_deref(),
+            Some("width"),
+            "extractLine 10 'width' -> 'width'"
+        );
 
-        assert!(extract_line(text, 10, true, &mut offset).is_none(), "extractLine 10 '' -> ''");
+        assert!(
+            extract_line(text, 10, true, &mut offset).is_none(),
+            "extractLine 10 '' -> ''"
+        );
 
         let text = "AAAAAAAAAABBBBBBBBBB";
         let mut offset = 0;
         let line = extract_line(text, 10, true, &mut offset);
-        assert_eq!(line.as_deref(), Some("AAAAAAAAA-"), "extractLine hyphenated unbreakable line");
+        assert_eq!(
+            line.as_deref(),
+            Some("AAAAAAAAA-"),
+            "extractLine hyphenated unbreakable line"
+        );
 
         let text = "abc\n";
         let mut offset = 3;
         let line = extract_line(text, 10, true, &mut offset);
         assert!(line.is_some(), "extractLine succeeds at trailing newline");
-        assert_eq!(line.as_deref(), Some(""), "recognized newline as a line ending");
+        assert_eq!(
+            line.as_deref(),
+            Some(""),
+            "recognized newline as a line ending"
+        );
         assert_eq!(offset, 4, "incremented offset");
 
         let text = "abc\0";
@@ -1307,19 +1382,31 @@ mod tests {
 
         // Without hyphenation, the last good part is used as is.
         let mut offset = 0;
-        assert_eq!(extract_line("AAAAAAAAAABB", 10, false, &mut offset).as_deref(), Some("AAAAAAAAAA"));
+        assert_eq!(
+            extract_line("AAAAAAAAAABB", 10, false, &mut offset).as_deref(),
+            Some("AAAAAAAAAA")
+        );
         assert_eq!(offset, 10);
 
         // A first character wider than the width is replaced by the surrogate.
         let mut offset = 0;
-        assert_eq!(extract_line("\u{4e00}x", 1, true, &mut offset).as_deref(), Some("."));
+        assert_eq!(
+            extract_line("\u{4e00}x", 1, true, &mut offset).as_deref(),
+            Some(".")
+        );
         assert_eq!(offset, 3);
         let mut offset = 0;
-        assert_eq!(extract_line_with_surrogate("\u{4e00}x", 1, true, &mut offset, '?').as_deref(), Some("?"));
+        assert_eq!(
+            extract_line_with_surrogate("\u{4e00}x", 1, true, &mut offset, '?').as_deref(),
+            Some("?")
+        );
 
         // A wide character that does not fit, with room left for the hyphen.
         let mut offset = 0;
-        assert_eq!(extract_line("AA\u{4e00}", 3, true, &mut offset).as_deref(), Some("AA-"));
+        assert_eq!(
+            extract_line("AA\u{4e00}", 3, true, &mut offset).as_deref(),
+            Some("AA-")
+        );
         assert_eq!(offset, 2);
     }
 
@@ -1343,7 +1430,11 @@ mod tests {
         assert_eq!(items[1], "", "split '-' '-' -> [1] ''");
 
         let items = split("-a-bc--def", '-');
-        assert_eq!(items.len(), 5, "split '-a-bc--def' '-' -> '' 'a' 'bc' '' 'def'");
+        assert_eq!(
+            items.len(),
+            5,
+            "split '-a-bc--def' '-' -> '' 'a' 'bc' '' 'def'"
+        );
         assert_eq!(items[0], "", "split '-a-bc--def' '-' -> [0] ''");
         assert_eq!(items[1], "a", "split '-a-bc--def' '-' -> [1] 'a'");
         assert_eq!(items[2], "bc", "split '-a-bc--def' '-' -> [2] 'bc'");
@@ -1390,10 +1481,17 @@ mod tests {
 
         let joined = join("-", &unjoined);
         assert_eq!(joined.len(), 9, "join '' - 'a' - 'bc' - 'def' -> length 9");
-        assert_eq!(joined, "-a-bc-def", "join '' - 'a' - 'bc' - 'def' -> '-a-bc-def'");
+        assert_eq!(
+            joined, "-a-bc-def",
+            "join '' - 'a' - 'bc' - 'def' -> '-a-bc-def'"
+        );
 
         let unjoined_ints = [1, 2, 3, 4];
-        assert_eq!(join("-", &unjoined_ints), "1-2-3-4", "join 1 - 2 - 3 - 4 -> '1-2-3-4'");
+        assert_eq!(
+            join("-", &unjoined_ints),
+            "1-2-3-4",
+            "join 1 - 2 - 3 - 4 -> '1-2-3-4'"
+        );
     }
 
     #[test]
@@ -1404,9 +1502,17 @@ mod tests {
         assert_eq!(trim("one  "), "one", "trim 'one  ' --> 'one'");
         assert_eq!(trim("  one  "), "one", "trim '  one  ' --> 'one'");
         assert_eq!(trim(""), "", "trim '' --> ''");
-        assert_eq!(trim(" \t\r\x0c\nfoo\n\x0c\r\t "), "foo", "trim ' \\t\\r\\f\\nfoo\\n\\f\\r\\t ' --> 'foo'");
+        assert_eq!(
+            trim(" \t\r\x0c\nfoo\n\x0c\r\t "),
+            "foo",
+            "trim ' \\t\\r\\f\\nfoo\\n\\f\\r\\t ' --> 'foo'"
+        );
 
-        assert_eq!(trim_with("abcdedcba", "abc"), "ded", "trim 'abcdedcba', 'abc' --> 'ded'");
+        assert_eq!(
+            trim_with("abcdedcba", "abc"),
+            "ded",
+            "trim 'abcdedcba', 'abc' --> 'ded'"
+        );
     }
 
     #[test]
@@ -1451,17 +1557,41 @@ mod tests {
     fn longest_word_cases() {
         // int longestWord (const std::string&)
         assert_eq!(longest_word("    "), 0, "longestWord (    ) --> 0");
-        assert_eq!(longest_word("this is a test"), 4, "longestWord (this is a test) --> 4");
-        assert_eq!(longest_word("this is a better test"), 6, "longestWord (this is a better test) --> 6");
-        assert_eq!(longest_word("house Çirçös clown"), 6, "longestWord (Çirçös) --> 6");
+        assert_eq!(
+            longest_word("this is a test"),
+            4,
+            "longestWord (this is a test) --> 4"
+        );
+        assert_eq!(
+            longest_word("this is a better test"),
+            6,
+            "longestWord (this is a better test) --> 6"
+        );
+        assert_eq!(
+            longest_word("house Çirçös clown"),
+            6,
+            "longestWord (Çirçös) --> 6"
+        );
     }
 
     #[test]
     fn longest_line_cases() {
         // int longestLine (const std::string&)
-        assert_eq!(longest_line("one two three four"), 18, "longestLine (one two three four) --> 18");
-        assert_eq!(longest_line("one\ntwo three four"), 14, "longestLine (one\\ntwo three four) --> 14");
-        assert_eq!(longest_line("one\ntwo\nthree\nfour"), 5, "longestLine (one\\ntwo\\nthree\\nfour) --> 5");
+        assert_eq!(
+            longest_line("one two three four"),
+            18,
+            "longestLine (one two three four) --> 18"
+        );
+        assert_eq!(
+            longest_line("one\ntwo three four"),
+            14,
+            "longestLine (one\\ntwo three four) --> 14"
+        );
+        assert_eq!(
+            longest_line("one\ntwo\nthree\nfour"),
+            5,
+            "longestLine (one\\ntwo\\nthree\\nfour) --> 5"
+        );
     }
 
     #[test]
@@ -1471,9 +1601,18 @@ mod tests {
         assert!(!compare("a", "", true), "compare 'a' : ''  --> false");
         assert!(!compare("", "b", true), "compare ''  : 'b' --> false");
         assert!(compare("", "", true), "compare ''  : ''  --> true");
-        assert!(!compare("A", "a", true), "compare            'A' : 'a' --> false");
-        assert!(!compare("A", "a", true), "compare sensitive  'A' : 'a' --> false");
-        assert!(compare("A", "a", false), "compare !sensitive 'A' : 'a' --> true");
+        assert!(
+            !compare("A", "a", true),
+            "compare            'A' : 'a' --> false"
+        );
+        assert!(
+            !compare("A", "a", true),
+            "compare sensitive  'A' : 'a' --> false"
+        );
+        assert!(
+            compare("A", "a", false),
+            "compare !sensitive 'A' : 'a' --> true"
+        );
 
         // Not in shared.t.cpp: strcasecmp stops at an embedded NUL.
         assert!(compare("ab\0x", "AB\0y", false));
@@ -1483,15 +1622,42 @@ mod tests {
     #[test]
     fn close_enough_cases() {
         // bool closeEnough (const std::string&, const std::string&, unsigned int minLength = 0);
-        assert!(close_enough("foobar", "foobar", 0), "closeEnough foobar == foobar");
-        assert!(close_enough("foobar", "foobar", 0), "closeEnough foobar == foobar,0");
-        assert!(close_enough("foobar", "foobar", 1), "closeEnough foobar == foobar,1");
-        assert!(close_enough("foobar", "foobar", 2), "closeEnough foobar == foobar,2");
-        assert!(close_enough("foobar", "foobar", 3), "closeEnough foobar == foobar,3");
-        assert!(close_enough("foobar", "foobar", 4), "closeEnough foobar == foobar,4");
-        assert!(close_enough("foobar", "foobar", 5), "closeEnough foobar == foobar,5");
-        assert!(close_enough("foobar", "foobar", 6), "closeEnough foobar == foobar,6");
-        assert!(close_enough("foobar", "foo", 3), "closeEnough foobar == foo,3");
+        assert!(
+            close_enough("foobar", "foobar", 0),
+            "closeEnough foobar == foobar"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 0),
+            "closeEnough foobar == foobar,0"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 1),
+            "closeEnough foobar == foobar,1"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 2),
+            "closeEnough foobar == foobar,2"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 3),
+            "closeEnough foobar == foobar,3"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 4),
+            "closeEnough foobar == foobar,4"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 5),
+            "closeEnough foobar == foobar,5"
+        );
+        assert!(
+            close_enough("foobar", "foobar", 6),
+            "closeEnough foobar == foobar,6"
+        );
+        assert!(
+            close_enough("foobar", "foo", 3),
+            "closeEnough foobar == foo,3"
+        );
 
         // Not in shared.t.cpp: below minimum, case folding, non-prefix.
         assert!(!close_enough("foobar", "fo", 3));
@@ -1502,22 +1668,82 @@ mod tests {
     #[test]
     fn match_length_cases() {
         // int matchLength (const std::string&, const std::string&, unsigned int minLength = 0);
-        assert_eq!(match_length("", "foobar"), 0, "matchLength '' == foobar --> 0");
-        assert_eq!(match_length("f", "foobar"), 1, "matchLength f == foobar --> 1");
-        assert_eq!(match_length("fo", "foobar"), 2, "matchLength fo == foobar --> 2");
-        assert_eq!(match_length("foo", "foobar"), 3, "matchLength foo == foobar --> 3");
-        assert_eq!(match_length("foob", "foobar"), 4, "matchLength foob == foobar --> 4");
-        assert_eq!(match_length("fooba", "foobar"), 5, "matchLength fooba == foobar --> 5");
-        assert_eq!(match_length("foobar", "foobar"), 6, "matchLength foobar == foobar --> 6");
-        assert_eq!(match_length("foobar", "fooba"), 5, "matchLength foobar == fooba --> 5");
-        assert_eq!(match_length("foobar", "foob"), 4, "matchLength foobar == foob --> 4");
-        assert_eq!(match_length("foobar", "foo"), 3, "matchLength foobar == foo --> 3");
-        assert_eq!(match_length("foobar", "fo"), 2, "matchLength foobar == fo --> 2");
-        assert_eq!(match_length("foobar", "f"), 1, "matchLength foobar == f --> 1");
-        assert_eq!(match_length("foobar", ""), 0, "matchLength foobar == '' --> 0");
+        assert_eq!(
+            match_length("", "foobar"),
+            0,
+            "matchLength '' == foobar --> 0"
+        );
+        assert_eq!(
+            match_length("f", "foobar"),
+            1,
+            "matchLength f == foobar --> 1"
+        );
+        assert_eq!(
+            match_length("fo", "foobar"),
+            2,
+            "matchLength fo == foobar --> 2"
+        );
+        assert_eq!(
+            match_length("foo", "foobar"),
+            3,
+            "matchLength foo == foobar --> 3"
+        );
+        assert_eq!(
+            match_length("foob", "foobar"),
+            4,
+            "matchLength foob == foobar --> 4"
+        );
+        assert_eq!(
+            match_length("fooba", "foobar"),
+            5,
+            "matchLength fooba == foobar --> 5"
+        );
+        assert_eq!(
+            match_length("foobar", "foobar"),
+            6,
+            "matchLength foobar == foobar --> 6"
+        );
+        assert_eq!(
+            match_length("foobar", "fooba"),
+            5,
+            "matchLength foobar == fooba --> 5"
+        );
+        assert_eq!(
+            match_length("foobar", "foob"),
+            4,
+            "matchLength foobar == foob --> 4"
+        );
+        assert_eq!(
+            match_length("foobar", "foo"),
+            3,
+            "matchLength foobar == foo --> 3"
+        );
+        assert_eq!(
+            match_length("foobar", "fo"),
+            2,
+            "matchLength foobar == fo --> 2"
+        );
+        assert_eq!(
+            match_length("foobar", "f"),
+            1,
+            "matchLength foobar == f --> 1"
+        );
+        assert_eq!(
+            match_length("foobar", ""),
+            0,
+            "matchLength foobar == '' --> 0"
+        );
 
-        assert_eq!(match_length("foobar", "foodmixer"), 3, "matchLength foobar == foodmixer --> 3");
-        assert_eq!(match_length("foodmixer", "foobar"), 3, "matchLength foodmixer == foobar --> 3");
+        assert_eq!(
+            match_length("foobar", "foodmixer"),
+            3,
+            "matchLength foobar == foodmixer --> 3"
+        );
+        assert_eq!(
+            match_length("foodmixer", "foobar"),
+            3,
+            "matchLength foodmixer == foobar --> 3"
+        );
     }
 
     #[test]
@@ -1590,20 +1816,60 @@ mod tests {
         assert_eq!(find("FOO", "FO", true), Some(0), "find foo contains fo");
 
         // Test case-insensitive.
-        assert_eq!(find("foo", "xx", false), None, "find foo !contains xx (caseless)");
-        assert_eq!(find("foo", "oo", false), Some(1), "find foo contains oo (caseless)");
+        assert_eq!(
+            find("foo", "xx", false),
+            None,
+            "find foo !contains xx (caseless)"
+        );
+        assert_eq!(
+            find("foo", "oo", false),
+            Some(1),
+            "find foo contains oo (caseless)"
+        );
 
-        assert_eq!(find("foo", "fo", false), Some(0), "find foo contains fo (caseless)");
-        assert_eq!(find("foo", "FO", false), Some(0), "find foo contains FO (caseless)");
-        assert_eq!(find("FOO", "fo", false), Some(0), "find FOO contains fo (caseless)");
-        assert_eq!(find("FOO", "FO", false), Some(0), "find FOO contains FO (caseless)");
+        assert_eq!(
+            find("foo", "fo", false),
+            Some(0),
+            "find foo contains fo (caseless)"
+        );
+        assert_eq!(
+            find("foo", "FO", false),
+            Some(0),
+            "find foo contains FO (caseless)"
+        );
+        assert_eq!(
+            find("FOO", "fo", false),
+            Some(0),
+            "find FOO contains fo (caseless)"
+        );
+        assert_eq!(
+            find("FOO", "FO", false),
+            Some(0),
+            "find FOO contains FO (caseless)"
+        );
 
         // Test start offset.
-        assert_eq!(find_from("one two three", "e", 3, true), Some(11), "find offset obeyed");
-        assert_eq!(find_from("one two three", "e", 11, true), Some(11), "find offset obeyed");
+        assert_eq!(
+            find_from("one two three", "e", 3, true),
+            Some(11),
+            "find offset obeyed"
+        );
+        assert_eq!(
+            find_from("one two three", "e", 11, true),
+            Some(11),
+            "find offset obeyed"
+        );
 
-        assert_eq!(find_from("one two three", "e", 3, false), Some(11), "find offset obeyed");
-        assert_eq!(find_from("one two three", "e", 11, false), Some(11), "find offset obeyed");
+        assert_eq!(
+            find_from("one two three", "e", 3, false),
+            Some(11),
+            "find offset obeyed"
+        );
+        assert_eq!(
+            find_from("one two three", "e", 11, false),
+            Some(11),
+            "find offset obeyed"
+        );
 
         // Not in shared.t.cpp: begin/pattern edge cases of the two branches.
         assert_eq!(find_from("foo", "", 2, true), Some(2));
@@ -1617,7 +1883,12 @@ mod tests {
     #[test]
     fn os_name_and_compliance() {
         // Test osName actually recognizes OS.
-        assert_ne!(os_name(), "<unknown>", "osName: Recognizes OS as: {}", os_name());
+        assert_ne!(
+            os_name(),
+            "<unknown>",
+            "osName: Recognizes OS as: {}",
+            os_name()
+        );
 
         // Test cppCompliance actually recognizes compliance level.
         assert_ne!(
@@ -1635,10 +1906,20 @@ mod tests {
 
     fn check_ip(input: &str, v6: bool, address: &str, port: i32) {
         let (accepting, rejecting, name, other): (IpParser, IpParser, &str, &str) = if v6 {
-                (is_ipv6_address, is_ipv4_address, "isIPv6Address", "isIPv4Address")
-            } else {
-                (is_ipv4_address, is_ipv6_address, "isIPv4Address", "isIPv6Address")
-            };
+            (
+                is_ipv6_address,
+                is_ipv4_address,
+                "isIPv6Address",
+                "isIPv4Address",
+            )
+        } else {
+            (
+                is_ipv4_address,
+                is_ipv6_address,
+                "isIPv4Address",
+                "isIPv6Address",
+            )
+        };
 
         assert!(rejecting(input).is_none(), "{other} {input} --> no");
         let result = accepting(input);
@@ -1655,10 +1936,30 @@ mod tests {
         check_ip("127.0.0.1:80", false, "127.0.0.1", 80);
         check_ip("::1", true, "::1", 0);
         check_ip("[::1]:80", true, "::1", 80);
-        check_ip("2605:2700:0:3::4713:93e3", true, "2605:2700:0:3::4713:93e3", 0);
-        check_ip("[2605:2700:0:3::4713:93e3]:80", true, "2605:2700:0:3::4713:93e3", 80);
-        check_ip("2001:db8:85a3:0:0:8a2e:370:7334", true, "2001:db8:85a3:0:0:8a2e:370:7334", 0);
-        check_ip("2001:db8:85a3::8a2e:370:7334", true, "2001:db8:85a3::8a2e:370:7334", 0);
+        check_ip(
+            "2605:2700:0:3::4713:93e3",
+            true,
+            "2605:2700:0:3::4713:93e3",
+            0,
+        );
+        check_ip(
+            "[2605:2700:0:3::4713:93e3]:80",
+            true,
+            "2605:2700:0:3::4713:93e3",
+            80,
+        );
+        check_ip(
+            "2001:db8:85a3:0:0:8a2e:370:7334",
+            true,
+            "2001:db8:85a3:0:0:8a2e:370:7334",
+            0,
+        );
+        check_ip(
+            "2001:db8:85a3::8a2e:370:7334",
+            true,
+            "2001:db8:85a3::8a2e:370:7334",
+            0,
+        );
         check_ip(
             "[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443",
             true,
@@ -1666,7 +1967,12 @@ mod tests {
             443,
         );
         check_ip("::ffff:192.168.0.1", true, "::ffff:192.168.0.1", 0);
-        check_ip("[::ffff:71.19.147.227]:80", true, "::ffff:71.19.147.227", 80);
+        check_ip(
+            "[::ffff:71.19.147.227]:80",
+            true,
+            "::ffff:71.19.147.227",
+            80,
+        );
         check_ip("::", true, "::", 0);
 
         // Not in shared.t.cpp: rejections.
@@ -1714,11 +2020,25 @@ mod tests {
 
         // What are the differences?
         let (string_left_only, string_right_only) = list_diff(&string_one, &string_two);
-        assert_eq!(string_left_only.len(), 1, "std::string (1,2,3) <=> (2,3,4) = 1<-");
-        assert_eq!(string_left_only[0], "1", "std::string (1,2,3) <=> (2,3,4) = 1<-");
+        assert_eq!(
+            string_left_only.len(),
+            1,
+            "std::string (1,2,3) <=> (2,3,4) = 1<-"
+        );
+        assert_eq!(
+            string_left_only[0], "1",
+            "std::string (1,2,3) <=> (2,3,4) = 1<-"
+        );
 
-        assert_eq!(string_right_only.len(), 1, "std::string (1,2,3) <=> (2,3,4) = ->4");
-        assert_eq!(string_right_only[0], "4", "std::string (1,2,3) <=> (2,3,4) = ->4");
+        assert_eq!(
+            string_right_only.len(),
+            1,
+            "std::string (1,2,3) <=> (2,3,4) = ->4"
+        );
+        assert_eq!(
+            string_right_only[0], "4",
+            "std::string (1,2,3) <=> (2,3,4) = ->4"
+        );
 
         // Now do it all again, with integers.
 
@@ -1780,7 +2100,8 @@ mod tests {
         assert!(execute("sh", &["-c", "kill -9 $$"], "").is_err());
 
         // An executable that cannot be run reports status 255.
-        let (status, output) = execute("taskwarrior-no-such-executable", &[] as &[&str], "").unwrap();
+        let (status, output) =
+            execute("taskwarrior-no-such-executable", &[] as &[&str], "").unwrap();
         assert_eq!(status, 255);
         assert_eq!(output, "");
     }

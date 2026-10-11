@@ -4,7 +4,9 @@
 //! right-justified); `validate` and `modify` are inherited from `ColumnTypeNumeric`.
 
 use crate::columns::col_type_numeric::ColumnTypeNumeric;
-use crate::columns::column::{column_base, render_string_right, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_string_right, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::task::Task;
@@ -107,13 +109,22 @@ mod tests {
     fn number_style() {
         let mut env = FakeRenderEnv::with_config(&[]);
         let none = Color::new();
-        assert_eq!(run("imask", &mut with("imask", "12"), 4, &none, &mut env), ((2, 2), vec!["  12".to_string()]));
-        assert_eq!(run("imask.number", &mut with("imask", "3"), 1, &none, &mut env), ((1, 1), vec!["3".to_string()]));
+        assert_eq!(
+            run("imask", &mut with("imask", "12"), 4, &none, &mut env),
+            ((2, 2), vec!["  12".to_string()])
+        );
+        assert_eq!(
+            run("imask.number", &mut with("imask", "3"), 1, &none, &mut env),
+            ((1, 1), vec!["3".to_string()])
+        );
         let red = Color::parse("red").unwrap();
         assert_eq!(
             run("imask", &mut with("imask", "7"), 2, &red, &mut env).1,
             vec!["\x1b[31m 7\x1b[0m".to_string()]
         );
-        assert_eq!(run("imask", &mut Task::new(), 2, &none, &mut env), ((0, 0), vec![]));
+        assert_eq!(
+            run("imask", &mut Task::new(), 2, &none, &mut env),
+            ((0, 0), vec![])
+        );
     }
 }

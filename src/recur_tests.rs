@@ -20,7 +20,10 @@ impl Utc {
         let env = EnvGuard::save(&["TZ"]);
         std::env::set_var("TZ", "UTC");
         crate::shared::localtime::tzset();
-        Utc { env: Some(env), _lock: lock }
+        Utc {
+            env: Some(env),
+            _lock: lock,
+        }
     }
 }
 
@@ -54,13 +57,25 @@ fn next_ok(current: &Datetime, period: &str) -> Datetime {
 #[test]
 fn checked_add_datetime_overflow() {
     let base = Datetime::from_epoch(1_234_526_400);
-    assert_eq!(checked_add_datetime(&base, 10).unwrap().to_epoch(), 1_234_526_410);
-    assert!(checked_add_datetime(&base, 0x1_0000_0000).is_none(), "delta > 32bit");
-    assert!(checked_add_datetime(&base, i64::from(i32::MAX)).is_some(), "delta == INT_MAX");
+    assert_eq!(
+        checked_add_datetime(&base, 10).unwrap().to_epoch(),
+        1_234_526_410
+    );
+    assert!(
+        checked_add_datetime(&base, 0x1_0000_0000).is_none(),
+        "delta > 32bit"
+    );
+    assert!(
+        checked_add_datetime(&base, i64::from(i32::MAX)).is_some(),
+        "delta == INT_MAX"
+    );
     let max = Datetime::from_epoch(i64::MAX);
     assert!(checked_add_datetime(&max, 1).is_none(), "huge base time");
     assert_eq!(checked_add_datetime(&max, 0).unwrap().to_epoch(), i64::MAX);
-    assert_eq!(checked_add_datetime(&base, -400).unwrap().to_epoch(), 1_234_526_000);
+    assert_eq!(
+        checked_add_datetime(&base, -400).unwrap().to_epoch(),
+        1_234_526_000
+    );
     let negative = Datetime::from_epoch(-100);
     assert_eq!(checked_add_datetime(&negative, 50).unwrap().to_epoch(), -50);
 }
@@ -73,26 +88,57 @@ fn monthly_clamps_to_end_of_month() {
     let _tz = Utc::new();
     let jan31 = dt(2023, 1, 31, 10, 20, 30);
     for period in ["monthly", "P1M", "1m"] {
-        assert_eq!(next_ok(&jan31, period), dt(2023, 2, 28, 10, 20, 30), "{period}");
+        assert_eq!(
+            next_ok(&jan31, period),
+            dt(2023, 2, 28, 10, 20, 30),
+            "{period}"
+        );
     }
     // Leap year.
-    assert_eq!(next_ok(&dt(2024, 1, 31, 0, 0, 0), "monthly"), dt(2024, 2, 29, 0, 0, 0));
+    assert_eq!(
+        next_ok(&dt(2024, 1, 31, 0, 0, 0), "monthly"),
+        dt(2024, 2, 29, 0, 0, 0)
+    );
     // Year wrap.
-    assert_eq!(next_ok(&dt(2023, 12, 15, 8, 0, 0), "monthly"), dt(2024, 1, 15, 8, 0, 0));
+    assert_eq!(
+        next_ok(&dt(2023, 12, 15, 8, 0, 0), "monthly"),
+        dt(2024, 1, 15, 8, 0, 0)
+    );
     // Multi-month ordinals, wrapping more than one year.
-    assert_eq!(next_ok(&dt(2023, 3, 31, 1, 2, 3), "2m"), dt(2023, 5, 31, 1, 2, 3));
-    assert_eq!(next_ok(&dt(2023, 11, 30, 1, 2, 3), "27m"), dt(2026, 2, 28, 1, 2, 3));
-    assert_eq!(next_ok(&dt(2023, 12, 31, 0, 0, 0), "bimonthly"), dt(2024, 2, 29, 0, 0, 0));
-    assert_eq!(next_ok(&dt(2023, 8, 31, 0, 0, 0), "P6M"), dt(2024, 2, 29, 0, 0, 0));
-    assert_eq!(next_ok(&dt(2023, 8, 31, 0, 0, 0), "semiannual"), dt(2024, 2, 29, 0, 0, 0));
+    assert_eq!(
+        next_ok(&dt(2023, 3, 31, 1, 2, 3), "2m"),
+        dt(2023, 5, 31, 1, 2, 3)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 11, 30, 1, 2, 3), "27m"),
+        dt(2026, 2, 28, 1, 2, 3)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 12, 31, 0, 0, 0), "bimonthly"),
+        dt(2024, 2, 29, 0, 0, 0)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 8, 31, 0, 0, 0), "P6M"),
+        dt(2024, 2, 29, 0, 0, 0)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 8, 31, 0, 0, 0), "semiannual"),
+        dt(2024, 2, 29, 0, 0, 0)
+    );
 }
 
 #[test]
 fn designated_months_drop_the_time() {
     let _tz = Utc::new();
-    assert_eq!(next_ok(&dt(2023, 1, 31, 10, 20, 30), "P13M"), Datetime::from_ymd(2024, 2, 29));
+    assert_eq!(
+        next_ok(&dt(2023, 1, 31, 10, 20, 30), "P13M"),
+        Datetime::from_ymd(2024, 2, 29)
+    );
     let (r, _) = next(&dt(2023, 1, 31, 0, 0, 0), "P0M");
-    assert_eq!(r.unwrap_err().to_string(), "Recurrence period 'P0M' is equivalent to 0 and hence invalid.");
+    assert_eq!(
+        r.unwrap_err().to_string(),
+        "Recurrence period 'P0M' is equivalent to 0 and hence invalid."
+    );
 }
 
 #[test]
@@ -100,26 +146,42 @@ fn quarters() {
     let _tz = Utc::new();
     let nov30 = dt(2023, 11, 30, 12, 0, 0);
     for period in ["quarterly", "1q"] {
-        assert_eq!(next_ok(&nov30, period), dt(2024, 2, 29, 12, 0, 0), "{period}");
+        assert_eq!(
+            next_ok(&nov30, period),
+            dt(2024, 2, 29, 12, 0, 0),
+            "{period}"
+        );
     }
     // As in C++, "P3M" (and "P2M", "P6M") match the earlier `P<n>M` branch,
     // which drops the time of day.
     assert_eq!(next_ok(&nov30, "P3M"), Datetime::from_ymd(2024, 2, 29));
     assert_eq!(next_ok(&nov30, "P2M"), Datetime::from_ymd(2024, 1, 30));
-    assert_eq!(next_ok(&dt(2023, 5, 31, 0, 0, 0), "3q"), dt(2024, 2, 29, 0, 0, 0));
-    assert_eq!(next_ok(&dt(2023, 1, 15, 0, 0, 0), "2q"), dt(2023, 7, 15, 0, 0, 0));
+    assert_eq!(
+        next_ok(&dt(2023, 5, 31, 0, 0, 0), "3q"),
+        dt(2024, 2, 29, 0, 0, 0)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 1, 15, 0, 0, 0), "2q"),
+        dt(2023, 7, 15, 0, 0, 0)
+    );
 
     // A non-positive quarter count is a footnote, not an error.
     let (r, notes) = next(&nov30, "0q");
     assert!(r.unwrap().is_none());
-    assert_eq!(notes, vec!["Recurrence period '0q' is equivalent to 0 and hence invalid.".to_string()]);
+    assert_eq!(
+        notes,
+        vec!["Recurrence period '0q' is equivalent to 0 and hence invalid.".to_string()]
+    );
 }
 
 #[test]
 fn zero_months_is_an_error() {
     let _tz = Utc::new();
     let (r, notes) = next(&dt(2023, 1, 1, 0, 0, 0), "0m");
-    assert_eq!(r.unwrap_err().to_string(), "Recurrence period '0m' is equivalent to 0 and hence invalid.");
+    assert_eq!(
+        r.unwrap_err().to_string(),
+        "Recurrence period '0m' is equivalent to 0 and hence invalid."
+    );
     assert!(notes.is_empty());
 }
 
@@ -130,9 +192,16 @@ fn years_and_leap_days() {
     for period in ["annual", "yearly", "P1Y"] {
         assert_eq!(next_ok(&leap, period), dt(2025, 2, 28, 9, 0, 0), "{period}");
     }
-    assert_eq!(next_ok(&dt(2023, 6, 1, 0, 0, 0), "yearly"), dt(2024, 6, 1, 0, 0, 0));
+    assert_eq!(
+        next_ok(&dt(2023, 6, 1, 0, 0, 0), "yearly"),
+        dt(2024, 6, 1, 0, 0, 0)
+    );
     for period in ["biannual", "biyearly", "P2Y"] {
-        assert_eq!(next_ok(&dt(2023, 6, 1, 0, 0, 0), period), dt(2025, 6, 1, 0, 0, 0), "{period}");
+        assert_eq!(
+            next_ok(&dt(2023, 6, 1, 0, 0, 0), period),
+            dt(2025, 6, 1, 0, 0, 0),
+            "{period}"
+        );
     }
     // As in C++, biannual does not clamp: mktime normalizes 2026-02-29 to
     // March 1st.
@@ -146,9 +215,18 @@ fn weekdays_skip_the_weekend() {
     let friday = dt(2023, 6, 2, 9, 0, 0);
     assert_eq!(friday.day_of_week(), 5);
     assert_eq!(next_ok(&friday, "weekdays"), dt(2023, 6, 5, 9, 0, 0));
-    assert_eq!(next_ok(&dt(2023, 6, 3, 9, 0, 0), "weekdays"), dt(2023, 6, 5, 9, 0, 0));
-    assert_eq!(next_ok(&dt(2023, 6, 4, 9, 0, 0), "weekdays"), dt(2023, 6, 5, 9, 0, 0));
-    assert_eq!(next_ok(&dt(2023, 6, 7, 9, 0, 0), "weekdays"), dt(2023, 6, 8, 9, 0, 0));
+    assert_eq!(
+        next_ok(&dt(2023, 6, 3, 9, 0, 0), "weekdays"),
+        dt(2023, 6, 5, 9, 0, 0)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 6, 4, 9, 0, 0), "weekdays"),
+        dt(2023, 6, 5, 9, 0, 0)
+    );
+    assert_eq!(
+        next_ok(&dt(2023, 6, 7, 9, 0, 0), "weekdays"),
+        dt(2023, 6, 8, 9, 0, 0)
+    );
 }
 
 #[test]
@@ -164,11 +242,17 @@ fn generic_durations() {
 
     let (r, notes) = next(&base, "bogus");
     assert!(r.unwrap().is_none());
-    assert_eq!(notes, vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]);
+    assert_eq!(
+        notes,
+        vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]
+    );
 
     let (r, notes) = next(&base, "");
     assert!(r.unwrap().is_none());
-    assert_eq!(notes, vec!["Warning: The recurrence value '' is not valid.".to_string()]);
+    assert_eq!(
+        notes,
+        vec!["Warning: The recurrence value '' is not valid.".to_string()]
+    );
 }
 
 #[test]
@@ -242,7 +326,10 @@ fn generate_due_dates_stops_on_invalid_period() {
     let mut due = Vec::new();
     assert!(generate_due_dates(&t, &mut due, 1, &mut |m| notes.push(m.to_string())).unwrap());
     assert_eq!(due.len(), 1);
-    assert_eq!(notes, vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]);
+    assert_eq!(
+        notes,
+        vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]
+    );
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -261,11 +348,17 @@ fn fixture() -> Fixture {
     let lock = env_lock();
     let dir = TempDir::new().unwrap();
     let mut ctx = Context::new();
-    ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+    ctx.tdb2
+        .open_replica_at(dir.path().to_str().unwrap(), true, true)
+        .unwrap();
     ctx.config.set("recurrence", "on");
     ctx.config.set("recurrence.limit", "1");
     ctx.config.set("verbose", "affected,recur");
-    Fixture { ctx, _dir: dir, _lock: lock }
+    Fixture {
+        ctx,
+        _dir: dir,
+        _lock: lock,
+    }
 }
 
 fn all(ctx: &mut Context) -> Vec<Task> {
@@ -289,9 +382,15 @@ fn handle_recurrence_creates_children_and_mask() {
     handle_recurrence(&mut f.ctx).unwrap();
 
     let tasks = all(&mut f.ctx);
-    let stored = tasks.iter().find(|t| t.get("uuid") == parent.get("uuid")).unwrap();
+    let stored = tasks
+        .iter()
+        .find(|t| t.get("uuid") == parent.get("uuid"))
+        .unwrap();
     assert_eq!(stored.get("mask"), "---");
-    let mut children: Vec<&Task> = tasks.iter().filter(|t| t.get("parent") == parent.get("uuid")).collect();
+    let mut children: Vec<&Task> = tasks
+        .iter()
+        .filter(|t| t.get("parent") == parent.get("uuid"))
+        .collect();
     children.sort_by_key(|t| t.get_int("imask"));
     assert_eq!(children.len(), 3);
     for (i, child) in children.iter().enumerate() {
@@ -301,7 +400,10 @@ fn handle_recurrence_creates_children_and_mask() {
         assert!(!child.has("mask"));
         assert_ne!(child.get("uuid"), parent.get("uuid"));
     }
-    assert_eq!(f.ctx.footnotes, vec!["Creating recurring task instance 'rec'".to_string()]);
+    assert_eq!(
+        f.ctx.footnotes,
+        vec!["Creating recurring task instance 'rec'".to_string()]
+    );
 
     // A second pass generates nothing new.
     f.ctx.footnotes.clear();
@@ -324,9 +426,15 @@ fn handle_recurrence_shifts_wait_and_scheduled() {
     handle_recurrence(&mut f.ctx).unwrap();
 
     let tasks = all(&mut f.ctx);
-    let stored = tasks.iter().find(|x| x.get("uuid") == t.get("uuid")).unwrap();
+    let stored = tasks
+        .iter()
+        .find(|x| x.get("uuid") == t.get("uuid"))
+        .unwrap();
     assert_eq!(stored.get("mask"), "W");
-    let child = tasks.iter().find(|x| x.get("parent") == t.get("uuid")).unwrap();
+    let child = tasks
+        .iter()
+        .find(|x| x.get("parent") == t.get("uuid"))
+        .unwrap();
     assert_eq!(child.get_date("wait"), due - 86400);
     assert_eq!(child.get_date("scheduled"), due - 2 * 86400);
     assert_eq!(child.get("imask"), "0");
@@ -356,7 +464,11 @@ fn handle_recurrence_reaps_depleted_parent() {
     let stored = f.ctx.tdb2.get_by_uuid(t.get_ref("uuid")).unwrap().unwrap();
     assert_eq!(stored.get("status"), "deleted");
     assert_eq!(f.ctx.footnotes.len(), 1);
-    assert!(f.ctx.footnotes[0].ends_with(" 'old' expired and was deleted."), "{:?}", f.ctx.footnotes);
+    assert!(
+        f.ctx.footnotes[0].ends_with(" 'old' expired and was deleted."),
+        "{:?}",
+        f.ctx.footnotes
+    );
 }
 
 #[test]
@@ -374,12 +486,26 @@ fn handle_until_deletes_expired_tasks() {
 
     handle_until(&mut f.ctx).unwrap();
 
-    let gone = f.ctx.tdb2.get_by_uuid(expired.get_ref("uuid")).unwrap().unwrap();
+    let gone = f
+        .ctx
+        .tdb2
+        .get_by_uuid(expired.get_ref("uuid"))
+        .unwrap()
+        .unwrap();
     assert_eq!(gone.get("status"), "deleted");
-    let kept = f.ctx.tdb2.get_by_uuid(alive.get_ref("uuid")).unwrap().unwrap();
+    let kept = f
+        .ctx
+        .tdb2
+        .get_by_uuid(alive.get_ref("uuid"))
+        .unwrap()
+        .unwrap();
     assert_eq!(kept.get("status"), "pending");
     assert_eq!(f.ctx.footnotes.len(), 1);
-    assert!(f.ctx.footnotes[0].ends_with(" 'gone' expired and was deleted."), "{:?}", f.ctx.footnotes);
+    assert!(
+        f.ctx.footnotes[0].ends_with(" 'gone' expired and was deleted."),
+        "{:?}",
+        f.ctx.footnotes
+    );
     assert_eq!(f.ctx.debug_messages.len(), 1);
     assert!(f.ctx.debug_messages[0].starts_with("handleUntil: recurrence expired until "));
 }
@@ -401,11 +527,20 @@ fn update_recurrence_mask_sets_status_char() {
     tdb2::modify(&mut f.ctx, &mut parent).unwrap();
 
     let mut child = add_child(&mut f.ctx, &parent, 1);
-    let expected = [(Status::Completed, "-+--"), (Status::Deleted, "-X--"), (Status::Pending, "----")];
+    let expected = [
+        (Status::Completed, "-+--"),
+        (Status::Deleted, "-X--"),
+        (Status::Pending, "----"),
+    ];
     for (status, mask) in expected {
         child.set_status(status);
         update_recurrence_mask(&mut f.ctx, &child).unwrap();
-        let stored = f.ctx.tdb2.get_by_uuid(parent.get_ref("uuid")).unwrap().unwrap();
+        let stored = f
+            .ctx
+            .tdb2
+            .get_by_uuid(parent.get_ref("uuid"))
+            .unwrap()
+            .unwrap();
         assert_eq!(stored.get("mask"), mask);
     }
 
@@ -413,7 +548,12 @@ fn update_recurrence_mask_sets_status_char() {
     child.set_status(Status::Pending);
     child.set("wait", &(Datetime::new().to_epoch() + 3600).to_string());
     update_recurrence_mask(&mut f.ctx, &child).unwrap();
-    let stored = f.ctx.tdb2.get_by_uuid(parent.get_ref("uuid")).unwrap().unwrap();
+    let stored = f
+        .ctx
+        .tdb2
+        .get_by_uuid(parent.get_ref("uuid"))
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.get("mask"), "-W--");
 }
 
@@ -428,7 +568,12 @@ fn update_recurrence_mask_beyond_mask_keeps_it() {
     child.set_status(Status::Completed);
     update_recurrence_mask(&mut f.ctx, &child).unwrap();
     // C++ quirk: the padded mask is built in a shadowing local and dropped.
-    let stored = f.ctx.tdb2.get_by_uuid(parent.get_ref("uuid")).unwrap().unwrap();
+    let stored = f
+        .ctx
+        .tdb2
+        .get_by_uuid(parent.get_ref("uuid"))
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.get("mask"), "--");
 }
 

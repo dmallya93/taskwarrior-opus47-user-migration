@@ -94,7 +94,11 @@ impl ColumnUDAString {
         parent.base.modifiable = true;
         parent.base.uda = true;
         parent.base.styles = strings(&["default", "indicator"]);
-        ColumnUDAString { parent, values: Vec::new(), hyphenate: true }
+        ColumnUDAString {
+            parent,
+            values: Vec::new(),
+            hyphenate: true,
+        }
     }
 }
 
@@ -194,7 +198,10 @@ impl ColumnUDANumeric {
         parent.base.label = String::new();
         parent.base.uda = true;
         parent.base.styles = strings(&["default", "indicator"]);
-        ColumnUDANumeric { parent, values: Vec::new() }
+        ColumnUDANumeric {
+            parent,
+            values: Vec::new(),
+        }
     }
 }
 
@@ -276,7 +283,10 @@ impl ColumnUDADate {
         parent.base.label = String::new();
         parent.base.uda = true;
         parent.base.styles = strings(&["default", "indicator"]);
-        ColumnUDADate { parent, values: Vec::new() }
+        ColumnUDADate {
+            parent,
+            values: Vec::new(),
+        }
     }
 }
 
@@ -308,7 +318,8 @@ impl Column for ColumnUDADate {
                     //   rc.report.<report>.dateformat
                     //   rc.dateformat.report
                     //   rc.dateformat
-                    let format = ColumnTypeDate::report_dateformat(env.config(), &self.base().report);
+                    let format =
+                        ColumnTypeDate::report_dateformat(env.config(), &self.base().report);
                     minimum = Datetime::length(&format) as u32 as usize;
                 }
             } else if style == "indicator" {
@@ -342,7 +353,12 @@ impl Column for ColumnUDADate {
                 //   rc.dateformat.
                 let format = ColumnTypeDate::report_dateformat(env.config(), &self.base().report);
 
-                render_string_left(lines, width, color, &Datetime::from_epoch(c_strtoll(&value)).to_string(&format));
+                render_string_left(
+                    lines,
+                    width,
+                    color,
+                    &Datetime::from_epoch(c_strtoll(&value)).to_string(&format),
+                );
             } else if style == "indicator" {
                 render_string_right(lines, width, color, &indicator(env.config(), name));
             }
@@ -377,7 +393,10 @@ impl ColumnUDADuration {
         parent.base.label = String::new();
         parent.base.uda = true;
         parent.base.styles = strings(&["default", "indicator"]);
-        ColumnUDADuration { parent, values: Vec::new() }
+        ColumnUDADuration {
+            parent,
+            values: Vec::new(),
+        }
     }
 }
 
@@ -431,7 +450,12 @@ impl Column for ColumnUDADuration {
             let style = self.style();
             if style == "default" {
                 let value = task.get(name);
-                render_string_right(lines, width, color, &Duration::from_string(&value).format_iso());
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &Duration::from_string(&value).format_iso(),
+                );
             } else if style == "indicator" {
                 render_string_right(lines, width, color, &indicator(env.config(), name));
             }
@@ -537,7 +561,10 @@ mod tests {
             let env = EnvGuard::save(&["TZ"]);
             std::env::set_var("TZ", "UTC");
             localtime::tzset();
-            Utc { env: Some(env), _lock: lock }
+            Utc {
+                env: Some(env),
+                _lock: lock,
+            }
         }
     }
 
@@ -571,11 +598,17 @@ mod tests {
 
     /// `(measure, render lines)` of `column` (`<name>[.<style>]`) in report
     /// `list` at `width`.
-    fn run(column: &str, task: &mut Task, width: usize, env: &mut FakeRenderEnv) -> ((usize, usize), Vec<String>) {
+    fn run(
+        column: &str,
+        task: &mut Task,
+        width: usize,
+        env: &mut FakeRenderEnv,
+    ) -> ((usize, usize), Vec<String>) {
         let c = factory(column, "list", &env.config.clone()).unwrap();
         let m = c.measure(task, env).unwrap();
         let mut lines = Vec::new();
-        c.render(&mut lines, task, width, &Color::new(), env).unwrap();
+        c.render(&mut lines, task, width, &Color::new(), env)
+            .unwrap();
         (m, lines)
     }
 
@@ -587,8 +620,14 @@ mod tests {
     fn string_default_measures_words_and_wraps() {
         let mut env = env(&[]);
         let mut task = task_with("note", "hello big world");
-        assert_eq!(run("note", &mut task, 15, &mut env), ((5, 15), lines(&["hello big world"])));
-        assert_eq!(run("note.default", &mut task, 9, &mut env), ((5, 15), lines(&["hello big", "world    "])));
+        assert_eq!(
+            run("note", &mut task, 15, &mut env),
+            ((5, 15), lines(&["hello big world"]))
+        );
+        assert_eq!(
+            run("note.default", &mut task, 9, &mut env),
+            ((5, 15), lines(&["hello big", "world    "]))
+        );
 
         // Multi-line values: the longest line is the maximum; `longestWord`
         // splits on spaces only, so "ab\nlonger" (newline width 0) is 8.
@@ -601,7 +640,10 @@ mod tests {
 
         // Words wider than the column are hyphenated (`_hyphenate`).
         let mut task = task_with("note", "abcdefghij");
-        assert_eq!(run("note", &mut task, 4, &mut env), ((10, 10), lines(&["abc-", "def-", "ghij"])));
+        assert_eq!(
+            run("note", &mut task, 4, &mut env),
+            ((10, 10), lines(&["abc-", "def-", "ghij"]))
+        );
     }
 
     #[test]
@@ -620,13 +662,29 @@ mod tests {
         ]);
         for name in ["note", "est", "dd", "len"] {
             let column = format!("{name}.indicator");
-            assert_eq!(run(&column, &mut task, 3, &mut plain), ((1, 1), lines(&["  U"])), "{column}");
+            assert_eq!(
+                run(&column, &mut task, 3, &mut plain),
+                ((1, 1), lines(&["  U"])),
+                "{column}"
+            );
         }
-        assert_eq!(run("note.indicator", &mut task, 3, &mut custom), ((2, 2), lines(&[" N!"])));
-        assert_eq!(run("est.indicator", &mut task, 2, &mut custom), ((1, 1), lines(&[" \u{2605}"])));
-        assert_eq!(run("dd.indicator", &mut task, 3, &mut custom), ((3, 3), lines(&["DDD"])));
+        assert_eq!(
+            run("note.indicator", &mut task, 3, &mut custom),
+            ((2, 2), lines(&[" N!"]))
+        );
+        assert_eq!(
+            run("est.indicator", &mut task, 2, &mut custom),
+            ((1, 1), lines(&[" \u{2605}"]))
+        );
+        assert_eq!(
+            run("dd.indicator", &mut task, 3, &mut custom),
+            ((3, 3), lines(&["DDD"]))
+        );
         // Display width, not bytes.
-        assert_eq!(run("len.indicator", &mut task, 3, &mut custom), ((2, 2), lines(&[" \u{65e5}"])));
+        assert_eq!(
+            run("len.indicator", &mut task, 3, &mut custom),
+            ((2, 2), lines(&[" \u{65e5}"]))
+        );
     }
 
     #[test]
@@ -644,7 +702,11 @@ mod tests {
             "len",
             "len.indicator",
         ] {
-            assert_eq!(run(column, &mut task, 5, &mut env), ((0, 0), Vec::new()), "{column}");
+            assert_eq!(
+                run(column, &mut task, 5, &mut env),
+                ((0, 0), Vec::new()),
+                "{column}"
+            );
         }
     }
 
@@ -652,9 +714,15 @@ mod tests {
     fn numeric_default_is_right_justified_raw_value() {
         let mut env = env(&[]);
         let mut task = task_with("est", "12.50");
-        assert_eq!(run("est", &mut task, 7, &mut env), ((5, 5), lines(&["  12.50"])));
+        assert_eq!(
+            run("est", &mut task, 7, &mut env),
+            ((5, 5), lines(&["  12.50"]))
+        );
         let mut task = task_with("est", "-3");
-        assert_eq!(run("est.default", &mut task, 2, &mut env), ((2, 2), lines(&["-3"])));
+        assert_eq!(
+            run("est.default", &mut task, 2, &mut env),
+            ((2, 2), lines(&["-3"]))
+        );
     }
 
     #[test]
@@ -663,32 +731,62 @@ mod tests {
         let mut task = task_with("dd", FIXED);
 
         let mut env1 = env(&[]);
-        assert_eq!(run("dd", &mut task, 12, &mut env1), ((10, 10), lines(&["2023-11-14  "])));
+        assert_eq!(
+            run("dd", &mut task, 12, &mut env1),
+            ((10, 10), lines(&["2023-11-14  "]))
+        );
 
         let mut env2 = env(&[("dateformat.report", "D.M.Y H:N")]);
-        assert_eq!(run("dd.default", &mut task, 16, &mut env2), ((16, 16), lines(&["14.11.2023 22:13"])));
+        assert_eq!(
+            run("dd.default", &mut task, 16, &mut env2),
+            ((16, 16), lines(&["14.11.2023 22:13"]))
+        );
 
-        let mut env3 = env(&[("dateformat.report", "D.M.Y H:N"), ("report.list.dateformat", "M/D")]);
-        assert_eq!(run("dd", &mut task, 5, &mut env3), ((5, 5), lines(&["11/14"])));
+        let mut env3 = env(&[
+            ("dateformat.report", "D.M.Y H:N"),
+            ("report.list.dateformat", "M/D"),
+        ]);
+        assert_eq!(
+            run("dd", &mut task, 5, &mut env3),
+            ((5, 5), lines(&["11/14"]))
+        );
     }
 
     #[test]
     fn duration_default_is_iso() {
         let mut env = env(&[]);
         let mut task = task_with("len", "PT2H");
-        assert_eq!(run("len", &mut task, 6, &mut env), ((4, 4), lines(&["  PT2H"])));
+        assert_eq!(
+            run("len", &mut task, 6, &mut env),
+            ((4, 4), lines(&["  PT2H"]))
+        );
         let mut task = task_with("len", "3d");
-        assert_eq!(run("len", &mut task, 3, &mut env), ((3, 3), lines(&["P3D"])));
+        assert_eq!(
+            run("len", &mut task, 3, &mut env),
+            ((3, 3), lines(&["P3D"]))
+        );
         let mut task = task_with("len", "P1DT1H30M");
-        assert_eq!(run("len", &mut task, 9, &mut env), ((9, 9), lines(&["P1DT1H30M"])));
+        assert_eq!(
+            run("len", &mut task, 9, &mut env),
+            ((9, 9), lines(&["P1DT1H30M"]))
+        );
     }
 
     #[test]
     fn uuid_inherits_column_uuid() {
         let mut env = env(&[]);
         let mut task = task_with("ref", UUID);
-        assert_eq!(run("ref", &mut task, 36, &mut env), ((36, 36), lines(&[UUID])));
-        assert_eq!(run("ref.long", &mut task, 36, &mut env), ((36, 36), lines(&[UUID])));
-        assert_eq!(run("ref.short", &mut task, 9, &mut env), ((8, 8), lines(&["f30cb9c3 "])));
+        assert_eq!(
+            run("ref", &mut task, 36, &mut env),
+            ((36, 36), lines(&[UUID]))
+        );
+        assert_eq!(
+            run("ref.long", &mut task, 36, &mut env),
+            ((36, 36), lines(&[UUID]))
+        );
+        assert_eq!(
+            run("ref.short", &mut task, 9, &mut env),
+            ((8, 8), lines(&["f30cb9c3 "]))
+        );
     }
 }

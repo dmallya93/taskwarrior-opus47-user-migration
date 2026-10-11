@@ -243,12 +243,21 @@ fn compare_bytes(left: &[u8], right: &[u8], sensitive: bool) -> bool {
 /// C++ `colorizeProject`: `color.project.<name>` matches projects that start
 /// with `<name>` (so `color.project.home` also colours `home.garden`),
 /// observing `rc.search.case.sensitive`.
-fn colorize_project(sensitive: bool, task: &Task, rule: &str, base: &Color, c: &mut Color, merge: bool) {
+fn colorize_project(
+    sensitive: bool,
+    task: &Task,
+    rule: &str,
+    base: &Color,
+    c: &mut Color,
+    merge: bool,
+) {
     let project = task.get_ref("project").as_bytes();
     let rule_trunc = &rule.as_bytes()[14..];
 
     // Match project names leftmost.
-    if rule_trunc.len() <= project.len() && compare_bytes(rule_trunc, &project[..rule_trunc.len()], sensitive) {
+    if rule_trunc.len() <= project.len()
+        && compare_bytes(rule_trunc, &project[..rule_trunc.len()], sensitive)
+    {
         apply_color(base, c, merge);
     }
 }
@@ -270,7 +279,14 @@ fn colorize_tag_none(task: &Task, base: &Color, c: &mut Color, merge: bool) {
 /// C++ `colorizeKeyword`: `color.keyword.<word>` matches a substring of the
 /// description, or failing that of any annotation (applied at most once),
 /// observing `rc.search.case.sensitive`.
-fn colorize_keyword(sensitive: bool, task: &Task, rule: &str, base: &Color, c: &mut Color, merge: bool) {
+fn colorize_keyword(
+    sensitive: bool,
+    task: &Task,
+    rule: &str,
+    base: &Color,
+    c: &mut Color,
+    merge: bool,
+) {
     let keyword = &rule[14..];
 
     // The easiest thing to check is the description, because it is just one
@@ -313,7 +329,13 @@ fn colorize_uda(task: &Task, rule: &str, base: &Color, c: &mut Color, merge: boo
 }
 
 /// C++ `colorizeDue`.
-fn colorize_due(task: &Task, env: &mut dyn TaskEnv, base: &Color, c: &mut Color, merge: bool) -> Result<()> {
+fn colorize_due(
+    task: &Task,
+    env: &mut dyn TaskEnv,
+    base: &Color,
+    c: &mut Color,
+    merge: bool,
+) -> Result<()> {
     if task.is_due(env)? {
         apply_color(base, c, merge);
     }
@@ -321,7 +343,13 @@ fn colorize_due(task: &Task, env: &mut dyn TaskEnv, base: &Color, c: &mut Color,
 }
 
 /// C++ `colorizeDueToday`.
-fn colorize_due_today(task: &Task, env: &mut dyn TaskEnv, base: &Color, c: &mut Color, merge: bool) -> Result<()> {
+fn colorize_due_today(
+    task: &Task,
+    env: &mut dyn TaskEnv,
+    base: &Color,
+    c: &mut Color,
+    merge: bool,
+) -> Result<()> {
     if task.is_duetoday(env)? {
         apply_color(base, c, merge);
     }
@@ -329,7 +357,13 @@ fn colorize_due_today(task: &Task, env: &mut dyn TaskEnv, base: &Color, c: &mut 
 }
 
 /// C++ `colorizeOverdue`.
-fn colorize_overdue(task: &Task, env: &mut dyn TaskEnv, base: &Color, c: &mut Color, merge: bool) -> Result<()> {
+fn colorize_overdue(
+    task: &Task,
+    env: &mut dyn TaskEnv,
+    base: &Color,
+    c: &mut Color,
+    merge: bool,
+) -> Result<()> {
     if task.is_overdue(env)? {
         apply_color(base, c, merge);
     }
@@ -424,9 +458,15 @@ pub fn auto_colorize(ctx: &mut Context, task: &Task, c: &mut Color) -> Result<()
                     "color.deleted" => colorize_deleted(task, &base, c, merge)?,
 
                     // Wildcards
-                    _ if r.starts_with("color.tag.") => colorize_tag(task, ctx, r, &base, c, merge)?,
-                    _ if r.starts_with("color.project.") => colorize_project(sensitive, task, r, &base, c, merge),
-                    _ if r.starts_with("color.keyword.") => colorize_keyword(sensitive, task, r, &base, c, merge),
+                    _ if r.starts_with("color.tag.") => {
+                        colorize_tag(task, ctx, r, &base, c, merge)?
+                    }
+                    _ if r.starts_with("color.project.") => {
+                        colorize_project(sensitive, task, r, &base, c, merge)
+                    }
+                    _ if r.starts_with("color.keyword.") => {
+                        colorize_keyword(sensitive, task, r, &base, c, merge)
+                    }
                     _ if r.starts_with("color.uda.") => colorize_uda(task, r, &base, c, merge),
                     _ => {}
                 }
@@ -495,7 +535,11 @@ mod tests {
     fn no_color_short_circuits_and_turns_detection_off() {
         let _reset = Reset;
         set_stdout_tty_override(Some(false));
-        let mut ctx = context(&[("color", "on"), ("detection", "on"), ("color.header", "red")]);
+        let mut ctx = context(&[
+            ("color", "on"),
+            ("detection", "on"),
+            ("color.header", "red"),
+        ]);
         initialize_color_rules(&mut ctx).unwrap();
         assert_eq!(ctx.config.get("color"), "off");
         assert_eq!(ctx.config.get("detection"), "off");
@@ -522,10 +566,22 @@ mod tests {
         initialize_color_rules(&mut ctx).unwrap();
         assert!(ctx.errors.is_empty());
 
-        assert_eq!(colorize_header("h"), Color::parse("red").unwrap().colorize("h"));
-        assert_eq!(colorize_footnote("f"), Color::parse("green").unwrap().colorize("f"));
-        assert_eq!(colorize_error("e"), Color::parse("white on red").unwrap().colorize("e"));
-        assert_eq!(colorize_debug("d"), Color::parse("blue").unwrap().colorize("d"));
+        assert_eq!(
+            colorize_header("h"),
+            Color::parse("red").unwrap().colorize("h")
+        );
+        assert_eq!(
+            colorize_footnote("f"),
+            Color::parse("green").unwrap().colorize("f")
+        );
+        assert_eq!(
+            colorize_error("e"),
+            Color::parse("white on red").unwrap().colorize("e")
+        );
+        assert_eq!(
+            colorize_debug("d"),
+            Color::parse("blue").unwrap().colorize("d")
+        );
         assert_ne!(colorize_header("h"), "h");
 
         // "color.tag." matches "color.tag.next" only (partial); "color.due"
@@ -537,7 +593,12 @@ mod tests {
         assert_eq!(precedence[1], "color.due");
         let mut rest: Vec<String> = precedence[2..].to_vec();
         rest.sort();
-        let mut all: Vec<String> = ctx.config.keys().filter(|k| k.starts_with("color.")).cloned().collect();
+        let mut all: Vec<String> = ctx
+            .config
+            .keys()
+            .filter(|k| k.starts_with("color."))
+            .cloned()
+            .collect();
         all.sort();
         assert_eq!(rest, all);
     }
@@ -613,7 +674,11 @@ mod tests {
         let mut ctx = rules_context(&settings);
         assert_eq!(gs_precedence(), [rule.to_string()], "{rule}");
         assert_eq!(colorize(&mut ctx, yes), col("red"), "{rule} should match");
-        assert_eq!(colorize(&mut ctx, no), Color::new(), "{rule} should not match");
+        assert_eq!(
+            colorize(&mut ctx, no),
+            Color::new(),
+            "{rule} should not match"
+        );
     }
 
     fn task(attrs: &[(&str, &str)]) -> Task {
@@ -632,7 +697,11 @@ mod tests {
     fn color_off_resets_and_short_circuits() {
         let _reset = Reset;
         set_stdout_tty_override(Some(true));
-        let mut ctx = context(&[("color", "off"), ("color.tagged", "red"), ("rule.precedence.color", "tagged")]);
+        let mut ctx = context(&[
+            ("color", "off"),
+            ("color.tagged", "red"),
+            ("rule.precedence.color", "tagged"),
+        ]);
         initialize_color_rules(&mut ctx).unwrap();
         assert!(gs_precedence().is_empty());
         let mut t = task(&[]);
@@ -652,7 +721,8 @@ mod tests {
     #[test]
     fn nocolor_tag_overrides_everything() {
         let _reset = Reset;
-        let mut ctx = rules_context(&[("color.tagged", "red"), ("rule.precedence.color", "tagged")]);
+        let mut ctx =
+            rules_context(&[("color.tagged", "red"), ("rule.precedence.color", "tagged")]);
         let mut t = task(&[]);
         t.add_tag("nocolor");
         let mut c = col("blue");
@@ -709,8 +779,18 @@ mod tests {
     #[test]
     fn until_recurring() {
         let _reset = Reset;
-        check_rule("color.until", &[], &task(&[("until", &epoch(3600))]), &task(&[]));
-        check_rule("color.recurring", &[], &task(&[("recur", "weekly")]), &task(&[]));
+        check_rule(
+            "color.until",
+            &[],
+            &task(&[("until", &epoch(3600))]),
+            &task(&[]),
+        );
+        check_rule(
+            "color.recurring",
+            &[],
+            &task(&[("recur", "weekly")]),
+            &task(&[]),
+        );
     }
 
     #[test]
@@ -744,12 +824,32 @@ mod tests {
         check_rule("color.project.none", &[], &task(&[]), &home);
         check_rule("color.project.Home", &[], &home, &work);
         // Leftmost only.
-        check_rule("color.project.Garden", &[], &task(&[("project", "Garden")]), &home);
+        check_rule(
+            "color.project.Garden",
+            &[],
+            &task(&[("project", "Garden")]),
+            &home,
+        );
         // Case sensitivity.
-        check_rule("color.project.home", &[], &task(&[("project", "home")]), &home);
-        check_rule("color.project.home", &[("search.case.sensitive", "no")], &home, &work);
+        check_rule(
+            "color.project.home",
+            &[],
+            &task(&[("project", "home")]),
+            &home,
+        );
+        check_rule(
+            "color.project.home",
+            &[("search.case.sensitive", "no")],
+            &home,
+            &work,
+        );
         // Longer than the project never matches.
-        check_rule("color.project.Home.Garden.Shed", &[], &task(&[("project", "Home.Garden.Shed")]), &home);
+        check_rule(
+            "color.project.Home.Garden.Shed",
+            &[],
+            &task(&[("project", "Home.Garden.Shed")]),
+            &home,
+        );
     }
 
     #[test]
@@ -758,8 +858,16 @@ mod tests {
         // A two-byte character cut in half by the rule length does not
         // panic and does not match.
         let t = task(&[("project", "a\u{e9}b")]);
-        check_rule("color.project.a\u{e9}", &[], &t, &task(&[("project", "ab")]));
-        let mut ctx = rules_context(&[("color.project.ab", "red"), ("rule.precedence.color", "project.ab")]);
+        check_rule(
+            "color.project.a\u{e9}",
+            &[],
+            &t,
+            &task(&[("project", "ab")]),
+        );
+        let mut ctx = rules_context(&[
+            ("color.project.ab", "red"),
+            ("rule.precedence.color", "project.ab"),
+        ]);
         assert_eq!(colorize(&mut ctx, &t), Color::new());
     }
 
@@ -772,7 +880,12 @@ mod tests {
         other.add_tag("work");
         check_rule("color.tag.home", &[], &home, &other);
         // Virtual tags go through hasTag.
-        check_rule("color.tag.PROJECT", &[], &task(&[("project", "x")]), &task(&[]));
+        check_rule(
+            "color.tag.PROJECT",
+            &[],
+            &task(&[("project", "x")]),
+            &task(&[]),
+        );
     }
 
     #[test]
@@ -784,9 +897,24 @@ mod tests {
         let none = task(&[("description", "nothing here")]);
         check_rule("color.keyword.Milk", &[], &desc, &none);
         check_rule("color.keyword.Milk", &[], &ann, &none);
-        check_rule("color.keyword.milk", &[], &task(&[("description", "milk")]), &desc);
-        check_rule("color.keyword.milk", &[("search.case.sensitive", "no")], &desc, &none);
-        check_rule("color.keyword.milk", &[("search.case.sensitive", "no")], &ann, &none);
+        check_rule(
+            "color.keyword.milk",
+            &[],
+            &task(&[("description", "milk")]),
+            &desc,
+        );
+        check_rule(
+            "color.keyword.milk",
+            &[("search.case.sensitive", "no")],
+            &desc,
+            &none,
+        );
+        check_rule(
+            "color.keyword.milk",
+            &[("search.case.sensitive", "no")],
+            &ann,
+            &none,
+        );
 
         // Applied once even when both the description and annotations match
         // (visible with merge on and a pre-set colour: blending twice is
@@ -834,12 +962,20 @@ mod tests {
         let mut t = task(&[("project", "home")]);
         t.add_tag("x");
         let settings = [("color.tagged", "red"), ("color.project.home", "green")];
-        let mut ctx = rules_context(&[settings[0], settings[1], ("rule.precedence.color", "tagged,project.")]);
+        let mut ctx = rules_context(&[
+            settings[0],
+            settings[1],
+            ("rule.precedence.color", "tagged,project."),
+        ]);
         assert_eq!(gs_precedence(), ["color.tagged", "color.project.home"]);
         assert_eq!(colorize(&mut ctx, &t), col("red"));
         drop(ctx);
 
-        let mut ctx = rules_context(&[settings[0], settings[1], ("rule.precedence.color", "project.,tagged")]);
+        let mut ctx = rules_context(&[
+            settings[0],
+            settings[1],
+            ("rule.precedence.color", "project.,tagged"),
+        ]);
         assert_eq!(colorize(&mut ctx, &t), col("green"));
 
         // Without merge the matching rule replaces a pre-assigned colour.
@@ -882,21 +1018,37 @@ mod tests {
         let mut t = task(&[]);
         t.add_tag("none");
         check_rule("color.tag.none", &[], &task(&[]), &t);
-        check_rule("color.project.none", &[], &task(&[]), &task(&[("project", "none")]));
+        check_rule(
+            "color.project.none",
+            &[],
+            &task(&[]),
+            &task(&[("project", "none")]),
+        );
     }
 
     #[test]
     fn errors_propagate() {
         let _reset = Reset;
         let bad = task(&[("status", "bogus")]);
-        for rule in ["completed", "deleted", "due", "overdue", "due.today", "tag.PENDING"] {
+        for rule in [
+            "completed",
+            "deleted",
+            "due",
+            "overdue",
+            "due.today",
+            "tag.PENDING",
+        ] {
             let key = format!("color.{rule}");
             let mut ctx = rules_context(&[(&key, "red"), ("rule.precedence.color", rule)]);
             let mut bad = bad.clone();
             bad.set("due", &epoch(0));
             let mut c = Color::new();
             let err = auto_colorize(&mut ctx, &bad, &mut c).unwrap_err();
-            assert_eq!(err.to_string(), "The status 'bogus' is not valid.", "{rule}");
+            assert_eq!(
+                err.to_string(),
+                "The status 'bogus' is not valid.",
+                "{rule}"
+            );
         }
     }
 }

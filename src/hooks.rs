@@ -29,18 +29,23 @@ use crate::task::Task;
 use crate::util::nontrivial;
 use crate::version::VERSION;
 
-const STRING_HOOK_ERROR_OBJECT: &str = "Hook Error: JSON Object '{...}' expected from hook script: {1}";
+const STRING_HOOK_ERROR_OBJECT: &str =
+    "Hook Error: JSON Object '{...}' expected from hook script: {1}";
 const STRING_HOOK_ERROR_NODESC: &str =
     "Hook Error: JSON Object missing 'description' attribute from hook script: {1}";
-const STRING_HOOK_ERROR_NOUUID: &str = "Hook Error: JSON Object missing 'uuid' attribute from hook script: {1}";
+const STRING_HOOK_ERROR_NOUUID: &str =
+    "Hook Error: JSON Object missing 'uuid' attribute from hook script: {1}";
 const STRING_HOOK_ERROR_SYNTAX: &str = "Hook Error: JSON syntax error in: {1}";
 const STRING_HOOK_ERROR_JSON: &str = "Hook Error: JSON ";
 const STRING_HOOK_ERROR_NOPARSE: &str = "Hook Error: JSON failed to parse: ";
-const STRING_HOOK_ERROR_BAD_NUM: &str = "Hook Error: Expected {1} JSON task(s), found {2}, in hook script: {3}";
-const STRING_HOOK_ERROR_SAME1: &str = "Hook Error: JSON must be for the same task: {1}, in hook script: {2}";
+const STRING_HOOK_ERROR_BAD_NUM: &str =
+    "Hook Error: Expected {1} JSON task(s), found {2}, in hook script: {3}";
+const STRING_HOOK_ERROR_SAME1: &str =
+    "Hook Error: JSON must be for the same task: {1}, in hook script: {2}";
 const STRING_HOOK_ERROR_SAME2: &str =
     "Hook Error: JSON must be for the same task: {1} != {2}, in hook script: {3}";
-const STRING_HOOK_ERROR_NOFEEDBACK: &str = "Hook Error: Expected feedback from failing hook script: {1}";
+const STRING_HOOK_ERROR_NOFEEDBACK: &str =
+    "Hook Error: Expected feedback from failing hook script: {1}";
 
 /// The C++ `throw 0`.
 fn terminate() -> TwError {
@@ -372,7 +377,12 @@ impl Hooks {
     /// The tail shared by every C++ event loop: a successful script's
     /// feedback becomes footnotes; a failing script must have given feedback,
     /// which becomes errors, and processing silently terminates (`throw 0`).
-    fn forward_feedback(ctx: &mut Context, status: i32, output_feedback: &[String], script: &str) -> Result<()> {
+    fn forward_feedback(
+        ctx: &mut Context,
+        status: i32,
+        output_feedback: &[String],
+        script: &str,
+    ) -> Result<()> {
         if status == 0 {
             for message in output_feedback {
                 ctx.footnote(message);
@@ -491,7 +501,13 @@ impl Hooks {
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Hooks::assertNTasks`.
-    fn assert_n_tasks(&self, ctx: &mut Context, input: &[String], n: u32, script: &str) -> Result<()> {
+    fn assert_n_tasks(
+        &self,
+        ctx: &mut Context,
+        input: &[String],
+        n: u32,
+        script: &str,
+    ) -> Result<()> {
         if input.len() != n as usize {
             ctx.error(&format(
                 STRING_HOOK_ERROR_BAD_NUM,
@@ -509,7 +525,13 @@ impl Hooks {
     /// # Errors
     /// [`TwError::Status`]`(0)` on a mismatch; a `json::parse` error (only
     /// for input that [`Hooks::assert_valid_json`] did not check first).
-    fn assert_same_task(&self, ctx: &mut Context, input: &[String], task: &Task, script: &str) -> Result<()> {
+    fn assert_same_task(
+        &self,
+        ctx: &mut Context,
+        input: &[String],
+        task: &Task,
+        script: &str,
+    ) -> Result<()> {
         let uuid = task.get("uuid");
 
         for i in input {
@@ -518,7 +540,10 @@ impl Hooks {
             // If there is no UUID at all.
             let u = root.as_object().and_then(|data| data.get("uuid"));
             let Some(up) = u.filter(|u| u.jtype() == JType::String) else {
-                ctx.error(&format(STRING_HOOK_ERROR_SAME1, &[&uuid, &script_name(script)]));
+                ctx.error(&format(
+                    STRING_HOOK_ERROR_SAME1,
+                    &[&uuid, &script_name(script)],
+                ));
                 return Err(terminate());
             };
 
@@ -526,7 +551,10 @@ impl Hooks {
             Lexer::dequote(&mut text);
             let json_uuid = json::decode(&text);
             if json_uuid != uuid {
-                ctx.error(&format(STRING_HOOK_ERROR_SAME2, &[&uuid, &json_uuid, &script_name(script)]));
+                ctx.error(&format(
+                    STRING_HOOK_ERROR_SAME2,
+                    &[&uuid, &json_uuid, &script_name(script)],
+                ));
                 return Err(terminate());
             }
         }
@@ -541,7 +569,10 @@ impl Hooks {
         let found_something = input.iter().any(|i| nontrivial(i));
 
         if !found_something {
-            ctx.error(&format(STRING_HOOK_ERROR_NOFEEDBACK, &[&script_name(script)]));
+            ctx.error(&format(
+                STRING_HOOK_ERROR_NOFEEDBACK,
+                &[&script_name(script)],
+            ));
             return Err(terminate());
         }
         Ok(())
@@ -560,7 +591,9 @@ impl Hooks {
         args.push("api:2".to_string());
 
         // Command line Taskwarrior was called with.
-        let v = dom::get_dom(ctx, "context.args")?.map(|v| v.to_string()).unwrap_or_default();
+        let v = dom::get_dom(ctx, "context.args")?
+            .map(|v| v.to_string())
+            .unwrap_or_default();
         args.push(format!("args:{v}"));
 
         // Command to be executed.
@@ -585,7 +618,12 @@ impl Hooks {
     ///
     /// # Errors
     /// Those of `execute` (`throw std::string`).
-    fn call_hook_script(&self, ctx: &mut Context, script: &str, input: &[String]) -> Result<(i32, Vec<String>)> {
+    fn call_hook_script(
+        &self,
+        ctx: &mut Context,
+        script: &str,
+        input: &[String],
+    ) -> Result<(i32, Vec<String>)> {
         if self.debug >= 1 {
             ctx.debug(&format!("Hook: Calling {script}"));
         }
@@ -668,9 +706,12 @@ mod tests {
             std::fs::create_dir(&hooks_dir).unwrap();
 
             let mut ctx = Context::new();
-            ctx.tdb2.open_replica_at(data.to_str().unwrap(), true, true).unwrap();
+            ctx.tdb2
+                .open_replica_at(data.to_str().unwrap(), true, true)
+                .unwrap();
             ctx.config.set("hooks", "on");
-            ctx.config.set("hooks.location", hooks_dir.to_str().unwrap());
+            ctx.config
+                .set("hooks.location", hooks_dir.to_str().unwrap());
             Fixture {
                 ctx,
                 hooks_dir: hooks_dir.to_str().unwrap().to_string(),
@@ -732,7 +773,10 @@ mod tests {
         assert!(hooks.is_json("{ }"));
         assert!(!hooks.is_json(" {}}"));
         assert!(!hooks.is_json("{a} "));
-        let output: Vec<String> = ["{\"a\":1}", "feedback", "", "{x}"].iter().map(|s| s.to_string()).collect();
+        let output: Vec<String> = ["{\"a\":1}", "feedback", "", "{x}"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let (json, feedback) = hooks.separate_output(&output);
         assert_eq!(json, vec!["{\"a\":1}".to_string(), "{x}".to_string()]);
         assert_eq!(feedback, vec!["feedback".to_string(), String::new()]);
@@ -784,7 +828,10 @@ mod tests {
         f.ctx.config.set("debug.hooks", 2);
         f.init();
         assert!(f.ctx.hooks.list().is_empty());
-        assert_eq!(f.ctx.debug_messages, vec![format!("Hook directory not readable: {missing}")]);
+        assert_eq!(
+            f.ctx.debug_messages,
+            vec![format!("Hook directory not readable: {missing}")]
+        );
     }
 
     #[test]
@@ -798,7 +845,10 @@ mod tests {
         f.ctx.config.remove("hooks.location");
         f.ctx.config.set("data.location", data.to_str().unwrap());
         f.init();
-        assert_eq!(f.ctx.hooks.list(), vec![script.to_str().unwrap().to_string()]);
+        assert_eq!(
+            f.ctx.hooks.list(),
+            vec![script.to_str().unwrap().to_string()]
+        );
     }
 
     #[test]
@@ -821,7 +871,10 @@ mod tests {
         f.hook("on-launch-2", "echo second");
         f.init();
         Hooks::on_launch(&mut f.ctx).unwrap();
-        assert_eq!(f.ctx.footnotes, vec!["first".to_string(), "second".to_string()]);
+        assert_eq!(
+            f.ctx.footnotes,
+            vec!["first".to_string(), "second".to_string()]
+        );
         assert!(f.ctx.errors.is_empty());
     }
 
@@ -856,7 +909,10 @@ mod tests {
         assert!(is_terminate(Hooks::on_launch(&mut f.ctx)));
         assert_eq!(
             f.ctx.errors,
-            vec!["Hook Error: Expected 0 JSON task(s), found 1, in hook script: on-launch".to_string()]
+            vec![
+                "Hook Error: Expected 0 JSON task(s), found 1, in hook script: on-launch"
+                    .to_string()
+            ]
         );
         assert!(f.ctx.footnotes.is_empty());
     }
@@ -880,14 +936,20 @@ mod tests {
             "on-add-1",
             &format!("read line; echo \"$line\" > '{log}'; echo \"$line\" | sed 's/\"one\"/\"two\"/'; echo added"),
         );
-        f.hook("on-add-2", "read line; echo \"$line\" | sed 's/\"two\"/\"three\"/'");
+        f.hook(
+            "on-add-2",
+            "read line; echo \"$line\" | sed 's/\"two\"/\"three\"/'",
+        );
         f.init();
 
         let mut task = new_task("one");
         let expected_input = task.compose_json(&mut f.ctx, false).unwrap();
         Hooks::on_add(&mut f.ctx, &mut task).unwrap();
 
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), format!("{expected_input}\n"));
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            format!("{expected_input}\n")
+        );
         assert_eq!(task.get("description"), "three");
         assert_eq!(task.get("uuid"), "a0a0a0a0-0000-4000-8000-000000000001");
         assert_eq!(f.ctx.footnotes, vec!["added".to_string()]);
@@ -925,7 +987,9 @@ mod tests {
         assert!(is_terminate(Hooks::on_add(&mut f.ctx, &mut task)));
         assert_eq!(
             f.ctx.errors,
-            vec!["Hook Error: Expected 1 JSON task(s), found 0, in hook script: on-add".to_string()]
+            vec![
+                "Hook Error: Expected 1 JSON task(s), found 0, in hook script: on-add".to_string()
+            ]
         );
     }
 
@@ -936,7 +1000,10 @@ mod tests {
         f.init();
         let mut task = new_task("one");
         assert!(is_terminate(Hooks::on_add(&mut f.ctx, &mut task)));
-        assert_eq!(f.ctx.errors, vec!["Hook Error: JSON syntax error in: {\"description\":}".to_string()]);
+        assert_eq!(
+            f.ctx.errors,
+            vec!["Hook Error: JSON syntax error in: {\"description\":}".to_string()]
+        );
 
         // With rc.debug.hooks the parser message follows.
         let mut f = {
@@ -949,7 +1016,11 @@ mod tests {
         let mut task = new_task("one");
         assert!(is_terminate(Hooks::on_add(&mut f.ctx, &mut task)));
         assert_eq!(f.ctx.errors.len(), 2);
-        assert!(f.ctx.errors[1].starts_with("Hook Error: JSON Error: "), "{:?}", f.ctx.errors);
+        assert!(
+            f.ctx.errors[1].starts_with("Hook Error: JSON Error: "),
+            "{:?}",
+            f.ctx.errors
+        );
     }
 
     #[test]
@@ -962,7 +1033,8 @@ mod tests {
         assert_eq!(
             f.ctx.errors,
             vec![
-                "Hook Error: JSON Object missing 'description' attribute from hook script: on-add".to_string(),
+                "Hook Error: JSON Object missing 'description' attribute from hook script: on-add"
+                    .to_string(),
                 "Hook Error: JSON failed to parse: {\"uuid\":\"x\"}".to_string(),
             ]
         );
@@ -975,7 +1047,8 @@ mod tests {
         assert_eq!(
             f.ctx.errors,
             vec![
-                "Hook Error: JSON Object missing 'uuid' attribute from hook script: on-add".to_string(),
+                "Hook Error: JSON Object missing 'uuid' attribute from hook script: on-add"
+                    .to_string(),
                 "Hook Error: JSON failed to parse: {\"description\":\"x\"}".to_string(),
             ]
         );
@@ -984,7 +1057,10 @@ mod tests {
     #[test]
     fn on_add_requires_the_same_task() {
         let mut f = Fixture::new();
-        f.hook("on-add", "cat >/dev/null; echo '{\"description\":\"x\",\"uuid\":\"other\"}'");
+        f.hook(
+            "on-add",
+            "cat >/dev/null; echo '{\"description\":\"x\",\"uuid\":\"other\"}'",
+        );
         f.init();
         let mut task = new_task("one");
         assert!(is_terminate(Hooks::on_add(&mut f.ctx, &mut task)));
@@ -998,7 +1074,10 @@ mod tests {
         drop(f);
 
         let mut f = Fixture::new();
-        f.hook("on-add", "cat >/dev/null; echo '{\"description\":\"x\",\"uuid\":12}'");
+        f.hook(
+            "on-add",
+            "cat >/dev/null; echo '{\"description\":\"x\",\"uuid\":12}'",
+        );
         f.init();
         assert!(is_terminate(Hooks::on_add(&mut f.ctx, &mut task)));
         assert_eq!(
@@ -1024,7 +1103,10 @@ mod tests {
         let before_json = before.compose_json(&mut f.ctx, false).unwrap();
         let after_json = after.compose_json(&mut f.ctx, false).unwrap();
         Hooks::on_modify(&mut f.ctx, &mut before, &mut after).unwrap();
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), format!("{before_json}\n{after_json}\n"));
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            format!("{before_json}\n{after_json}\n")
+        );
         assert_eq!(after.get("description"), "three");
         assert_eq!(before.get("description"), "one");
         assert_eq!(f.ctx.footnotes, vec!["changed".to_string()]);
@@ -1033,11 +1115,18 @@ mod tests {
     #[test]
     fn on_modify_requires_the_same_task_as_before() {
         let mut f = Fixture::new();
-        f.hook("on-modify", "read before; read after; echo '{\"description\":\"x\",\"uuid\":\"other\"}'");
+        f.hook(
+            "on-modify",
+            "read before; read after; echo '{\"description\":\"x\",\"uuid\":\"other\"}'",
+        );
         f.init();
         let mut before = new_task("one");
         let mut after = new_task("two");
-        assert!(is_terminate(Hooks::on_modify(&mut f.ctx, &mut before, &mut after)));
+        assert!(is_terminate(Hooks::on_modify(
+            &mut f.ctx,
+            &mut before,
+            &mut after
+        )));
         assert_eq!(
             f.ctx.errors,
             vec![
@@ -1075,7 +1164,9 @@ mod tests {
         assert!(is_terminate(Hooks::on_exit(&mut f.ctx)));
         assert_eq!(
             f.ctx.errors,
-            vec!["Hook Error: Expected 0 JSON task(s), found 1, in hook script: on-exit".to_string()]
+            vec![
+                "Hook Error: Expected 0 JSON task(s), found 1, in hook script: on-exit".to_string()
+            ]
         );
     }
 
@@ -1149,6 +1240,9 @@ mod tests {
         f.init();
         f.ctx.debug_messages.clear();
         Hooks::on_launch(&mut f.ctx).unwrap();
-        assert_eq!(f.ctx.debug_messages, vec![format!("Hook: Calling {script}")]);
+        assert_eq!(
+            f.ctx.debug_messages,
+            vec![format!("Hook: Calling {script}")]
+        );
     }
 }

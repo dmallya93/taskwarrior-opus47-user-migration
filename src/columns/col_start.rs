@@ -134,11 +134,20 @@ mod tests {
         let none = Color::new();
         let mut task = Task::new();
         task.set_int("start", FIXED);
-        assert_eq!(run("start.active", &mut task, 1, &none, &mut env), ((1, 1), vec!["*".to_string()]));
-        assert_eq!(run("start.active", &mut task, 3, &none, &mut env), ((1, 1), vec!["  *".to_string()]));
+        assert_eq!(
+            run("start.active", &mut task, 1, &none, &mut env),
+            ((1, 1), vec!["*".to_string()])
+        );
+        assert_eq!(
+            run("start.active", &mut task, 3, &none, &mut env),
+            ((1, 1), vec!["  *".to_string()])
+        );
 
         let red = Color::parse("red").unwrap();
-        assert_eq!(run("start.active", &mut task, 2, &red, &mut env).1, vec!["\x1b[31m *\x1b[0m".to_string()]);
+        assert_eq!(
+            run("start.active", &mut task, 2, &red, &mut env).1,
+            vec!["\x1b[31m *\x1b[0m".to_string()]
+        );
 
         // Multi-byte indicator: the width is in display columns.
         env.config.set("active.indicator", "\u{25b6}\u{25b6}");
@@ -149,11 +158,17 @@ mod tests {
 
         // Ended: still measured, but nothing rendered.
         task.set_int("end", FIXED);
-        assert_eq!(run("start.active", &mut task, 2, &none, &mut env), ((2, 2), vec![]));
+        assert_eq!(
+            run("start.active", &mut task, 2, &none, &mut env),
+            ((2, 2), vec![])
+        );
 
         // Not started: nothing at all.
         let mut empty = Task::new();
-        assert_eq!(run("start.active", &mut empty, 2, &none, &mut env), ((0, 0), vec![]));
+        assert_eq!(
+            run("start.active", &mut empty, 2, &none, &mut env),
+            ((0, 0), vec![])
+        );
     }
 
     #[test]
@@ -167,17 +182,29 @@ mod tests {
         let none = Color::new();
         let mut task = Task::new();
         task.set_int("start", FIXED);
-        assert_eq!(run("start", &mut task, 12, &none, &mut env), ((10, 10), vec!["2023-11-14  ".to_string()]));
-        assert_eq!(run("start.epoch", &mut task, 10, &none, &mut env), ((10, 10), vec!["1700000000".to_string()]));
+        assert_eq!(
+            run("start", &mut task, 12, &none, &mut env),
+            ((10, 10), vec!["2023-11-14  ".to_string()])
+        );
+        assert_eq!(
+            run("start.epoch", &mut task, 10, &none, &mut env),
+            ((10, 10), vec!["1700000000".to_string()])
+        );
         assert_eq!(
             run("start.iso", &mut task, 16, &none, &mut env),
             ((16, 16), vec!["20231114T221320Z".to_string()])
         );
         // Date styles do not care about `end`.
         task.set_int("end", FIXED);
-        assert_eq!(run("start.epoch", &mut task, 10, &none, &mut env).1, vec!["1700000000".to_string()]);
+        assert_eq!(
+            run("start.epoch", &mut task, 10, &none, &mut env).1,
+            vec!["1700000000".to_string()]
+        );
         let mut empty = Task::new();
-        assert_eq!(run("start", &mut empty, 10, &none, &mut env), ((0, 0), vec![]));
+        assert_eq!(
+            run("start", &mut empty, 10, &none, &mut env),
+            ((0, 0), vec![])
+        );
 
         drop(tz);
         localtime::tzset();

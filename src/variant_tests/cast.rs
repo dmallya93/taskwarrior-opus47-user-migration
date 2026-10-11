@@ -117,7 +117,10 @@ fn suite(t: &mut UnitTest, now: i64) -> Result<()> {
 
     let mut v31h = Variant::from_string("0x20");
     v31h.cast(Type::Integer)?;
-    t.ok(v31h.type_() == Type::Integer, "cast string(hex) --> integer");
+    t.ok(
+        v31h.type_() == Type::Integer,
+        "cast string(hex) --> integer",
+    );
     t.ok(v31h.get_integer() == 32, "cast string(hex) --> integer");
 
     let mut v32 = Variant::from_string("3.14");
@@ -182,9 +185,15 @@ fn suite(t: &mut UnitTest, now: i64) -> Result<()> {
     let mut v45 = Variant::from_time(1234567890, Type::Date)?;
     v45.cast(Type::Duration)?;
     t.ok(v45.type_() == Type::Duration, "cast date --> duration");
-    t.ok(v45.get_duration() <= 1234567890 - now, "cast date --> duration");
+    t.ok(
+        v45.get_duration() <= 1234567890 - now,
+        "cast date --> duration",
+    );
     // Assuming this unit test takes less than 10 min to execute
-    t.ok(v45.get_duration() > 1234567890 - now - 600, "cast date --> duration");
+    t.ok(
+        v45.get_duration() > 1234567890 - now - 600,
+        "cast date --> duration",
+    );
 
     // Type::Duration --> *
     let mut v50 = Variant::from_time(12345, Type::Duration)?;
@@ -211,13 +220,16 @@ fn suite(t: &mut UnitTest, now: i64) -> Result<()> {
     v54.cast(Type::Date)?;
     t.ok(v54.type_() == Type::Date, "cast duration --> date");
     t.ok(v54.get_date() >= 12345 + now, "cast duration --> duration");
-    t.ok(v54.get_date() < 12345 + now + 600, "cast duration --> duration");
+    t.ok(
+        v54.get_date() < 12345 + now + 600,
+        "cast duration --> duration",
+    );
 
     let mut v55 = Variant::from_time(12345, Type::Duration)?;
     v55.cast(Type::Duration)?;
     t.ok(v55.type_() == Type::Duration, "cast duration --> duration");
     t.is(v55.get_duration(), 12345, "cast duration --> duration");
-  
+
     Ok(())
 }
 

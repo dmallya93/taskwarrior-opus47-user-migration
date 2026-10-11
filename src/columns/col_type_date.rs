@@ -6,8 +6,8 @@
 //! [`ColumnTypeDate::render_date`], ...) passing themselves as `this`.
 
 use crate::columns::column::{
-    column_base, render_string_left, render_string_right, strings, Column, ColumnBase, ModifyEnv, RenderEnv,
-    MODIFICATION_LABEL,
+    column_base, render_string_left, render_string_right, strings, Column, ColumnBase, ModifyEnv,
+    RenderEnv, MODIFICATION_LABEL,
 };
 use crate::error::{Result, TwError};
 use crate::shared::color::Color;
@@ -34,7 +34,16 @@ impl ColumnTypeDate {
         base.type_ = "date".to_string();
         base.style = "formatted".to_string();
         base.label = String::new();
-        base.styles = strings(&["formatted", "julian", "epoch", "iso", "age", "relative", "remaining", "countdown"]);
+        base.styles = strings(&[
+            "formatted",
+            "julian",
+            "epoch",
+            "iso",
+            "age",
+            "relative",
+            "remaining",
+            "countdown",
+        ]);
 
         let mut now = Datetime::new();
         now -= 125; // So that "age" is non-zero.
@@ -44,7 +53,10 @@ impl ColumnTypeDate {
             now.to_epoch_string(),
             now.to_iso(),
             Duration::from_seconds(Datetime::new() - now).format_vague(true),
-            format!("-{}", Duration::from_seconds(Datetime::new() - now).format_vague(true)),
+            format!(
+                "-{}",
+                Duration::from_seconds(Datetime::new() - now).format_vague(true)
+            ),
             String::new(),
             Duration::from_seconds(Datetime::new() - now).format(),
         ];
@@ -140,9 +152,19 @@ impl ColumnTypeDate {
                 render_string_left(lines, width, color, &date.to_string(&format));
             } else if style == "countdown" {
                 let now = Datetime::new();
-                render_string_right(lines, width, color, &Duration::from_seconds(date - now).format_vague(true));
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &Duration::from_seconds(date - now).format_vague(true),
+                );
             } else if style == "julian" {
-                render_string_right(lines, width, color, &format_double(date.to_julian(), 13, 12));
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &format_double(date.to_julian(), 13, 12),
+                );
             } else if style == "epoch" {
                 render_string_right(lines, width, color, &date.to_epoch_string());
             } else if style == "iso" {
@@ -150,7 +172,12 @@ impl ColumnTypeDate {
             } else if style == "age" {
                 let now = Datetime::new();
                 if now > date {
-                    render_string_right(lines, width, color, &Duration::from_seconds(now - date).format_vague(true));
+                    render_string_right(
+                        lines,
+                        width,
+                        color,
+                        &Duration::from_seconds(now - date).format_vague(true),
+                    );
                 } else {
                     render_string_right(
                         lines,
@@ -162,7 +189,12 @@ impl ColumnTypeDate {
             } else if style == "relative" {
                 let now = Datetime::new();
                 if now < date {
-                    render_string_right(lines, width, color, &Duration::from_seconds(date - now).format_vague(true));
+                    render_string_right(
+                        lines,
+                        width,
+                        color,
+                        &Duration::from_seconds(date - now).format_vague(true),
+                    );
                 } else {
                     render_string_right(
                         lines,
@@ -174,7 +206,12 @@ impl ColumnTypeDate {
             } else if style == "remaining" {
                 let now = Datetime::new();
                 if date > now {
-                    render_string_right(lines, width, color, &Duration::from_seconds(date - now).format_vague(true));
+                    render_string_right(
+                        lines,
+                        width,
+                        color,
+                        &Duration::from_seconds(date - now).format_vague(true),
+                    );
                 }
             }
         }
@@ -195,7 +232,12 @@ impl ColumnTypeDate {
     /// The `Variant::cast` error, `'{1}' is not a valid date in the '{2}'
     /// format.` (with `Variant::dateFormat`) when the date is 0, and `'{1}'
     /// is not a valid date.` outside `[EPOCH_MIN_VALUE, EPOCH_MAX_VALUE)`.
-    pub fn modify_date(this: &dyn Column, task: &mut Task, value: &str, env: &mut dyn ModifyEnv) -> Result<()> {
+    pub fn modify_date(
+        this: &dyn Column,
+        task: &mut Task,
+        value: &str,
+        env: &mut dyn ModifyEnv,
+    ) -> Result<()> {
         let name = this.name();
 
         // Try to evaluate 'value'.  It might work.
@@ -231,7 +273,10 @@ impl ColumnTypeDate {
 
         let epoch = evaluated_value.get_date();
         if !(EPOCH_MIN_VALUE..EPOCH_MAX_VALUE).contains(&epoch) {
-            return Err(TwError::Message(format("'{1}' is not a valid date.", &[&value])));
+            return Err(TwError::Message(format(
+                "'{1}' is not a valid date.",
+                &[&value],
+            )));
         }
         task.set_int(name, epoch);
         Ok(())
@@ -291,7 +336,10 @@ mod tests {
             let env = EnvGuard::save(&["TZ"]);
             std::env::set_var("TZ", "UTC");
             localtime::tzset();
-            Utc { env: Some(env), _lock: lock }
+            Utc {
+                env: Some(env),
+                _lock: lock,
+            }
         }
     }
 
@@ -319,11 +367,17 @@ mod tests {
 
     /// `(measure, render lines)` of `column` (`<name>.<style>`) in report
     /// `list` at `width`.
-    fn run(column: &str, task: &mut Task, width: usize, env: &mut FakeRenderEnv) -> ((usize, usize), Vec<String>) {
+    fn run(
+        column: &str,
+        task: &mut Task,
+        width: usize,
+        env: &mut FakeRenderEnv,
+    ) -> ((usize, usize), Vec<String>) {
         let c = factory(column, "list", &env.config.clone()).unwrap();
         let m = c.measure(task, env).unwrap();
         let mut lines = Vec::new();
-        c.render(&mut lines, task, width, &Color::new(), env).unwrap();
+        c.render(&mut lines, task, width, &Color::new(), env)
+            .unwrap();
         (m, lines)
     }
 
@@ -333,16 +387,44 @@ mod tests {
         let mut env = env();
         let mut task = task_with("due", FIXED);
 
-        assert_eq!(run("due", &mut task, 12, &mut env), ((10, 10), vec!["2023-11-14  ".to_string()]));
-        assert_eq!(run("due.formatted", &mut task, 10, &mut env), ((10, 10), vec!["2023-11-14".to_string()]));
-        assert_eq!(run("due.julian", &mut task, 15, &mut env), ((13, 13), vec!["  2460263.42593".to_string()]));
-        assert_eq!(run("due.epoch", &mut task, 12, &mut env), ((10, 10), vec!["  1700000000".to_string()]));
-        assert_eq!(run("due.iso", &mut task, 18, &mut env), ((16, 16), vec!["20231114T221320Z  ".to_string()]));
+        assert_eq!(
+            run("due", &mut task, 12, &mut env),
+            ((10, 10), vec!["2023-11-14  ".to_string()])
+        );
+        assert_eq!(
+            run("due.formatted", &mut task, 10, &mut env),
+            ((10, 10), vec!["2023-11-14".to_string()])
+        );
+        assert_eq!(
+            run("due.julian", &mut task, 15, &mut env),
+            ((13, 13), vec!["  2460263.42593".to_string()])
+        );
+        assert_eq!(
+            run("due.epoch", &mut task, 12, &mut env),
+            ((10, 10), vec!["  1700000000".to_string()])
+        );
+        assert_eq!(
+            run("due.iso", &mut task, 18, &mut env),
+            ((16, 16), vec!["20231114T221320Z  ".to_string()])
+        );
 
         // No such attribute: nothing measured or rendered, in any style.
         let mut empty = Task::new();
-        for style in ["formatted", "julian", "epoch", "iso", "age", "relative", "remaining", "countdown"] {
-            assert_eq!(run(&format!("due.{style}"), &mut empty, 10, &mut env), ((0, 0), vec![]), "{style}");
+        for style in [
+            "formatted",
+            "julian",
+            "epoch",
+            "iso",
+            "age",
+            "relative",
+            "remaining",
+            "countdown",
+        ] {
+            assert_eq!(
+                run(&format!("due.{style}"), &mut empty, 10, &mut env),
+                ((0, 0), vec![]),
+                "{style}"
+            );
         }
     }
 
@@ -353,20 +435,32 @@ mod tests {
 
         // rc.dateformat
         let mut env = env();
-        assert_eq!(run("entry", &mut task, 10, &mut env), ((10, 10), vec!["2023-11-14".to_string()]));
+        assert_eq!(
+            run("entry", &mut task, 10, &mut env),
+            ((10, 10), vec!["2023-11-14".to_string()])
+        );
         // rc.dateformat.report beats rc.dateformat.
         env.config.set("dateformat.report", "D/M/Y H:N");
-        assert_eq!(run("entry", &mut task, 16, &mut env), ((16, 16), vec!["14/11/2023 22:13".to_string()]));
+        assert_eq!(
+            run("entry", &mut task, 16, &mut env),
+            ((16, 16), vec!["14/11/2023 22:13".to_string()])
+        );
         // rc.report.<report>.dateformat beats both.
         env.config.set("report.list.dateformat", "m/d");
-        assert_eq!(run("entry", &mut task, 6, &mut env), ((5, 5), vec!["11/14 ".to_string()]));
+        assert_eq!(
+            run("entry", &mut task, 6, &mut env),
+            ((5, 5), vec!["11/14 ".to_string()])
+        );
         // Another report's format is not used.
         env.config.set("report.list.dateformat", "");
         env.config.set("report.next.dateformat", "m/d");
         assert_eq!(run("entry", &mut task, 16, &mut env).0, (16, 16));
         // Datetime::length counts the widest rendering of each letter.
         env.config.set("dateformat.report", "a b");
-        assert_eq!(run("entry", &mut task, 7, &mut env), ((7, 7), vec!["Tue Nov".to_string()]));
+        assert_eq!(
+            run("entry", &mut task, 7, &mut env),
+            ((7, 7), vec!["Tue Nov".to_string()])
+        );
     }
 
     #[test]
@@ -379,33 +473,77 @@ mod tests {
         let future = now + 10 * 86400 + 43200;
 
         let mut task = task_with("due", past);
-        assert_eq!(run("due.age", &mut task, 7, &mut env), ((5, 5), vec!["  10d  ".to_string()]));
-        assert_eq!(run("due.relative", &mut task, 7, &mut env), ((6, 6), vec![" -10d  ".to_string()]));
-        assert_eq!(run("due.remaining", &mut task, 7, &mut env), ((0, 0), vec![]));
-        assert_eq!(run("due.countdown", &mut task, 7, &mut env), ((6, 6), vec![" -10d  ".to_string()]));
+        assert_eq!(
+            run("due.age", &mut task, 7, &mut env),
+            ((5, 5), vec!["  10d  ".to_string()])
+        );
+        assert_eq!(
+            run("due.relative", &mut task, 7, &mut env),
+            ((6, 6), vec![" -10d  ".to_string()])
+        );
+        assert_eq!(
+            run("due.remaining", &mut task, 7, &mut env),
+            ((0, 0), vec![])
+        );
+        assert_eq!(
+            run("due.countdown", &mut task, 7, &mut env),
+            ((6, 6), vec![" -10d  ".to_string()])
+        );
 
         let mut task = task_with("due", future);
-        assert_eq!(run("due.age", &mut task, 7, &mut env), ((6, 6), vec![" -10d  ".to_string()]));
-        assert_eq!(run("due.relative", &mut task, 7, &mut env), ((5, 5), vec!["  10d  ".to_string()]));
-        assert_eq!(run("due.remaining", &mut task, 7, &mut env), ((5, 5), vec!["  10d  ".to_string()]));
-        assert_eq!(run("due.countdown", &mut task, 7, &mut env), ((5, 5), vec!["  10d  ".to_string()]));
+        assert_eq!(
+            run("due.age", &mut task, 7, &mut env),
+            ((6, 6), vec![" -10d  ".to_string()])
+        );
+        assert_eq!(
+            run("due.relative", &mut task, 7, &mut env),
+            ((5, 5), vec!["  10d  ".to_string()])
+        );
+        assert_eq!(
+            run("due.remaining", &mut task, 7, &mut env),
+            ((5, 5), vec!["  10d  ".to_string()])
+        );
+        assert_eq!(
+            run("due.countdown", &mut task, 7, &mut env),
+            ((5, 5), vec!["  10d  ".to_string()])
+        );
 
         // Larger spans: weeks, months and years, unpadded "min".
         let mut task = task_with("due", now - 30 * 86400 - 43200);
-        assert_eq!(run("due.age", &mut task, 5, &mut env), ((4, 4), vec![" 4w  ".to_string()]));
+        assert_eq!(
+            run("due.age", &mut task, 5, &mut env),
+            ((4, 4), vec![" 4w  ".to_string()])
+        );
         let mut task = task_with("due", now - 120 * 86400 - 43200);
-        assert_eq!(run("due.age", &mut task, 5, &mut env), ((4, 4), vec![" 4mo ".to_string()]));
+        assert_eq!(
+            run("due.age", &mut task, 5, &mut env),
+            ((4, 4), vec![" 4mo ".to_string()])
+        );
         let mut task = task_with("due", now - 800 * 86400);
-        assert_eq!(run("due.age", &mut task, 6, &mut env), ((6, 6), vec!["2.2y  ".to_string()]));
+        assert_eq!(
+            run("due.age", &mut task, 6, &mut env),
+            ((6, 6), vec!["2.2y  ".to_string()])
+        );
         let mut task = task_with("due", now - 30 * 60 - 20);
-        assert_eq!(run("due.age", &mut task, 5, &mut env), ((5, 5), vec!["30min".to_string()]));
+        assert_eq!(
+            run("due.age", &mut task, 5, &mut env),
+            ((5, 5), vec!["30min".to_string()])
+        );
     }
 
     #[test]
     fn delegating_date_columns() {
         let _utc = Utc::new();
         let mut env = env();
-        for name in ["due", "end", "entry", "modified", "scheduled", "until", "wait"] {
+        for name in [
+            "due",
+            "end",
+            "entry",
+            "modified",
+            "scheduled",
+            "until",
+            "wait",
+        ] {
             let mut task = task_with(name, FIXED);
             assert_eq!(
                 run(&format!("{name}.epoch"), &mut task, 10, &mut env),
@@ -414,7 +552,11 @@ mod tests {
             );
             // Another date attribute is not this column's.
             let mut other = task_with(if name == "due" { "end" } else { "due" }, FIXED);
-            assert_eq!(run(name, &mut other, 10, &mut env), ((0, 0), vec![]), "{name}");
+            assert_eq!(
+                run(name, &mut other, 10, &mut env),
+                ((0, 0), vec![]),
+                "{name}"
+            );
         }
         // The base itself renders too.
         let mut base = ColumnTypeDate::new(&env.config);
@@ -458,7 +600,10 @@ mod tests {
     #[test]
     fn constructor_and_validate() {
         let c = ColumnTypeDate::new(&Configuration::new());
-        assert_eq!((c.name(), c.type_(), c.style(), c.label()), ("", "date", "formatted", ""));
+        assert_eq!(
+            (c.name(), c.type_(), c.style(), c.label()),
+            ("", "date", "formatted", "")
+        );
         assert!(c.modifiable() && !c.is_uda() && !c.is_fixed_width());
         assert_eq!(c.styles().len(), 8);
         assert_eq!(c.examples().len(), 8);
@@ -471,7 +616,10 @@ mod tests {
         let _utc = Utc::new();
         // [EPOCH_MIN_VALUE, EPOCH_MAX_VALUE): 1980-01-01T00:00:00Z is the
         // first valid date.
-        assert_eq!(modified("1980-01-01T00:00:00").unwrap(), EPOCH_MIN_VALUE.to_string());
+        assert_eq!(
+            modified("1980-01-01T00:00:00").unwrap(),
+            EPOCH_MIN_VALUE.to_string()
+        );
         assert_eq!(
             modified("1979-12-31T23:59:59").unwrap_err().to_string(),
             "'1979-12-31T23:59:59' is not a valid date."
@@ -485,9 +633,18 @@ mod tests {
     fn modify_unparseable_and_empty() {
         // A string that is neither a date nor a duration evaluates to 0.
         let err = modified("abc").unwrap_err().to_string();
-        assert_eq!(err, format!("'abc' is not a valid date in the '{}' format.", Variant::date_format()));
+        assert_eq!(
+            err,
+            format!(
+                "'abc' is not a valid date in the '{}' format.",
+                Variant::date_format()
+            )
+        );
         // An empty value skips that check, then fails the range check.
-        assert_eq!(modified("").unwrap_err().to_string(), "'' is not a valid date.");
+        assert_eq!(
+            modified("").unwrap_err().to_string(),
+            "'' is not a valid date."
+        );
     }
 
     #[test]

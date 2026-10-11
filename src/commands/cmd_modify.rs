@@ -70,15 +70,24 @@ impl CmdModify {
     pub fn check_consistency(before: &Task, after: &Task) -> Result<()> {
         // Perform some logical consistency checks.
         if after.has("recur") && !after.has("due") && !before.has("due") {
-            return Err(TwError::Message("You cannot specify a recurring task without a due date.".into()));
+            return Err(TwError::Message(
+                "You cannot specify a recurring task without a due date.".into(),
+            ));
         }
 
-        if before.has("recur") && before.has("due") && (!after.has("due") || after.get_ref("due").is_empty()) {
-            return Err(TwError::Message("You cannot remove the due date from a recurring task.".into()));
+        if before.has("recur")
+            && before.has("due")
+            && (!after.has("due") || after.get_ref("due").is_empty())
+        {
+            return Err(TwError::Message(
+                "You cannot remove the due date from a recurring task.".into(),
+            ));
         }
 
         if before.has("recur") && (!after.has("recur") || after.get_ref("recur").is_empty()) {
-            return Err(TwError::Message("You cannot remove the recurrence from a recurring task.".into()));
+            return Err(TwError::Message(
+                "You cannot remove the recurrence from a recurring task.".into(),
+            ));
         }
 
         if before.get_status()? == Status::Pending
@@ -181,7 +190,10 @@ impl CmdModify {
             }
 
             // Modify the parent
-            let mut parent = ctx.tdb2.get_by_uuid(task.get_ref("parent"))?.unwrap_or_default();
+            let mut parent = ctx
+                .tdb2
+                .get_by_uuid(task.get_ref("parent"))?
+                .unwrap_or_default();
             parent.modify(ctx, ModType::Replace, false)?;
             tdb2::modify(ctx, &mut parent)?;
         }
@@ -253,7 +265,11 @@ impl Command for CmdModify {
 
         let mut count = 0;
         if filtered.len() > 1 {
-            feedback_affected_count(context, "This command will alter {1} tasks.", filtered.len() as i32);
+            feedback_affected_count(
+                context,
+                "This command will alter {1} tasks.",
+                filtered.len() as i32,
+            );
         }
         let quantity = filtered.len() as u32;
         for mut task in filtered {
@@ -271,7 +287,12 @@ impl Command for CmdModify {
 
                 let diff = before.diff(&task, &context.columns, &context.config);
                 if self.permission(context, &(diff + &question), quantity) {
-                    count += Self::modify_and_update(context, &before, &mut task, Some(&mut project_changes))?;
+                    count += Self::modify_and_update(
+                        context,
+                        &before,
+                        &mut task,
+                        Some(&mut project_changes),
+                    )?;
                 } else {
                     with_console(|_, stdout| {
                         let _ = stdout.write_all(b"Task not modified.\n");
@@ -294,7 +315,11 @@ impl Command for CmdModify {
 
         feedback_affected_count(
             context,
-            if count == 1 { "Modified {1} task." } else { "Modified {1} tasks." },
+            if count == 1 {
+                "Modified {1} task."
+            } else {
+                "Modified {1} tasks."
+            },
             count,
         );
         Ok(rc)
@@ -383,7 +408,13 @@ mod tests {
             let mut full = vec!["task"];
             full.extend_from_slice(list);
             let ctx = initialized(&full);
-            Fixture { ctx, _dir: dir, _mml: mml, _env: env, _lock: lock }
+            Fixture {
+                ctx,
+                _dir: dir,
+                _mml: mml,
+                _env: env,
+                _lock: lock,
+            }
         }
 
         fn run(&mut self) -> Result<i32> {
@@ -398,7 +429,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn check_consistency_messages() {
         let mut plain = Task::new();
@@ -408,7 +438,9 @@ mod tests {
         let mut recur = plain.clone();
         recur.set("recur", "daily");
         assert_eq!(
-            CmdModify::check_consistency(&plain, &recur).unwrap_err().to_string(),
+            CmdModify::check_consistency(&plain, &recur)
+                .unwrap_err()
+                .to_string(),
             "You cannot specify a recurring task without a due date."
         );
 
@@ -417,21 +449,27 @@ mod tests {
         let mut after = before.clone();
         after.set("due", "");
         assert_eq!(
-            CmdModify::check_consistency(&before, &after).unwrap_err().to_string(),
+            CmdModify::check_consistency(&before, &after)
+                .unwrap_err()
+                .to_string(),
             "You cannot remove the due date from a recurring task."
         );
 
         let mut after = before.clone();
         after.remove("recur");
         assert_eq!(
-            CmdModify::check_consistency(&before, &after).unwrap_err().to_string(),
+            CmdModify::check_consistency(&before, &after)
+                .unwrap_err()
+                .to_string(),
             "You cannot remove the recurrence from a recurring task."
         );
 
         let mut ended = plain.clone();
         ended.set("end", "1700000000");
         assert_eq!(
-            CmdModify::check_consistency(&plain, &ended).unwrap_err().to_string(),
+            CmdModify::check_consistency(&plain, &ended)
+                .unwrap_err()
+                .to_string(),
             "Could not modify task aaaaaaaa. You cannot set an end date on a pending task."
         );
 
@@ -451,81 +489,158 @@ mod tests {
     fn no_tasks_specified() {
         let mut f = Fixture::new("", &["99", "modify", "x"]);
         assert_eq!(f.run().unwrap(), 1);
-        assert!(f.ctx.footnotes.iter().any(|m| m == "No tasks specified."), "{:?}", f.ctx.footnotes);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "No tasks specified."),
+            "{:?}",
+            f.ctx.footnotes
+        );
     }
 
     #[test]
     fn inconsistent_change_aborts() {
         let mut f = Fixture::new("", &["1", "modify", "recur:daily"]);
-        assert_eq!(f.run().unwrap_err().to_string(), "You cannot specify a recurring task without a due date.");
+        assert_eq!(
+            f.run().unwrap_err().to_string(),
+            "You cannot specify a recurring task without a due date."
+        );
         assert!(!f.task("aaaaaaaa-0000-4000-8000-000000000001").has("recur"));
     }
 
     #[test]
     fn bulk_quit_stops_and_returns_1() {
-        let mut f = Fixture::new("bulk=2\nconfirmation=on\n", &["1-2", "modify", "project:work"]);
+        let mut f = Fixture::new(
+            "bulk=2\nconfirmation=on\n",
+            &["1-2", "modify", "project:work"],
+        );
         begin_console_override("quit\n");
         let rc = f.run().unwrap();
         let shown = end_console_override();
         assert_eq!(rc, 1);
         assert!(shown.contains("Modify task 1 'one'?"), "{shown}");
         assert!(shown.ends_with("Task not modified.\n"), "{shown}");
-        assert!(!f.task("aaaaaaaa-0000-4000-8000-000000000001").has("project"));
-        assert_eq!(f.task("aaaaaaaa-0000-4000-8000-000000000002").get("project"), "home");
+        assert!(!f
+            .task("aaaaaaaa-0000-4000-8000-000000000001")
+            .has("project"));
+        assert_eq!(
+            f.task("aaaaaaaa-0000-4000-8000-000000000002")
+                .get("project"),
+            "home"
+        );
     }
 
     #[test]
     fn bulk_all_modifies_every_task() {
-        let mut f = Fixture::new("bulk=2\nconfirmation=on\n", &["1-2", "modify", "project:work"]);
+        let mut f = Fixture::new(
+            "bulk=2\nconfirmation=on\n",
+            &["1-2", "modify", "project:work"],
+        );
         begin_console_override("all\n");
         let rc = f.run().unwrap();
         end_console_override();
         assert_eq!(rc, 0);
-        assert_eq!(f.task("aaaaaaaa-0000-4000-8000-000000000001").get("project"), "work");
-        assert_eq!(f.task("aaaaaaaa-0000-4000-8000-000000000002").get("project"), "work");
+        assert_eq!(
+            f.task("aaaaaaaa-0000-4000-8000-000000000001")
+                .get("project"),
+            "work"
+        );
+        assert_eq!(
+            f.task("aaaaaaaa-0000-4000-8000-000000000002")
+                .get("project"),
+            "work"
+        );
     }
 
     #[test]
     fn project_changes_footnoted() {
         let mut f = Fixture::new("verbose=project\n", &["2", "modify", "project:work"]);
         assert_eq!(f.run().unwrap(), 0);
-        assert!(f.ctx.footnotes.iter().any(|m| m.contains("Project 'work'")), "{:?}", f.ctx.footnotes);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m.contains("Project 'work'")),
+            "{:?}",
+            f.ctx.footnotes
+        );
     }
 
     #[test]
     fn recurrence_confirmation_yes_modifies_siblings_and_parent() {
-        let mut f = Fixture::new("recurrence.confirmation=yes\n", &["bbbbbbbb-0000-4000-8000-000000000002", "modify", "project:x"]);
+        let mut f = Fixture::new(
+            "recurrence.confirmation=yes\n",
+            &[
+                "bbbbbbbb-0000-4000-8000-000000000002",
+                "modify",
+                "project:x",
+            ],
+        );
         assert_eq!(f.run().unwrap(), 0);
-        for uuid in [PARENT, "bbbbbbbb-0000-4000-8000-000000000002", "bbbbbbbb-0000-4000-8000-000000000003"] {
+        for uuid in [
+            PARENT,
+            "bbbbbbbb-0000-4000-8000-000000000002",
+            "bbbbbbbb-0000-4000-8000-000000000003",
+        ] {
             assert_eq!(f.task(uuid).get("project"), "x", "{uuid}");
         }
     }
 
     #[test]
     fn recurrence_confirmation_no_modifies_only_the_task() {
-        let mut f = Fixture::new("recurrence.confirmation=no\n", &["bbbbbbbb-0000-4000-8000-000000000002", "modify", "project:x"]);
+        let mut f = Fixture::new(
+            "recurrence.confirmation=no\n",
+            &[
+                "bbbbbbbb-0000-4000-8000-000000000002",
+                "modify",
+                "project:x",
+            ],
+        );
         assert_eq!(f.run().unwrap(), 0);
-        assert_eq!(f.task("bbbbbbbb-0000-4000-8000-000000000002").get("project"), "x");
-        assert!(!f.task("bbbbbbbb-0000-4000-8000-000000000003").has("project"));
+        assert_eq!(
+            f.task("bbbbbbbb-0000-4000-8000-000000000002")
+                .get("project"),
+            "x"
+        );
+        assert!(!f
+            .task("bbbbbbbb-0000-4000-8000-000000000003")
+            .has("project"));
         assert!(!f.task(PARENT).has("project"));
     }
 
     #[test]
     fn recurrence_confirmation_prompt_asks() {
-        let mut f = Fixture::new("recurrence.confirmation=prompt\n", &["bbbbbbbb-0000-4000-8000-000000000002", "modify", "project:x"]);
+        let mut f = Fixture::new(
+            "recurrence.confirmation=prompt\n",
+            &[
+                "bbbbbbbb-0000-4000-8000-000000000002",
+                "modify",
+                "project:x",
+            ],
+        );
         begin_console_override("yes\n");
         assert_eq!(f.run().unwrap(), 0);
         let shown = end_console_override();
         assert!(shown.contains(STRING_CMD_MODIFY_RECUR), "{shown}");
-        assert_eq!(f.task("bbbbbbbb-0000-4000-8000-000000000003").get("project"), "x");
+        assert_eq!(
+            f.task("bbbbbbbb-0000-4000-8000-000000000003")
+                .get("project"),
+            "x"
+        );
     }
 
     #[test]
     fn template_modifies_children() {
-        let mut f = Fixture::new("recurrence.confirmation=yes\n", &[PARENT, "modify", "project:y"]);
+        let mut f = Fixture::new(
+            "recurrence.confirmation=yes\n",
+            &[PARENT, "modify", "project:y"],
+        );
         assert_eq!(f.run().unwrap(), 0);
         assert_eq!(f.task(PARENT).get("project"), "y");
-        assert_eq!(f.task("bbbbbbbb-0000-4000-8000-000000000002").get("project"), "y");
-        assert_eq!(f.task("bbbbbbbb-0000-4000-8000-000000000003").get("project"), "y");
+        assert_eq!(
+            f.task("bbbbbbbb-0000-4000-8000-000000000002")
+                .get("project"),
+            "y"
+        );
+        assert_eq!(
+            f.task("bbbbbbbb-0000-4000-8000-000000000003")
+                .get("project"),
+            "y"
+        );
     }
 }

@@ -121,7 +121,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v33.get_bool(), true, "'foo' == 'foo' --> true");
 
     let v34 = Variant::from_bool(v3.op_partial(&v4)?);
-    t.is(v34.type_(), Type::Boolean, "'foo' == 1234567890 --> boolean");
+    t.is(
+        v34.type_(),
+        Type::Boolean,
+        "'foo' == 1234567890 --> boolean",
+    );
     t.is(v34.get_bool(), false, "'foo' == 1234567890 --> false");
 
     let v35 = Variant::from_bool(v3.op_partial(&v5)?);
@@ -141,11 +145,19 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v42.get_bool(), false, "1234567890 == 3.14 --> false");
 
     let v43 = Variant::from_bool(v4.op_partial(&v3)?);
-    t.is(v43.type_(), Type::Boolean, "1234567890 == 'foo' --> boolean");
+    t.is(
+        v43.type_(),
+        Type::Boolean,
+        "1234567890 == 'foo' --> boolean",
+    );
     t.is(v43.get_bool(), false, "1234567890 == 'foo' --> false");
 
     let v44 = Variant::from_bool(v4.op_partial(&v4)?);
-    t.is(v44.type_(), Type::Boolean, "1234567890 == 1234567890 --> boolean");
+    t.is(
+        v44.type_(),
+        Type::Boolean,
+        "1234567890 == 1234567890 --> boolean",
+    );
     t.is(v44.get_bool(), true, "1234567890 == 1234567890 --> true");
 
     let v45 = Variant::from_bool(v4.op_partial(&v5)?);
@@ -185,12 +197,28 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let same_day = (local.year(), local.month(), local.day()) == (2009, 2, 13);
 
     let v56 = Variant::from_bool(v6.op_partial(&v7)?);
-    t.is(v56.type_(), Type::Boolean, "1234522800 == '2009-02-13' --> boolean");
-    t.is(v56.get_bool(), same_day, "1234522800 == '2009-02-13' --> true");
+    t.is(
+        v56.type_(),
+        Type::Boolean,
+        "1234522800 == '2009-02-13' --> boolean",
+    );
+    t.is(
+        v56.get_bool(),
+        same_day,
+        "1234522800 == '2009-02-13' --> true",
+    );
 
     let v57 = Variant::from_bool(v7.op_partial(&v6)?);
-    t.is(v57.type_(), Type::Boolean, "'2009-02-13' == 1234522800 --> boolean");
-    t.is(v57.get_bool(), same_day, "'2009-02-13' == 1234522800 --> true");
+    t.is(
+        v57.type_(),
+        Type::Boolean,
+        "'2009-02-13' == 1234522800 --> boolean",
+    );
+    t.is(
+        v57.get_bool(),
+        same_day,
+        "'2009-02-13' == 1234522800 --> true",
+    );
 
     Ok(())
 }
@@ -249,7 +277,10 @@ fn partial_strings_and_dates() {
     assert!(p(&morning, &s("2009-02-13")));
     // Trivial operands never match a date.
     assert!(!p(&s(""), &morning));
-    assert!(!p(&Variant::from_time(0, Type::Date).unwrap(), &s("1970-01-01")));
+    assert!(!p(
+        &Variant::from_time(0, Type::Date).unwrap(),
+        &s("1970-01-01")
+    ));
 
     // Durations compare exactly.
     let hour = Variant::from_time(3600, Type::Duration).unwrap();
@@ -264,9 +295,21 @@ fn partial_cast_error() {
     Variant::set_date_format("D.M.Y");
     let date = Variant::from_time(1234483200, Type::Date).unwrap();
 
-    let e = Variant::from_string("'not a date'").op_partial(&date).unwrap_err();
-    assert_eq!(e.to_string(), "'not a date' is not a valid date in the 'D.M.Y' format.");
-    let e = date.op_nopartial(&Variant::from_string("not a date")).unwrap_err();
-    assert_eq!(e.to_string(), "'not a date' is not a valid date in the 'D.M.Y' format.");
-    assert!(Variant::from_string("13.02.2009").op_partial(&date).unwrap());
+    let e = Variant::from_string("'not a date'")
+        .op_partial(&date)
+        .unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "'not a date' is not a valid date in the 'D.M.Y' format."
+    );
+    let e = date
+        .op_nopartial(&Variant::from_string("not a date"))
+        .unwrap_err();
+    assert_eq!(
+        e.to_string(),
+        "'not a date' is not a valid date in the 'D.M.Y' format."
+    );
+    assert!(Variant::from_string("13.02.2009")
+        .op_partial(&date)
+        .unwrap());
 }

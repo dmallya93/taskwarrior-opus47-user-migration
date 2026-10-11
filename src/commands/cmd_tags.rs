@@ -69,7 +69,8 @@ impl CmdCompletionTags {
             meta: CommandMeta {
                 keyword: "_tags".into(),
                 usage: "task <filter> _tags".into(),
-                description: "Shows only a list of all tags used, for autocompletion purposes".into(),
+                description: "Shows only a list of all tags used, for autocompletion purposes"
+                    .into(),
                 read_only: true,
                 displays_id: false,
                 needs_gc: true,

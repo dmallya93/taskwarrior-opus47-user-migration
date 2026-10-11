@@ -45,7 +45,12 @@ impl ColumnTypeNumeric {
     /// # Errors
     /// `The value '{1}' is not a valid numeric value.` for a string result,
     /// `Unexpected variant type: '{1}'` (the numeric type) for a boolean.
-    pub fn modify_numeric(this: &dyn Column, task: &mut Task, value: &str, env: &mut dyn ModifyEnv) -> Result<()> {
+    pub fn modify_numeric(
+        this: &dyn Column,
+        task: &mut Task,
+        value: &str,
+        env: &mut dyn ModifyEnv,
+    ) -> Result<()> {
         let name = this.name();
 
         // Try to evaluate 'value'.  It might work.
@@ -55,14 +60,19 @@ impl ColumnTypeNumeric {
         };
 
         let label = MODIFICATION_LABEL;
-        env.debug(&format!("{label}{name} <-- '{}' <-- '{value}'", evaluated_value.get_string()));
+        env.debug(&format!(
+            "{label}{name} <-- '{}' <-- '{value}'",
+            evaluated_value.get_string()
+        ));
 
         // Convert the value of the expression to the correct type if needed
         match evaluated_value.type_() {
             // Expected variants - no conversion
             variant::Type::Integer | variant::Type::Real => {}
             // Convertible variants - convert to int
-            variant::Type::Date | variant::Type::Duration => evaluated_value.cast(variant::Type::Integer)?,
+            variant::Type::Date | variant::Type::Duration => {
+                evaluated_value.cast(variant::Type::Integer)?
+            }
             // Non-convertible variants
             variant::Type::String => {
                 return Err(TwError::Message(format(
@@ -71,7 +81,10 @@ impl ColumnTypeNumeric {
                 )));
             }
             other => {
-                return Err(TwError::Message(format("Unexpected variant type: '{1}'", &[&(other as i32)])));
+                return Err(TwError::Message(format(
+                    "Unexpected variant type: '{1}'",
+                    &[&(other as i32)],
+                )));
             }
         }
 
@@ -107,7 +120,12 @@ mod tests {
 
     fn modified(value: &str) -> Result<String> {
         let mut task = Task::new();
-        ColumnTypeNumeric::modify_numeric(&column(), &mut task, value, &mut FakeModifyEnv::default())?;
+        ColumnTypeNumeric::modify_numeric(
+            &column(),
+            &mut task,
+            value,
+            &mut FakeModifyEnv::default(),
+        )?;
         Ok(task.get("n"))
     }
 
@@ -116,7 +134,9 @@ mod tests {
         let c = ColumnTypeNumeric::new();
         assert_eq!(c.type_(), "numeric");
         assert!(c.modifiable());
-        assert!(ColumnTypeNumeric::validate_numeric("1") && ColumnTypeNumeric::validate_numeric("x"));
+        assert!(
+            ColumnTypeNumeric::validate_numeric("1") && ColumnTypeNumeric::validate_numeric("x")
+        );
         assert!(!ColumnTypeNumeric::validate_numeric(""));
         assert!(c.validate("1") && !c.validate(""));
     }
@@ -133,7 +153,10 @@ mod tests {
         assert_eq!(task.get("n"), "3");
         // C++ `get_string ()` is the raw `_string`, which Eval leaves at the
         // left operand's literal text.
-        assert_eq!(env.debug, vec![format!("{MODIFICATION_LABEL}n <-- '1' <-- '1+2'")]);
+        assert_eq!(
+            env.debug,
+            vec![format!("{MODIFICATION_LABEL}n <-- '1' <-- '1+2'")]
+        );
     }
 
     #[test]
@@ -146,9 +169,18 @@ mod tests {
 
     #[test]
     fn modify_rejects_strings() {
-        assert_eq!(modified("abc").unwrap_err().to_string(), "The value 'abc' is not a valid numeric value.");
+        assert_eq!(
+            modified("abc").unwrap_err().to_string(),
+            "The value 'abc' is not a valid numeric value."
+        );
         // Eval failure falls back to the literal string.
-        assert_eq!(modified("(").unwrap_err().to_string(), "The value '(' is not a valid numeric value.");
-        assert_eq!(modified("").unwrap_err().to_string(), "The value '' is not a valid numeric value.");
+        assert_eq!(
+            modified("(").unwrap_err().to_string(),
+            "The value '(' is not a valid numeric value."
+        );
+        assert_eq!(
+            modified("").unwrap_err().to_string(),
+            "The value '' is not a valid numeric value."
+        );
     }
 }

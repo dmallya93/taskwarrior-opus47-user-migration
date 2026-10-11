@@ -43,7 +43,12 @@ impl ColumnTypeDuration {
     ///
     /// # Errors
     /// `The duration value '{1}' is not supported.`
-    pub fn modify_duration(this: &dyn Column, task: &mut Task, value: &str, env: &mut dyn ModifyEnv) -> Result<()> {
+    pub fn modify_duration(
+        this: &dyn Column,
+        task: &mut Task,
+        value: &str,
+        env: &mut dyn ModifyEnv,
+    ) -> Result<()> {
         let name = this.name();
 
         // Try to evaluate 'value'.  It might work.
@@ -55,10 +60,15 @@ impl ColumnTypeDuration {
         // The duration is first parsed, then stored inside the variant as a `time_t`
         let label = MODIFICATION_LABEL;
         if evaluated_value.type_() == variant::Type::Duration {
-            env.debug(&format!("{label}{name} <-- {evaluated_value} <-- '{value}'"));
+            env.debug(&format!(
+                "{label}{name} <-- {evaluated_value} <-- '{value}'"
+            ));
             task.set(name, &evaluated_value.to_string());
         } else {
-            return Err(TwError::Message(format("The duration value '{1}' is not supported.", &[&value])));
+            return Err(TwError::Message(format(
+                "The duration value '{1}' is not supported.",
+                &[&value],
+            )));
         }
 
         Ok(())
@@ -100,7 +110,10 @@ mod tests {
         let c = ColumnTypeDuration::new();
         assert_eq!(c.type_(), "duration");
         assert!(c.modifiable());
-        assert!(ColumnTypeDuration::validate_duration("1d") && ColumnTypeDuration::validate_duration("x"));
+        assert!(
+            ColumnTypeDuration::validate_duration("1d")
+                && ColumnTypeDuration::validate_duration("x")
+        );
         assert!(!ColumnTypeDuration::validate_duration(""));
         assert!(c.validate("1d") && !c.validate(""));
     }

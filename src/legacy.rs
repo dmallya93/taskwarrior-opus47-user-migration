@@ -115,7 +115,10 @@ pub fn legacy_check_for_deprecated_columns(config: &Configuration) -> String {
         if name.starts_with("report") {
             // Deprecated in 2.0.0
             let value = config.get(name);
-            if value.contains("entry_time") || value.contains("start_time") || value.contains("end_time") {
+            if value.contains("entry_time")
+                || value.contains("start_time")
+                || value.contains("end_time")
+            {
                 deprecated.push(name);
             }
         }
@@ -173,7 +176,10 @@ mod tests {
         let mut name = String::from("priority.");
         legacy_column_map(&mut context, &mut name);
         assert_eq!(name, "priority");
-        assert_eq!(context.footnotes, vec!["Legacy attribute found.  Please change 'priority.' to 'priority'."]);
+        assert_eq!(
+            context.footnotes,
+            vec!["Legacy attribute found.  Please change 'priority.' to 'priority'."]
+        );
 
         let mut name = String::from("priority.");
         legacy_sort_column_map(&mut context, &mut name);
@@ -181,7 +187,13 @@ mod tests {
         // Footnotes are de-duplicated.
         assert_eq!(context.footnotes.len(), 1);
 
-        for unchanged in ["priority", "priority_long", "entry_time", "description_only", ""] {
+        for unchanged in [
+            "priority",
+            "priority_long",
+            "entry_time",
+            "description_only",
+            "",
+        ] {
             let mut name = unchanged.to_string();
             legacy_column_map(&mut context, &mut name);
             assert_eq!(name, unchanged);
@@ -206,7 +218,10 @@ mod tests {
 
     #[test]
     fn deprecated_variables() {
-        assert_eq!(legacy_check_for_deprecated_variables(&config_with(&[("report.x.columns", "id")])), "");
+        assert_eq!(
+            legacy_check_for_deprecated_variables(&config_with(&[("report.x.columns", "id")])),
+            ""
+        );
 
         let config = config_with(&[
             ("urgency.inherit.coefficient", "1"),
@@ -241,7 +256,10 @@ mod tests {
 
     #[test]
     fn deprecated_columns() {
-        assert_eq!(legacy_check_for_deprecated_columns(&config_with(&[("report.x.columns", "id")])), "\n");
+        assert_eq!(
+            legacy_check_for_deprecated_columns(&config_with(&[("report.x.columns", "id")])),
+            "\n"
+        );
 
         let config = config_with(&[
             ("report.a.columns", "id,entry_time"),

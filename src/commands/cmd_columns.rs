@@ -62,14 +62,22 @@ impl Command for CmdColumns {
     fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
         // Obtain the arguments from the description.  That way, things like '--'
         // have already been handled.
-        let words = context.cli2.get_words(&context.config, &mut context.debug_messages);
+        let words = context
+            .cli2
+            .get_words(&context.config, &mut context.debug_messages);
         if words.len() > 1 {
-            return Err(TwError::Message("You can only specify one search string.".into()));
+            return Err(TwError::Message(
+                "You can only specify one search string.".into(),
+            ));
         }
 
         // Include all columns in the table (the registry is a BTreeMap, so
         // the names are already sorted as the C++ `std::sort` leaves them).
-        let columns: Vec<_> = context.columns.iter().map(|(n, c)| (n.clone(), c.clone())).collect();
+        let columns: Vec<_> = context
+            .columns
+            .iter()
+            .map(|(n, c)| (n.clone(), c.clone()))
+            .collect();
 
         // Render a list of column names, formats and examples.
         let mut formats = Table::new();
@@ -194,7 +202,12 @@ mod tests {
         let mut context = Context::new();
         context
             .config
-            .parse(crate::context::CONFIGURATION_DEFAULTS, 1, &[crate::context::task_rcdir()], "")
+            .parse(
+                crate::context::CONFIGURATION_DEFAULTS,
+                1,
+                &[crate::context::task_rcdir()],
+                "",
+            )
             .unwrap();
         for (key, value) in [("defaultwidth", "80"), ("detection", "off")] {
             context.config.set(key, value);
@@ -211,20 +224,52 @@ mod tests {
     fn columns_table_uda_rows_and_footnote() {
         let mut context = context(&[("fontunderline", "off"), ("uda.size.type", "numeric")]);
         let mut output = String::new();
-        assert_eq!(CmdColumns::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdColumns::new()
+                .execute(&mut context, &mut output)
+                .unwrap(),
+            0
+        );
         assert!(!output.contains('\x1b'), "{output:?}");
         let lines: Vec<&str> = output.lines().collect();
         assert_eq!(lines[0], "");
-        assert!(lines[1].starts_with("Columns     Type    Modifiable Supported Formats Example"), "{output}");
-        assert!(lines[2].starts_with("----------- ------- ---------- ----------------- -------"), "{output}");
-        assert_eq!(lines[3], "depends     string  Modifiable list*             1 2 10");
-        assert_eq!(lines[4], "                               count             [3]");
-        assert_eq!(lines[5], "                               indicator         D");
-        assert!(lines.contains(&"project     string  Modifiable full*             home.garden"), "{output}");
-        assert!(lines.contains(&"                               parent            home"), "{output}");
+        assert!(
+            lines[1].starts_with("Columns     Type    Modifiable Supported Formats Example"),
+            "{output}"
+        );
+        assert!(
+            lines[2].starts_with("----------- ------- ---------- ----------------- -------"),
+            "{output}"
+        );
+        assert_eq!(
+            lines[3],
+            "depends     string  Modifiable list*             1 2 10"
+        );
+        assert_eq!(
+            lines[4],
+            "                               count             [3]"
+        );
+        assert_eq!(
+            lines[5],
+            "                               indicator         D"
+        );
+        assert!(
+            lines.contains(&"project     string  Modifiable full*             home.garden"),
+            "{output}"
+        );
+        assert!(
+            lines.contains(&"                               parent            home"),
+            "{output}"
+        );
         assert!(lines.contains(&"uuid        string  Read Only  long*             f30cb9c3-3fc0-483f-bfb2-3bf134f00694"));
-        assert!(lines.contains(&"size        numeric Modifiable default*"), "{output}");
-        assert!(lines.contains(&"<uda>       <type>  Modifiable default*"), "{output}");
+        assert!(
+            lines.contains(&"size        numeric Modifiable default*"),
+            "{output}"
+        );
+        assert!(
+            lines.contains(&"<uda>       <type>  Modifiable default*"),
+            "{output}"
+        );
         assert!(output.ends_with(
             "<uda>       <type>  Modifiable default*\n                               indicator\n\n\
              * Means default format, and therefore optional.  For example, 'due' and 'due.formatted' are equivalent.\n"
@@ -236,27 +281,45 @@ mod tests {
         // fontunderline (default on) without colour: underlined labels, no dashes.
         let mut context = context(&[("verbose", "nothing")]);
         let mut output = String::new();
-        CmdColumns::new().execute(&mut context, &mut output).unwrap();
-        assert!(output.starts_with("\x1b[4mColumns    \x1b[0m \x1b[4mType"), "{output:?}");
+        CmdColumns::new()
+            .execute(&mut context, &mut output)
+            .unwrap();
+        assert!(
+            output.starts_with("\x1b[4mColumns    \x1b[0m \x1b[4mType"),
+            "{output:?}"
+        );
         assert!(!output.contains("-------"), "{output:?}");
         // Forced colour: alternate rows use color.alternate.
         let mut colored = self::context(&[("_forcecolor", "on"), ("color.alternate", "on gray2")]);
         let mut output = String::new();
-        CmdColumns::new().execute(&mut colored, &mut output).unwrap();
-        assert!(output.contains("\x1b[48;5;234mdepends    \x1b[0m"), "{output:?}");
+        CmdColumns::new()
+            .execute(&mut colored, &mut output)
+            .unwrap();
+        assert!(
+            output.contains("\x1b[48;5;234mdepends    \x1b[0m"),
+            "{output:?}"
+        );
     }
 
     #[test]
     fn completion_columns_lists_sorted_names() {
         let mut context = context(&[("uda.aaa.type", "string")]);
         let mut output = String::new();
-        assert_eq!(CmdCompletionColumns::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdCompletionColumns::new()
+                .execute(&mut context, &mut output)
+                .unwrap(),
+            0
+        );
         let names: Vec<&str> = output.lines().collect();
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
         assert_eq!(names[0], "aaa");
-        assert!(names.contains(&"description") && names.contains(&"uuid"), "{output}");
+        assert!(
+            names.contains(&"description") && names.contains(&"uuid"),
+            "{output}"
+        );
         assert_eq!(names.len(), context.columns.len());
         assert!(output.ends_with("\n"));
     }

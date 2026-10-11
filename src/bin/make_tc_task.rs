@@ -22,13 +22,17 @@ fn usage() -> ExitCode {
 fn main() -> ExitCode {
     // The bridge converted every C++ string with `to_string_lossy`, so
     // arguments that are not valid UTF-8 are accepted the same way here.
-    let mut args = std::env::args_os().skip(1).map(|arg| arg.to_string_lossy().into_owned());
+    let mut args = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned());
     let Some(datadir) = args.next() else {
         return usage();
     };
 
     let mut tdb2 = Tdb2::new();
-    if let Err(err) = tdb2.open_replica_at(&datadir, /*create_if_missing=*/ true, /*read_write=*/ true) {
+    if let Err(err) = tdb2.open_replica_at(
+        &datadir, /*create_if_missing=*/ true, /*read_write=*/ true,
+    ) {
         eprintln!("{err}");
         return ExitCode::FAILURE;
     }

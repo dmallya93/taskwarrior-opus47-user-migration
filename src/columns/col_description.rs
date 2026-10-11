@@ -10,7 +10,9 @@
 //! checked) plus per-style cases.
 
 use crate::columns::col_type_string::ColumnTypeString;
-use crate::columns::column::{column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::shared::configuration::Configuration;
@@ -75,7 +77,14 @@ impl ColumnDescription {
         parent.base.style = "combined".to_string();
         parent.base.label = "Description".to_string();
         parent.base.modifiable = true;
-        parent.base.styles = strings(&["combined", "desc", "oneline", "truncated", "count", "truncated_count"]);
+        parent.base.styles = strings(&[
+            "combined",
+            "desc",
+            "oneline",
+            "truncated",
+            "count",
+            "truncated_count",
+        ]);
 
         let mut dateformat = config.get("dateformat.annotation");
         if dateformat.is_empty() {
@@ -162,7 +171,8 @@ impl Column for ColumnDescription {
             if task.annotation_count != 0 {
                 let min_anno = Datetime::length(&self.dateformat) as u32;
                 for value in task.get_annotations().values() {
-                    maximum = maximum.wrapping_add(min_anno.wrapping_add(1).wrapping_add(utf8_width(value)));
+                    maximum = maximum
+                        .wrapping_add(min_anno.wrapping_add(1).wrapping_add(utf8_width(value)));
                 }
             }
         }
@@ -174,13 +184,21 @@ impl Column for ColumnDescription {
         // The text [2]
         else if style == "count" {
             // <description> + ' ' + '[' + <count> + ']'
-            maximum = utf8_width(&description) + 1 + 1 + format_value(&task.annotation_count).len() as u32 + 1;
+            maximum = utf8_width(&description)
+                + 1
+                + 1
+                + format_value(&task.annotation_count).len() as u32
+                + 1;
             minimum = longest_word(&description) as u32;
         }
         // The te... [2]
         else if style == "truncated_count" {
             minimum = 4;
-            maximum = utf8_width(&description) + 1 + 1 + format_value(&task.annotation_count).len() as u32 + 1;
+            maximum = utf8_width(&description)
+                + 1
+                + 1
+                + format_value(&task.annotation_count).len() as u32
+                + 1;
         }
 
         Ok((minimum as usize, maximum as usize))
@@ -345,7 +363,10 @@ mod tests {
             std::env::remove_var("TASKRC");
             std::env::set_var("TZ", "UTC");
             localtime::tzset();
-            Utc { env: Some(env), _lock: lock }
+            Utc {
+                env: Some(env),
+                _lock: lock,
+            }
         }
     }
 
@@ -366,7 +387,8 @@ mod tests {
         fn ok(&mut self, expression: bool, name: &str) {
             self.counter += 1;
             if !expression {
-                self.failures.push(format!("not ok {} - {}", self.counter, name));
+                self.failures
+                    .push(format!("not ok {} - {}", self.counter, name));
             }
         }
 
@@ -396,7 +418,15 @@ mod tests {
         expected: &'static [&'static str],
         dateformat: &'static str,
     ) -> AnnotationCase {
-        AnnotationCase { name, width, indent, description, annotations, expected, dateformat }
+        AnnotationCase {
+            name,
+            width,
+            indent,
+            description,
+            annotations,
+            expected,
+            dateformat,
+        }
     }
 
     /// `test/col_description_test.cpp` `TEST_NAME`.
@@ -405,16 +435,88 @@ mod tests {
         let _utc = Utc::new();
 
         let cases = [
-            case("default indent", 12, 2, "task", &["aa bb cc dd"], &["task", "  08 aa bb", "  cc dd"], "D"),
-            case("zero indent", 12, 0, "task", &["aa bb cc dd"], &["task", "08 aa bb cc", "dd"], "D"),
-            case("custom indent", 12, 4, "task", &["aa bb cc dd"], &["task", "    08 aa bb", "    cc dd"], "D"),
-            case("exact fit", 16, 2, "task", &["aa bb cc dd"], &["task", "  08 aa bb cc dd"], "D"),
-            case("one column short", 15, 2, "task", &["aa bb cc dd"], &["task", "  08 aa bb cc", "  dd"], "D"),
-            case("indent equals width", 2, 2, "t", &["a"], &["t", " 0", " 8", " a"], "D"),
-            case("indent exceeds width", 2, 100, "t", &["a"], &["t", " 0", " 8", " a"], "D"),
-            case("one-column width", 1, 2, "t", &["a"], &["t", "0", "8", "a"], "D"),
+            case(
+                "default indent",
+                12,
+                2,
+                "task",
+                &["aa bb cc dd"],
+                &["task", "  08 aa bb", "  cc dd"],
+                "D",
+            ),
+            case(
+                "zero indent",
+                12,
+                0,
+                "task",
+                &["aa bb cc dd"],
+                &["task", "08 aa bb cc", "dd"],
+                "D",
+            ),
+            case(
+                "custom indent",
+                12,
+                4,
+                "task",
+                &["aa bb cc dd"],
+                &["task", "    08 aa bb", "    cc dd"],
+                "D",
+            ),
+            case(
+                "exact fit",
+                16,
+                2,
+                "task",
+                &["aa bb cc dd"],
+                &["task", "  08 aa bb cc dd"],
+                "D",
+            ),
+            case(
+                "one column short",
+                15,
+                2,
+                "task",
+                &["aa bb cc dd"],
+                &["task", "  08 aa bb cc", "  dd"],
+                "D",
+            ),
+            case(
+                "indent equals width",
+                2,
+                2,
+                "t",
+                &["a"],
+                &["t", " 0", " 8", " a"],
+                "D",
+            ),
+            case(
+                "indent exceeds width",
+                2,
+                100,
+                "t",
+                &["a"],
+                &["t", " 0", " 8", " a"],
+                "D",
+            ),
+            case(
+                "one-column width",
+                1,
+                2,
+                "t",
+                &["a"],
+                &["t", "0", "8", "a"],
+                "D",
+            ),
             case("nonpositive width", 0, 2, "t", &["a"], &[], "D"),
-            case("negative indent", 12, -2, "task", &["aa bb cc dd"], &["task", "08 aa bb cc", "dd"], "D"),
+            case(
+                "negative indent",
+                12,
+                -2,
+                "task",
+                &["aa bb cc dd"],
+                &["task", "08 aa bb cc", "dd"],
+                "D",
+            ),
             case(
                 "description wraps",
                 12,
@@ -424,7 +526,15 @@ mod tests {
                 &["one two", "three four", "  08 aa bb", "  cc dd"],
                 "D",
             ),
-            case("unannotated description wraps", 12, 2, "one two three four", &[], &["one two", "three four"], "D"),
+            case(
+                "unannotated description wraps",
+                12,
+                2,
+                "one two three four",
+                &[],
+                &["one two", "three four"],
+                "D",
+            ),
             case(
                 "explicit and boundary newlines",
                 12,
@@ -434,9 +544,33 @@ mod tests {
                 &["task", "", "  08 aa", "", "  bb", "", "  08 cc"],
                 "D",
             ),
-            case("empty description", 12, 2, "", &["aa"], &["", "  08 aa"], "D"),
-            case("Unicode display widths", 12, 2, "task", &["åäö 界界 éé"], &["task", "  08 åäö", "  界界 éé"], "D"),
-            case("wide glyph in one content column", 3, 2, "t", &["界"], &["t", "  0", "  8", "  ."], "D"),
+            case(
+                "empty description",
+                12,
+                2,
+                "",
+                &["aa"],
+                &["", "  08 aa"],
+                "D",
+            ),
+            case(
+                "Unicode display widths",
+                12,
+                2,
+                "task",
+                &["åäö 界界 éé"],
+                &["task", "  08 åäö", "  界界 éé"],
+                "D",
+            ),
+            case(
+                "wide glyph in one content column",
+                3,
+                2,
+                "t",
+                &["界"],
+                &["t", "  0", "  8", "  ."],
+                "D",
+            ),
             case(
                 "annotation date format",
                 18,
@@ -457,10 +591,18 @@ mod tests {
             ),
         ];
 
-        let mut test = UnitTest { counter: 0, failures: Vec::new() };
+        let mut test = UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        };
         let mut config = Configuration::new();
         config
-            .parse(crate::context::CONFIGURATION_DEFAULTS, 0, &[crate::context::task_rcdir()], "")
+            .parse(
+                crate::context::CONFIGURATION_DEFAULTS,
+                0,
+                &[crate::context::task_rcdir()],
+                "",
+            )
             .unwrap();
         config.set("dateformat", "Y-M-D");
         config.set("hyphenate", 0); // C++ `set (key, false)` is the int overload.
@@ -483,7 +625,15 @@ mod tests {
             let color = Color::new();
             let mut lines: Vec<String> = Vec::new();
             // C++ passes `int width`; the nonpositive case is width 0 here.
-            column.render(&mut lines, &mut task, item.width.max(0) as usize, &color, &mut env).unwrap();
+            column
+                .render(
+                    &mut lines,
+                    &mut task,
+                    item.width.max(0) as usize,
+                    &color,
+                    &mut env,
+                )
+                .unwrap();
             let mut fits = true;
             for line in lines.iter_mut() {
                 fits = fits && utf8_width(line) as i32 <= item.width;
@@ -528,12 +678,22 @@ mod tests {
     }
 
     fn measure(style: &str, task: &mut Task) -> (usize, usize) {
-        column(style).measure(task, &mut FakeRenderEnv::with_config(&[])).unwrap()
+        column(style)
+            .measure(task, &mut FakeRenderEnv::with_config(&[]))
+            .unwrap()
     }
 
     fn render(style: &str, task: &mut Task, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
-        column(style).render(&mut lines, task, width, &Color::new(), &mut FakeRenderEnv::with_config(&[])).unwrap();
+        column(style)
+            .render(
+                &mut lines,
+                task,
+                width,
+                &Color::new(),
+                &mut FakeRenderEnv::with_config(&[]),
+            )
+            .unwrap();
         lines
     }
 
@@ -570,18 +730,20 @@ mod tests {
         let _utc = Utc::new();
         let mut t = task("one two", &["aa", "bb"]);
         // "one two\n" yields one line; each annotation wraps at 14 - 2.
-        assert_eq!(render("combined", &mut t, 14), vec![
-            "one two       ",
-            "  2025-09-08  ",
-            "  aa          ",
-            "  2025-09-08  ",
-            "  bb          ",
-        ]);
-        assert_eq!(render("combined", &mut t, 16), vec![
-            "one two         ",
-            "  2025-09-08 aa ",
-            "  2025-09-08 bb ",
-        ]);
+        assert_eq!(
+            render("combined", &mut t, 14),
+            vec![
+                "one two       ",
+                "  2025-09-08  ",
+                "  aa          ",
+                "  2025-09-08  ",
+                "  bb          ",
+            ]
+        );
+        assert_eq!(
+            render("combined", &mut t, 16),
+            vec!["one two         ", "  2025-09-08 aa ", "  2025-09-08 bb ",]
+        );
         assert!(render("combined", &mut t, 0).is_empty());
     }
 
@@ -589,15 +751,24 @@ mod tests {
     fn render_desc_ignores_annotations() {
         let _utc = Utc::new();
         let mut t = task("one two three four", &["aa"]);
-        assert_eq!(render("desc", &mut t, 12), vec!["one two     ", "three four  "]);
+        assert_eq!(
+            render("desc", &mut t, 12),
+            vec!["one two     ", "three four  "]
+        );
     }
 
     #[test]
     fn render_oneline() {
         let _utc = Utc::new();
         let mut t = task("task", &["aa", "bb"]);
-        assert_eq!(render("oneline", &mut t, 32), vec!["task 2025-09-08 aa 2025-09-08 bb"]);
-        assert_eq!(render("oneline", &mut t, 20), vec!["task 2025-09-08 aa  ", "2025-09-08 bb       "]);
+        assert_eq!(
+            render("oneline", &mut t, 32),
+            vec!["task 2025-09-08 aa 2025-09-08 bb"]
+        );
+        assert_eq!(
+            render("oneline", &mut t, 20),
+            vec!["task 2025-09-08 aa  ", "2025-09-08 bb       "]
+        );
     }
 
     #[test]
@@ -605,10 +776,19 @@ mod tests {
         let _utc = Utc::new();
         let mut t = task("This is a description", &["aa"]);
         assert_eq!(render("truncated", &mut t, 10), vec!["This is..."]);
-        assert_eq!(render("truncated", &mut t, 21), vec!["This is a description"]);
-        assert_eq!(render("truncated", &mut t, 24), vec!["This is a description   "]);
+        assert_eq!(
+            render("truncated", &mut t, 21),
+            vec!["This is a description"]
+        );
+        assert_eq!(
+            render("truncated", &mut t, 24),
+            vec!["This is a description   "]
+        );
         // C++ `substr (0, width - 3)` with a negative length keeps everything.
-        assert_eq!(render("truncated", &mut t, 2), vec!["This is a description..."]);
+        assert_eq!(
+            render("truncated", &mut t, 2),
+            vec!["This is a description..."]
+        );
         // Width is measured in columns but the cut is in bytes (C++ quirk):
         // two bytes of "åäö..." is one character.
         let mut t = task("åäöåäöåäö", &[]);
@@ -621,7 +801,10 @@ mod tests {
         let mut t = task("task", &["aa", "bb"]);
         assert_eq!(render("count", &mut t, 10), vec!["task [2]  "]);
         let mut t = task("one two three", &["aa", "bb"]);
-        assert_eq!(render("count", &mut t, 10), vec!["one two   ", "three [2] "]);
+        assert_eq!(
+            render("count", &mut t, 10),
+            vec!["one two   ", "three [2] "]
+        );
         let mut t = task("task", &[]);
         assert_eq!(render("count", &mut t, 6), vec!["task  "]);
     }
@@ -631,11 +814,20 @@ mod tests {
         let _utc = Utc::new();
         let mut t = task("This is a description", &["aa", "bb"]);
         // 14 - 4 - 3 = 7 bytes of description.
-        assert_eq!(render("truncated_count", &mut t, 14), vec!["This is... [2]"]);
-        assert_eq!(render("truncated_count", &mut t, 26), vec!["This is a description [2] "]);
+        assert_eq!(
+            render("truncated_count", &mut t, 14),
+            vec!["This is... [2]"]
+        );
+        assert_eq!(
+            render("truncated_count", &mut t, 26),
+            vec!["This is a description [2] "]
+        );
         let mut t = task("This is a description", &[]);
         assert_eq!(render("truncated_count", &mut t, 10), vec!["This is..."]);
-        assert_eq!(render("truncated_count", &mut t, 22), vec!["This is a description "]);
+        assert_eq!(
+            render("truncated_count", &mut t, 22),
+            vec!["This is a description "]
+        );
     }
 
     #[test]

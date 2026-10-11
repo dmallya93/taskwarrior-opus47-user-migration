@@ -97,8 +97,8 @@ use crate::shared::shared::{confirm, split};
 use crate::shared::timer::Timer;
 use crate::task::Task;
 use crate::tdb2::Tdb2;
-use crate::version::{Version, COMMIT, PACKAGE_STRING};
 use crate::variant::Variant;
+use crate::version::{Version, COMMIT, PACKAGE_STRING};
 
 /// C++ `std::map<std::string, Column*>` as held by `Context::columns`.
 pub use crate::columns::column::ColumnRegistry;
@@ -465,9 +465,28 @@ pub const CONFIGURATION_DEFAULTS: &str = concat!(
 /// C++ `static const char* modifierNames[]`: supported modifiers, synonyms on
 /// the same line.
 pub const MODIFIER_NAMES: [&str; 22] = [
-    "before", "under", "below", "after", "over", "above", "by", "none", //
-    "any", "is", "equals", "isnt", "not", "has", "contains", "hasnt", //
-    "startswith", "left", "endswith", "right", "word", "noword",
+    "before",
+    "under",
+    "below",
+    "after",
+    "over",
+    "above",
+    "by",
+    "none", //
+    "any",
+    "is",
+    "equals",
+    "isnt",
+    "not",
+    "has",
+    "contains",
+    "hasnt", //
+    "startswith",
+    "left",
+    "endswith",
+    "right",
+    "word",
+    "noword",
 ];
 
 /// The commit field of the `rc.debug` Perf line: C++ `COMMIT` with
@@ -495,7 +514,10 @@ pub fn task_rcdir() -> String {
                 }
             }
         }
-        return exe_dir.join("../share/doc/task/rc").to_string_lossy().into_owned();
+        return exe_dir
+            .join("../share/doc/task/rc")
+            .to_string_lossy()
+            .into_owned();
     }
 
     "share/doc/task/rc".to_string()
@@ -681,7 +703,12 @@ impl Context {
     }
 
     /// [`initialize`](Self::initialize) writing to the given streams.
-    pub fn initialize_with(&mut self, args: &[String], stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+    pub fn initialize_with(
+        &mut self,
+        args: &[String],
+        stdout: &mut dyn Write,
+        stderr: &mut dyn Write,
+    ) -> Result<i32> {
         self.timer_total.start();
         let mut rc = 0;
         // Deviation: C++ `home_dir = getenv ("HOME")` is undefined when HOME is
@@ -754,10 +781,12 @@ impl Context {
         // Artificial scope for timing purposes.
         {
             let timer = Timer::new();
-            self.config.parse(CONFIGURATION_DEFAULTS, 1, search_paths, "")?;
+            self.config
+                .parse(CONFIGURATION_DEFAULTS, 1, search_paths, "")?;
             // Foundation DD2: the defaults snapshot, parsed as CmdShow does.
             self.defaults = Configuration::new();
-            self.defaults.parse(CONFIGURATION_DEFAULTS, 0, search_paths, "")?;
+            self.defaults
+                .parse(CONFIGURATION_DEFAULTS, 0, search_paths, "")?;
             let rc_path = self.rc_file.data.clone();
             self.config.load(&rc_path, 1, search_paths)?;
             self.debug_timing(&format("Config::load ({1})", &[&rc_path]), &timer);
@@ -906,9 +935,11 @@ impl Context {
         if let Some(c) = self.commands.get(&self.cli2.get_command()).cloned() {
             // We must allow writes if either 'gc' is enabled and the command performs GC, or the command
             // itself is read-write.
-            let read_write =
-                (self.config.get_boolean("gc") && (c.needs_gc() || c.needs_recur_update())) || !c.read_only();
-            self.tdb2.open_replica(&self.data_dir, create_if_missing, read_write)?;
+            let read_write = (self.config.get_boolean("gc")
+                && (c.needs_gc() || c.needs_recur_update()))
+                || !c.read_only();
+            self.tdb2
+                .open_replica(&self.data_dir, create_if_missing, read_write)?;
         }
 
         ////////////////////////////////////////////////////////////////////////
@@ -936,7 +967,10 @@ impl Context {
                 // Hooks can terminate processing by throwing integers.
                 4
             }
-            TwError::Message(_) | TwError::TaskChampion(_) | TwError::NotImplemented(_) | TwError::Io(_) => {
+            TwError::Message(_)
+            | TwError::TaskChampion(_)
+            | TwError::NotImplemented(_)
+            | TwError::Io(_) => {
                 self.error(&err.to_string());
                 2
             }
@@ -956,7 +990,13 @@ impl Context {
     ///
     /// stdout is flushed before each stderr write, as `std::cerr` is tied to
     /// `std::cout`.
-    fn emit_messages(&mut self, output: Option<&str>, run: bool, stdout: &mut dyn Write, stderr: &mut dyn Write) {
+    fn emit_messages(
+        &mut self,
+        output: Option<&str>,
+        run: bool,
+        stdout: &mut dyn Write,
+        stderr: &mut dyn Write,
+    ) {
         let mut to_stderr = |stdout: &mut dyn Write, line: String| {
             let _ = stdout.flush();
             let _ = writeln!(stderr, "{line}");
@@ -986,7 +1026,11 @@ impl Context {
         // Dump all footnotes, controlled by 'footnote' verbosity token.
         if self.verbose("footnote") {
             for f in self.footnotes.clone() {
-                let line = if self.color() { colorize_footnote(&f) } else { f };
+                let line = if self.color() {
+                    colorize_footnote(&f)
+                } else {
+                    f
+                };
                 to_stderr(stdout, line);
             }
         }
@@ -1110,7 +1154,9 @@ impl Context {
             // tree.
             if self.config.get_boolean("debug") && self.config.get_integer("debug.parser") == 1 {
                 // The C++ title contains U+0456 (Cyrillic i) in "specifіc".
-                let dump = self.cli2.dump("Parse Tree (before command-specif\u{456}c processing)");
+                let dump = self
+                    .cli2
+                    .dump("Parse Tree (before command-specif\u{456}c processing)");
                 self.debug(&dump);
             }
 
@@ -1217,7 +1263,9 @@ impl Context {
         let mut context_string = String::new();
 
         if !self.config.has(&format!("context.{name}.{kind}")) && kind == "read" {
-            self.debug(&format!("Specific {kind} context for '{name}' not defined. "));
+            self.debug(&format!(
+                "Specific {kind} context for '{name}' not defined. "
+            ));
             if fallback {
                 self.debug("Trying to interpret old-style context definition as read context.");
                 context_string = self.config.get(&format!("context.{name}"));
@@ -1292,8 +1340,9 @@ impl Context {
                 let v = self.verbosity.iter().next().cloned().unwrap_or_default();
                 // This list must be complete.
                 const VALID: [&str; 17] = [
-                    "nothing", "affected", "blank", "context", "default", "edit", "filter", "footnote", "header",
-                    "label", "new-id", "new-uuid", "news", "override", "project", "recur", "special",
+                    "nothing", "affected", "blank", "context", "default", "edit", "filter",
+                    "footnote", "header", "label", "new-id", "new-uuid", "news", "override",
+                    "project", "recur", "special",
                 ];
                 if !VALID.contains(&v.as_str()) && v != "sync" {
                     // This list emulates rc.verbose=off in version 1.9.4.
@@ -1307,7 +1356,9 @@ impl Context {
             // Some flags imply "footnote" verbosity being active.  Make it so.
             if !self.verbosity.contains("footnote") {
                 // TODO: Some of these may not use footnotes yet.  They should.
-                for flag in ["affected", "new-id", "new-uuid", "project", "override", "recur"] {
+                for flag in [
+                    "affected", "new-id", "new-uuid", "project", "override", "recur",
+                ] {
                     if self.verbosity.contains(flag) {
                         self.verbosity.insert("footnote".to_string());
                         break;
@@ -1328,7 +1379,9 @@ impl Context {
         }
 
         // rc.verbose=nothing overrides all.
-        if self.verbosity.len() == 1 && self.verbosity.iter().next().map(String::as_str) == Some("nothing") {
+        if self.verbosity.len() == 1
+            && self.verbosity.iter().next().map(String::as_str) == Some("nothing")
+        {
             return false;
         }
 
@@ -1393,7 +1446,8 @@ impl Context {
         let week_start = Datetime::day_of_week_str(&self.config.get("weekstart"));
         if week_start != 0 && week_start != 1 {
             return Err(TwError::Message(
-                "The 'weekstart' configuration variable may only contain 'Sunday' or 'Monday'.".to_string(),
+                "The 'weekstart' configuration variable may only contain 'Sunday' or 'Monday'."
+                    .to_string(),
             ));
         }
         Datetime::set_weekstart(week_start);
@@ -1416,7 +1470,11 @@ impl Context {
                 if key.ends_with(".values") {
                     // C++ `substr (4, length - 7 - 4)`: for "uda.values" the
                     // count wraps to npos, giving "values".
-                    let name = if key.len() >= 11 { &rest[..rest.len() - 7] } else { rest };
+                    let name = if key.len() >= 11 {
+                        &rest[..rest.len() - 7]
+                    } else {
+                        rest
+                    };
                     let values = split(value, ',');
 
                     // C++ `Task::customOrder[name]` is only reached inside
@@ -1424,7 +1482,10 @@ impl Context {
                     // values) creates no entry and sort_compare falls back to
                     // plain string order with empty values last.
                     for r in values.iter().rev() {
-                        custom_order.entry(name.to_string()).or_default().push(r.clone());
+                        custom_order
+                            .entry(name.to_string())
+                            .or_default()
+                            .push(r.clone());
                     }
                 }
             }
@@ -1436,15 +1497,29 @@ impl Context {
             Lexer::insert_attribute(name, col.type_());
         }
 
-        Task::set_urgency_project_coefficient(self.config.get_real("urgency.project.coefficient") as f32);
-        Task::set_urgency_active_coefficient(self.config.get_real("urgency.active.coefficient") as f32);
-        Task::set_urgency_scheduled_coefficient(self.config.get_real("urgency.scheduled.coefficient") as f32);
-        Task::set_urgency_waiting_coefficient(self.config.get_real("urgency.waiting.coefficient") as f32);
-        Task::set_urgency_blocked_coefficient(self.config.get_real("urgency.blocked.coefficient") as f32);
-        Task::set_urgency_annotations_coefficient(self.config.get_real("urgency.annotations.coefficient") as f32);
+        Task::set_urgency_project_coefficient(
+            self.config.get_real("urgency.project.coefficient") as f32
+        );
+        Task::set_urgency_active_coefficient(
+            self.config.get_real("urgency.active.coefficient") as f32
+        );
+        Task::set_urgency_scheduled_coefficient(
+            self.config.get_real("urgency.scheduled.coefficient") as f32,
+        );
+        Task::set_urgency_waiting_coefficient(
+            self.config.get_real("urgency.waiting.coefficient") as f32
+        );
+        Task::set_urgency_blocked_coefficient(
+            self.config.get_real("urgency.blocked.coefficient") as f32
+        );
+        Task::set_urgency_annotations_coefficient(
+            self.config.get_real("urgency.annotations.coefficient") as f32,
+        );
         Task::set_urgency_tags_coefficient(self.config.get_real("urgency.tags.coefficient") as f32);
         Task::set_urgency_due_coefficient(self.config.get_real("urgency.due.coefficient") as f32);
-        Task::set_urgency_blocking_coefficient(self.config.get_real("urgency.blocking.coefficient") as f32);
+        Task::set_urgency_blocking_coefficient(
+            self.config.get_real("urgency.blocking.coefficient") as f32,
+        );
         Task::set_urgency_age_coefficient(self.config.get_real("urgency.age.coefficient") as f32);
         Task::set_urgency_age_max(self.config.get_real("urgency.age.max") as f32);
 
@@ -1484,7 +1559,9 @@ impl Context {
             // prompt (as the user won't see it) or modify the config (as completion functions are typically
             // read-only).
             if !stdout_is_tty() {
-                return Err(TwError::Message("Cannot proceed without rc file.".to_string()));
+                return Err(TwError::Message(
+                    "Cannot proceed without rc file.".to_string(),
+                ));
             }
 
             if self.config.get_boolean("confirmation")
@@ -1498,7 +1575,10 @@ impl Context {
 
             let now = Datetime::new();
             let mut contents = String::new();
-            contents.push_str(&format!("# [Created by {PACKAGE_STRING} {}]\n", now.to_string("m/d/Y H:N:S")));
+            contents.push_str(&format!(
+                "# [Created by {PACKAGE_STRING} {}]\n",
+                now.to_string("m/d/Y H:N:S")
+            ));
             contents.push_str(&format!("data.location={}\n", self.data_dir.original));
             contents.push_str(&format!("news.version={}\n", Version::current()));
             contents.push_str("\n# To use the default location of the XDG directories,\n");
@@ -1537,7 +1617,10 @@ impl Context {
             }
             // Write out the new file.
             if !File::write_file(&self.rc_file.data, &contents) {
-                return Err(TwError::Message(format("Could not write to '{1}'.", &[&self.rc_file.data])));
+                return Err(TwError::Message(format(
+                    "Could not write to '{1}'.",
+                    &[&self.rc_file.data],
+                )));
             }
 
             // Load it so that it takes effect for this run.
@@ -1565,9 +1648,17 @@ impl Context {
         }
 
         if length >= decoration && bytes[length - decoration] == b'+' {
-            (field[..length - decoration].to_string(), true, break_indicator)
+            (
+                field[..length - decoration].to_string(),
+                true,
+                break_indicator,
+            )
         } else if length >= decoration && bytes[length - decoration] == b'-' {
-            (field[..length - decoration].to_string(), false, break_indicator)
+            (
+                field[..length - decoration].to_string(),
+                false,
+                break_indicator,
+            )
         } else {
             (field.to_string(), true, break_indicator)
         }
@@ -1577,7 +1668,10 @@ impl Context {
     /// C++ `Context::debugTiming`: queues `Timer <details> <seconds> sec`
     /// with six decimals.
     pub fn debug_timing(&mut self, details: &str, timer: &Timer) {
-        let out = format!("Timer {details} {} sec", printf_f(timer.total_us() / 1.0e6, 6));
+        let out = format!(
+            "Timer {details} {} sec",
+            printf_f(timer.total_us() / 1.0e6, 6)
+        );
         self.debug(&out);
     }
 
@@ -1585,7 +1679,11 @@ impl Context {
     /// C++ `Context::withCurrentTask` + `CurrentTask`: sets `current_task`
     /// for the duration of `f`, then restores the previous value (the C++
     /// RAII guard's destructor).
-    pub fn with_current_task<R>(&mut self, task: Option<Rc<Task>>, f: impl FnOnce(&mut Context) -> R) -> R {
+    pub fn with_current_task<R>(
+        &mut self,
+        task: Option<Rc<Task>>,
+        f: impl FnOnce(&mut Context) -> R,
+    ) -> R {
         let previous = std::mem::replace(&mut self.current_task, task);
         let result = f(self);
         self.current_task = previous;
@@ -1694,7 +1792,10 @@ mod tests {
     /// release build takes `#else`), with C escapes decoded.
     fn extract_cpp_defaults(source: &str) -> String {
         let marker = "std::string configurationDefaults =";
-        let start = source.find(marker).expect("configurationDefaults in Context.cpp") + marker.len();
+        let start = source
+            .find(marker)
+            .expect("configurationDefaults in Context.cpp")
+            + marker.len();
         let mut result = String::new();
         let mut skipping = false;
         'lines: for line in source[start..].lines() {
@@ -1760,7 +1861,9 @@ mod tests {
     #[test]
     fn defaults_parse_with_theme_include() {
         let mut config = Configuration::new();
-        config.parse(CONFIGURATION_DEFAULTS, 1, &[task_rcdir()], "").unwrap();
+        config
+            .parse(CONFIGURATION_DEFAULTS, 1, &[task_rcdir()], "")
+            .unwrap();
         assert_eq!(config.get("default.command"), "next");
         assert_eq!(config.get("abbreviation.minimum"), "2");
         assert!(config.has("color.header"), "default.theme was included");
@@ -1887,7 +1990,11 @@ mod tests {
             "fail",
             Behaviour::Fail(|| TwError::Message("it failed".to_string())),
         );
-        add_cmd(&mut context, "status", Behaviour::Fail(|| TwError::Status(9)));
+        add_cmd(
+            &mut context,
+            "status",
+            Behaviour::Fail(|| TwError::Status(9)),
+        );
         add_cmd(
             &mut context,
             "runtime",
@@ -1904,7 +2011,9 @@ mod tests {
     fn init(context: &mut Context, list: &[&str]) -> (i32, String, String) {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        let rc = context.initialize_with(&args(list), &mut out, &mut err).unwrap();
+        let rc = context
+            .initialize_with(&args(list), &mut out, &mut err)
+            .unwrap();
         (
             rc,
             String::from_utf8(out).unwrap(),
@@ -1943,10 +2052,16 @@ mod tests {
         assert_eq!(context.config.get("data.location"), data);
         assert_eq!(
             context.headers,
-            [format!("TASKRC override: {rc}"), format!("TASKDATA override: {data}")]
+            [
+                format!("TASKRC override: {rc}"),
+                format!("TASKDATA override: {data}")
+            ]
         );
         assert_eq!(context.cli2.get_command(), "alpha");
-        assert_eq!(context.defaults.get("data.location"), format!("{}/.task", f.home));
+        assert_eq!(
+            context.defaults.get("data.location"),
+            format!("{}/.task", f.home)
+        );
         assert!(context
             .debug_messages
             .iter()
@@ -1972,9 +2087,15 @@ mod tests {
         assert_eq!(context.config.get("data.location"), data);
         assert_eq!(
             context.headers,
-            [format!("TASKRC override: {other}"), format!("TASKDATA override: {data}")]
+            [
+                format!("TASKRC override: {other}"),
+                format!("TASKDATA override: {data}")
+            ]
         );
-        assert_eq!(context.footnotes, [format!("Configuration override {data_arg}")]);
+        assert_eq!(
+            context.footnotes,
+            [format!("Configuration override {data_arg}")]
+        );
         assert_eq!(context.cli2.get_command(), "beta");
     }
 
@@ -2046,12 +2167,18 @@ mod tests {
         assert_eq!(status, 0, "{stderr}");
         let rc = format!("{}/.taskrc", f.home);
         let contents = std::fs::read_to_string(&rc).unwrap();
-        assert!(contents.starts_with("# [Created by task 3.5.0 "), "{contents}");
+        assert!(
+            contents.starts_with("# [Created by task 3.5.0 "),
+            "{contents}"
+        );
         let lines: Vec<&str> = contents.lines().collect();
         assert_eq!(lines[1], format!("data.location={}/.task", f.home));
         assert_eq!(lines[2], "news.version=3.5.0");
         assert_eq!(lines[3], "");
-        assert_eq!(lines[4], "# To use the default location of the XDG directories,");
+        assert_eq!(
+            lines[4],
+            "# To use the default location of the XDG directories,"
+        );
         assert!(contents.contains("\ninclude default.theme\n#include light-16.theme\n"));
         assert!(contents.ends_with("#include no-color.theme\n\n"));
         assert_eq!(context.config.get("news.version"), "3.5.0");
@@ -2075,7 +2202,9 @@ mod tests {
         let _f = fixture();
         let mut context = Context::new();
         context.config.set("verbose", "override");
-        let list = args(&["task", "rc.a=1", "rc.b:2", "rc.c=x:y", "rc.nosep", "x", "--", "rc.d=4"]);
+        let list = args(&[
+            "task", "rc.a=1", "rc.b:2", "rc.c=x:y", "rc.nosep", "x", "--", "rc.d=4",
+        ]);
         cli2::apply_overrides(&list, &mut context);
         assert_eq!(context.config.get("a"), "1");
         assert_eq!(context.config.get("b"), "2");
@@ -2160,7 +2289,10 @@ mod tests {
         let timer = Timer::new();
         context.debug_timing("x", &timer);
         let last = context.debug_messages.last().unwrap();
-        assert!(last.starts_with("Timer x 0.") && last.ends_with(" sec"), "{last}");
+        assert!(
+            last.starts_with("Timer x 0.") && last.ends_with(" sec"),
+            "{last}"
+        );
         let seconds = &last["Timer x ".len()..last.len() - " sec".len()];
         assert_eq!(seconds.split('.').nth(1).unwrap().len(), 6);
     }
@@ -2170,10 +2302,16 @@ mod tests {
         let f = fixture();
         write(&format!("{}/.taskrc", f.home), "");
         let mut context = context();
-        let (status, _, _) = init(&mut context, &["task", "rc.verbose=nothing", "+tag", "beta", "alpha"]);
+        let (status, _, _) = init(
+            &mut context,
+            &["task", "rc.verbose=nothing", "+tag", "beta", "alpha"],
+        );
         assert_eq!(status, 0);
         let (rc, stdout, stderr) = run(&mut context);
-        assert_eq!((rc, stdout.as_str(), stderr.as_str()), (0, "beta output\n", ""));
+        assert_eq!(
+            (rc, stdout.as_str(), stderr.as_str()),
+            (0, "beta output\n", "")
+        );
     }
 
     #[test]
@@ -2192,7 +2330,10 @@ mod tests {
     #[test]
     fn dispatch_default_command() {
         let f = fixture();
-        write(&format!("{}/.taskrc", f.home), "default.command=alpha\nverbose=default\n");
+        write(
+            &format!("{}/.taskrc", f.home),
+            "default.command=alpha\nverbose=default\n",
+        );
         let mut context = context();
         let (status, _, _) = init(&mut context, &["task"]);
         assert_eq!(status, 0);
@@ -2207,7 +2348,10 @@ mod tests {
         add_cmd(&mut context, "information", Behaviour::Output("info\n"));
         let (status, _, _) = init(&mut context, &["task", "1"]);
         assert_eq!(status, 0);
-        assert_eq!(context.headers, ["No command specified - assuming 'information'."]);
+        assert_eq!(
+            context.headers,
+            ["No command specified - assuming 'information'."]
+        );
         assert_eq!(context.cli2.get_command(), "information");
     }
 
@@ -2230,7 +2374,10 @@ mod tests {
         // A default custom report (CmdCustom, ported) dispatches to the
         // report: no tasks, so the `No matches.` footnote and status 1.
         let mut context = Context::new();
-        assert_eq!(init(&mut context, &["task", "rc.verbose=footnote", "next"]).0, 0);
+        assert_eq!(
+            init(&mut context, &["task", "rc.verbose=footnote", "next"]).0,
+            0
+        );
         let (rc, stdout, stderr) = run(&mut context);
         assert_eq!((rc, stdout.as_str()), (1, ""));
         assert!(stderr.ends_with("No matches.\n"), "{stderr}");
@@ -2282,12 +2429,18 @@ mod tests {
         let mut context = self::context();
         init(&mut context, &["task", "stub"]);
         let (rc, _, stderr) = run(&mut context);
-        assert_eq!((rc, stderr.as_str()), (2, "Command 'stub' is not yet implemented.\n"));
+        assert_eq!(
+            (rc, stderr.as_str()),
+            (2, "Command 'stub' is not yet implemented.\n")
+        );
 
         let mut context = self::context();
         init(&mut context, &["task", "runtime"]);
         let (rc, _, stderr) = run(&mut context);
-        assert_eq!((rc, stderr.as_str()), (3, "Unknown error. Please report.\n"));
+        assert_eq!(
+            (rc, stderr.as_str()),
+            (3, "Unknown error. Please report.\n")
+        );
     }
 
     #[test]
@@ -2295,7 +2448,10 @@ mod tests {
         let f = fixture();
         write(&format!("{}/.taskrc", f.home), "");
         let mut context = context();
-        let (status, _, _) = init(&mut context, &["task", "rc.debug=1", "rc.verbose=nothing", "alpha"]);
+        let (status, _, _) = init(
+            &mut context,
+            &["task", "rc.debug=1", "rc.verbose=nothing", "alpha"],
+        );
         assert_eq!(status, 0);
         assert_eq!(context.config.get("debug.hooks"), "1", "propagateDebug");
         assert_eq!(context.config.get("debug.parser"), "1");
@@ -2305,16 +2461,28 @@ mod tests {
         let lines: Vec<&str> = stderr.lines().collect();
         assert!(lines[0].starts_with("Timer Config::load ("), "{stderr}");
         assert!(stderr.contains("Parse Tree (before command-specif\u{456}c processing)"));
-        let perf = lines.iter().find(|l| l.starts_with("Perf task 3.5.0 ")).expect(&stderr);
+        let perf = lines
+            .iter()
+            .find(|l| l.starts_with("Perf task 3.5.0 "))
+            .expect(&stderr);
         let fields: Vec<&str> = perf.split(' ').collect();
         assert_eq!(fields[3], PERF_COMMIT);
         assert_eq!(fields[4].len(), 16);
-        let names: Vec<&str> = fields[5..].iter().map(|f| f.split(':').next().unwrap()).collect();
+        let names: Vec<&str> = fields[5..]
+            .iter()
+            .map(|f| f.split(':').next().unwrap())
+            .collect();
         assert_eq!(
             names,
-            ["init", "load", "gc", "filter", "commit", "sort", "render", "hooks", "other", "total"]
+            [
+                "init", "load", "gc", "filter", "commit", "sort", "render", "hooks", "other",
+                "total"
+            ]
         );
-        assert!(stderr.ends_with("\n\n"), "the Perf message ends in its own newline");
+        assert!(
+            stderr.ends_with("\n\n"),
+            "the Perf message ends in its own newline"
+        );
     }
 
     #[test]
@@ -2342,7 +2510,10 @@ mod tests {
         let mut context = context();
         let (status, _, stderr) = init(&mut context, &["task", "alpha"]);
         assert_eq!(status, 2);
-        assert_eq!(stderr, "Custom report 'alpha' conflicts with built-in task command.\n");
+        assert_eq!(
+            stderr,
+            "Custom report 'alpha' conflicts with built-in task command.\n"
+        );
     }
 
     #[test]
@@ -2354,10 +2525,17 @@ mod tests {
         assert_eq!(status, 0);
         assert_eq!(context.cli2.entities["operator"], Eval::get_operators());
         assert_eq!(context.cli2.entities["operator"].len(), 26);
-        assert_eq!(context.cli2.entities["binary_operator"], Eval::get_binary_operators());
+        assert_eq!(
+            context.cli2.entities["binary_operator"],
+            Eval::get_binary_operators()
+        );
         assert_eq!(context.cli2.entities["binary_operator"].len(), 21);
-        assert!(context.cli2.entities["binary_operator"].iter().any(|o| o == "_hastag_"));
-        assert!(!context.cli2.entities["binary_operator"].iter().any(|o| o == "_neg_"));
+        assert!(context.cli2.entities["binary_operator"]
+            .iter()
+            .any(|o| o == "_hastag_"));
+        assert!(!context.cli2.entities["binary_operator"]
+            .iter()
+            .any(|o| o == "_neg_"));
     }
 
     #[test]
@@ -2476,9 +2654,34 @@ mod tests {
         // from the defaults; a UDA without a type has no column).
         let names = context.get_columns();
         for name in [
-            "depends", "description", "due", "end", "entry", "id", "imask", "last", "mask", "modified", "parent",
-            "project", "recur", "rtype", "scheduled", "start", "status", "tags", "template", "until", "urgency",
-            "uuid", "wait", "priority", "size", "ref", "est", "when",
+            "depends",
+            "description",
+            "due",
+            "end",
+            "entry",
+            "id",
+            "imask",
+            "last",
+            "mask",
+            "modified",
+            "parent",
+            "project",
+            "recur",
+            "rtype",
+            "scheduled",
+            "start",
+            "status",
+            "tags",
+            "template",
+            "until",
+            "urgency",
+            "uuid",
+            "wait",
+            "priority",
+            "size",
+            "ref",
+            "est",
+            "when",
         ] {
             assert!(names.contains(&name.to_string()), "{name}");
         }
@@ -2488,7 +2691,11 @@ mod tests {
         assert!(context.columns["size"].is_uda());
 
         // Every column is an `attribute` entity.
-        assert!(context.cli2.entities.get("attribute").is_some_and(|set| set.iter().any(|e| e == "project")));
+        assert!(context
+            .cli2
+            .entities
+            .get("attribute")
+            .is_some_and(|set| set.iter().any(|e| e == "project")));
 
         // staticInitialization: Task::attributes and Lexer::attributes.
         let expected = [
@@ -2504,8 +2711,16 @@ mod tests {
             ("priority", "string"),
         ];
         for (name, type_) in expected {
-            assert_eq!(Task::attributes().get(name).map(String::as_str), Some(type_), "{name}");
-            assert_eq!(Lexer::attributes().get(name).map(String::as_str), Some(type_), "{name}");
+            assert_eq!(
+                Task::attributes().get(name).map(String::as_str),
+                Some(type_),
+                "{name}"
+            );
+            assert_eq!(
+                Lexer::attributes().get(name).map(String::as_str),
+                Some(type_),
+                "{name}"
+            );
         }
         assert_eq!(Task::attributes().len(), 28);
     }
@@ -2518,7 +2733,10 @@ mod tests {
         let mut ctx = context();
         let (status, _, err) = init(&mut ctx, &["task", "alpha"]);
         assert_eq!(status, 2);
-        assert_eq!(err, "The UDA named 'due' is the same as a core attribute, and is not permitted.\n");
+        assert_eq!(
+            err,
+            "The UDA named 'due' is the same as a core attribute, and is not permitted.\n"
+        );
 
         write(&format!("{}/.taskrc", f.home), "uda.x.type=bool\n");
         let mut ctx = context();
@@ -2654,7 +2872,10 @@ mod tests {
             ]
         );
         assert_eq!(context.get_task_context("read", "work", false), "");
-        assert_eq!(context.debug_messages.last().unwrap(), "Detected context string: (empty)");
+        assert_eq!(
+            context.debug_messages.last().unwrap(),
+            "Detected context string: (empty)"
+        );
 
         context.config.set("context.home.read", "+home");
         context.config.set("context.home.write", "+w");
@@ -2665,11 +2886,26 @@ mod tests {
 
     #[test]
     fn sort_field_decomposition() {
-        assert_eq!(Context::decompose_sort_field("due+"), ("due".into(), true, false));
-        assert_eq!(Context::decompose_sort_field("due-"), ("due".into(), false, false));
-        assert_eq!(Context::decompose_sort_field("due"), ("due".into(), true, false));
-        assert_eq!(Context::decompose_sort_field("project+/"), ("project".into(), true, true));
-        assert_eq!(Context::decompose_sort_field("project/"), ("project/".into(), true, true));
+        assert_eq!(
+            Context::decompose_sort_field("due+"),
+            ("due".into(), true, false)
+        );
+        assert_eq!(
+            Context::decompose_sort_field("due-"),
+            ("due".into(), false, false)
+        );
+        assert_eq!(
+            Context::decompose_sort_field("due"),
+            ("due".into(), true, false)
+        );
+        assert_eq!(
+            Context::decompose_sort_field("project+/"),
+            ("project".into(), true, true)
+        );
+        assert_eq!(
+            Context::decompose_sort_field("project/"),
+            ("project/".into(), true, true)
+        );
         assert_eq!(Context::decompose_sort_field(""), ("".into(), true, false));
     }
 

@@ -314,7 +314,11 @@ impl Table {
             .width
             .wrapping_sub(self.left_margin)
             .wrapping_sub(self.extra_padding.wrapping_mul(2))
-            .wrapping_sub((ncols as i32).wrapping_sub(1).wrapping_mul(self.intra_padding));
+            .wrapping_sub(
+                (ncols as i32)
+                    .wrapping_sub(1)
+                    .wrapping_mul(self.intra_padding),
+            );
 
         let widths: Vec<i32> = if sum_ideal <= overage {
             ideal.clone()
@@ -349,7 +353,14 @@ impl Table {
         let mut headers: Vec<Vec<String>> = Vec::with_capacity(ncols);
         for c in 0..ncols {
             let mut lines = Vec::new();
-            Self::render_cell(&mut lines, &self.columns[c], widths[c], self.align[c], self.wrap[c], &self.header);
+            Self::render_cell(
+                &mut lines,
+                &self.columns[c],
+                widths[c],
+                self.align[c],
+                self.wrap[c],
+                &self.header,
+            );
 
             if lines.len() > max_lines {
                 max_lines = lines.len();
@@ -475,7 +486,9 @@ impl Table {
                     } else {
                         let mut cell_color = row_color;
                         cell_color.blend(&self.color[row][col]);
-                        out.push_str(&cell_color.colorize(&" ".repeat(widths[col].max(0) as usize)));
+                        out.push_str(
+                            &cell_color.colorize(&" ".repeat(widths[col].max(0) as usize)),
+                        );
                     }
                 }
 
@@ -515,7 +528,14 @@ impl Table {
 
     /// `Table::renderCell`: the colored, justified lines of `value` at
     /// `width`, wrapped if `wrap`.
-    fn render_cell(lines: &mut Vec<String>, value: &str, width: i32, align_left: bool, wrap: bool, color: &Color) {
+    fn render_cell(
+        lines: &mut Vec<String>,
+        value: &str,
+        width: i32,
+        align_left: bool,
+        wrap: bool,
+        color: &Color,
+    ) {
         let justify = |line: &str| {
             if align_left {
                 color.colorize(&left_justify(line, width))

@@ -220,7 +220,10 @@ impl Duration {
             // ::resolve is not needed in this case.
             *start = pig.cursor();
             return true;
-        } else if self.parse_designated(&mut pig) || self.parse_weeks(&mut pig) || self.parse_units(&mut pig) {
+        } else if self.parse_designated(&mut pig)
+            || self.parse_weeks(&mut pig)
+            || self.parse_units(&mut pig)
+        {
             *start = pig.cursor();
             self.resolve();
             return true;
@@ -235,7 +238,8 @@ impl Duration {
         let checkpoint = pig.cursor();
 
         let mut epoch: i64 = 0;
-        if pig.get_digits_i64(&mut epoch) && !latin_alpha(pig.peek()) && (epoch == 0 || epoch > 60) {
+        if pig.get_digits_i64(&mut epoch) && !latin_alpha(pig.peek()) && (epoch == 0 || epoch > 60)
+        {
             self._period = epoch;
             return true;
         }
@@ -300,7 +304,8 @@ impl Duration {
             }
 
             let following = pig.peek();
-            if pig.cursor() - checkpoint >= 3 && !latin_alpha(following) && !latin_digit(following) {
+            if pig.cursor() - checkpoint >= 3 && !latin_alpha(following) && !latin_digit(following)
+            {
                 return true;
             }
         }
@@ -323,7 +328,8 @@ impl Duration {
             }
 
             let following = pig.peek();
-            if pig.cursor() - checkpoint >= 3 && !latin_alpha(following) && !latin_digit(following) {
+            if pig.cursor() - checkpoint >= 3 && !latin_alpha(following) && !latin_digit(following)
+            {
                 return true;
             }
         }
@@ -683,8 +689,22 @@ mod tests {
     /// C++ `testParse (UnitTest&, input, in_start, ...)` (14 assertions).
     #[track_caller]
     fn test_parse_full(row: &Row) {
-        let (input, in_start, in_year, in_month, in_weeks, in_day, in_hours, in_minutes, in_seconds, in_period, output, hours, iso, vague) =
-            *row;
+        let (
+            input,
+            in_start,
+            in_year,
+            in_month,
+            in_weeks,
+            in_day,
+            in_hours,
+            in_minutes,
+            in_seconds,
+            in_period,
+            output,
+            hours,
+            iso,
+            vague,
+        ) = *row;
         let label = format!("parse (\"{input}\") --> ");
 
         let mut dur = Duration::new();
@@ -920,38 +940,90 @@ mod tests {
         let mut right;
 
         // operator<
-        left = d("1s");     right = d("2s");     assert!(left < right,    "Duration 1s < 2s");
-        left = d("-2s");    right = d("-1s");    assert!(left < right,    "Duration -2s < -1s");
-        left = d("1s");     right = d("1min");   assert!(left < right,    "Duration 1s < 1min");
-        left = d("1min");   right = d("1h");     assert!(left < right,    "Duration 1min < 1h");
-        left = d("1h");     right = d("1d");     assert!(left < right,    "Duration 1h < 1d");
-        left = d("1d");     right = d("1w");     assert!(left < right,    "Duration 1d < 1w");
-        left = d("1w");     right = d("1mo");    assert!(left < right,    "Duration 1w < 1mo");
-        left = d("1mo");    right = d("1q");     assert!(left < right,    "Duration 1mo < 1q");
-        left = d("1q");     right = d("1y");     assert!(left < right,    "Duration 1q < 1y");
-        left = d("-3s");    right = d("-6s");    assert!(right < left,    "Duration -6s < -3s");
+        left = d("1s");
+        right = d("2s");
+        assert!(left < right, "Duration 1s < 2s");
+        left = d("-2s");
+        right = d("-1s");
+        assert!(left < right, "Duration -2s < -1s");
+        left = d("1s");
+        right = d("1min");
+        assert!(left < right, "Duration 1s < 1min");
+        left = d("1min");
+        right = d("1h");
+        assert!(left < right, "Duration 1min < 1h");
+        left = d("1h");
+        right = d("1d");
+        assert!(left < right, "Duration 1h < 1d");
+        left = d("1d");
+        right = d("1w");
+        assert!(left < right, "Duration 1d < 1w");
+        left = d("1w");
+        right = d("1mo");
+        assert!(left < right, "Duration 1w < 1mo");
+        left = d("1mo");
+        right = d("1q");
+        assert!(left < right, "Duration 1mo < 1q");
+        left = d("1q");
+        right = d("1y");
+        assert!(left < right, "Duration 1q < 1y");
+        left = d("-3s");
+        right = d("-6s");
+        assert!(right < left, "Duration -6s < -3s");
 
         // operator>
-        left = d("2s");     right = d("1s");     assert!(left > right,    "Duration 2s > 1s");
-        left = d("-1s");    right = d("-2s");    assert!(left > right,    "Duration -1s > -2s");
-        left = d("1min");   right = d("1s");     assert!(left > right,    "Duration 1min > 1s");
-        left = d("1h");     right = d("1min");   assert!(left > right,    "Duration 1h > 1min");
-        left = d("1d");     right = d("1h");     assert!(left > right,    "Duration 1d > 1h");
-        left = d("1w");     right = d("1d");     assert!(left > right,    "Duration 1w > 1d");
-        left = d("1mo");    right = d("1w");     assert!(left > right,    "Duration 1mo > 1w");
-        left = d("1q");     right = d("1mo");    assert!(left > right,    "Duration 1q > 1mo");
-        left = d("1y");     right = d("1q");     assert!(left > right,    "Duration 1y > 1q");
-        left = d("-3s");    right = d("-6s");    assert!(left > right,    "Duration -3s > -6s");
+        left = d("2s");
+        right = d("1s");
+        assert!(left > right, "Duration 2s > 1s");
+        left = d("-1s");
+        right = d("-2s");
+        assert!(left > right, "Duration -1s > -2s");
+        left = d("1min");
+        right = d("1s");
+        assert!(left > right, "Duration 1min > 1s");
+        left = d("1h");
+        right = d("1min");
+        assert!(left > right, "Duration 1h > 1min");
+        left = d("1d");
+        right = d("1h");
+        assert!(left > right, "Duration 1d > 1h");
+        left = d("1w");
+        right = d("1d");
+        assert!(left > right, "Duration 1w > 1d");
+        left = d("1mo");
+        right = d("1w");
+        assert!(left > right, "Duration 1mo > 1w");
+        left = d("1q");
+        right = d("1mo");
+        assert!(left > right, "Duration 1q > 1mo");
+        left = d("1y");
+        right = d("1q");
+        assert!(left > right, "Duration 1y > 1q");
+        left = d("-3s");
+        right = d("-6s");
+        assert!(left > right, "Duration -3s > -6s");
 
         // operator<=
-        left = d("1s");     right = d("2s");     assert!(left <= right,    "Duration 1s <= 2s");
-        left = d("2s");     right = d("2s");     assert!(left <= right,    "Duration 2s <= 2s");
-        left = d("2s");     right = d("1s");     assert!(!(left <= right), "Duration NOT 2s <= 1s");
+        left = d("1s");
+        right = d("2s");
+        assert!(left <= right, "Duration 1s <= 2s");
+        left = d("2s");
+        right = d("2s");
+        assert!(left <= right, "Duration 2s <= 2s");
+        left = d("2s");
+        right = d("1s");
+        assert!(!(left <= right), "Duration NOT 2s <= 1s");
 
         // operator<=
-        left = d("2s");     right = d("1s");     assert!(left >= right,    "Duration 2s >= 1s");
-        left = d("2s");     right = d("2s");     assert!(left >= right,    "Duration 2s >= 2s");
-        left = d("1s");     right = d("2s");     assert!(!(left >= right), "Duration NOT 1s >= 2s");
+        left = d("2s");
+        right = d("1s");
+        assert!(left >= right, "Duration 2s >= 1s");
+        left = d("2s");
+        right = d("2s");
+        assert!(left >= right, "Duration 2s >= 2s");
+        left = d("1s");
+        right = d("2s");
+        assert!(!(left >= right), "Duration NOT 1s >= 2s");
     }
 
     #[test]
@@ -961,8 +1033,14 @@ mod tests {
         // 14288d 23:31:30
         assert!(d.days() == 14288, "Duration 1234567890 -> days = 14288");
         assert!(d.hours() == 342935, "Duration 1234567890 -> hours = 342935");
-        assert!(d.minutes() == 20576131, "Duration 1234567890 -> minutes = 20576131");
-        assert!(d.seconds() == 1234567890, "Duration 1234567890 -> seconds = 123456789030");
+        assert!(
+            d.minutes() == 20576131,
+            "Duration 1234567890 -> minutes = 20576131"
+        );
+        assert!(
+            d.seconds() == 1234567890,
+            "Duration 1234567890 -> seconds = 123456789030"
+        );
     }
 
     #[test]
@@ -971,10 +1049,26 @@ mod tests {
 
         // formatVague (true)
         Duration::set_standalone_seconds_enabled(true);
-        assert_eq!(d("123").format_vague(false), "2min", "formatVague: 123 -> '2min'");
-        assert_eq!(d("123").format_vague(true), "2min", "formatVague (true): 123 -> '2min'");
-        assert_eq!(d("3610").format_vague(false), "1h", "formatVague: 3610 -> '1h'");
-        assert_eq!(d("3610").format_vague(true), "1h  ", "formatVague (true): 3610 -> '1h  '");
+        assert_eq!(
+            d("123").format_vague(false),
+            "2min",
+            "formatVague: 123 -> '2min'"
+        );
+        assert_eq!(
+            d("123").format_vague(true),
+            "2min",
+            "formatVague (true): 123 -> '2min'"
+        );
+        assert_eq!(
+            d("3610").format_vague(false),
+            "1h",
+            "formatVague: 3610 -> '1h'"
+        );
+        assert_eq!(
+            d("3610").format_vague(true),
+            "1h  ",
+            "formatVague (true): 3610 -> '1h  '"
+        );
 
         // Seconds must be > 60 for a raw number.
         test_parse("0");
@@ -1113,7 +1207,11 @@ mod tests {
 
     #[test]
     fn to_string_and_to_time_t() {
-        assert_eq!(Duration::from_seconds(-42).to_string(), "-42", "toString: -42");
+        assert_eq!(
+            Duration::from_seconds(-42).to_string(),
+            "-42",
+            "toString: -42"
+        );
         assert_eq!(d("1h").to_string(), "3600", "toString: 1h -> 3600");
         assert_eq!(d("1h").to_time_t(), 3600, "toTime_t: 1h -> 3600");
         assert_eq!(Duration::default()._period, 0, "Duration () -> 0");
@@ -1123,7 +1221,10 @@ mod tests {
     fn parse_with_offset_and_failure_keeps_start() {
         let mut dur = Duration::new();
         let mut start = 4;
-        assert!(dur.parse("due:3d", &mut start), "parse ('due:3d', 4) --> true");
+        assert!(
+            dur.parse("due:3d", &mut start),
+            "parse ('due:3d', 4) --> true"
+        );
         assert_eq!(start, 6, "parse ('due:3d', 4) --> [6]");
         assert_eq!(dur._period, 3 * 86400, "parse ('due:3d', 4) --> 3d");
 

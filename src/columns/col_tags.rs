@@ -6,8 +6,8 @@
 
 use crate::columns::col_type_string::ColumnTypeString;
 use crate::columns::column::{
-    column_base, label_prefix, render_string_left, render_string_right, strings, Column, ModifyEnv, RenderEnv,
-    MODIFICATION_LABEL,
+    column_base, label_prefix, render_string_left, render_string_right, strings, Column, ModifyEnv,
+    RenderEnv, MODIFICATION_LABEL,
 };
 use crate::error::Result;
 use crate::lexer::{Lexer, Type};
@@ -35,8 +35,15 @@ impl ColumnTags {
         parent.base.style = "list".to_string();
         parent.base.label = "Tags".to_string();
         parent.base.styles = strings(&["list", "indicator", "count"]);
-        parent.base.examples = vec!["home @chore next".to_string(), config.get("tag.indicator"), "[2]".to_string()];
-        ColumnTags { parent, hyphenate: false }
+        parent.base.examples = vec![
+            "home @chore next".to_string(),
+            config.get("tag.indicator"),
+            "[2]".to_string(),
+        ];
+        ColumnTags {
+            parent,
+            hyphenate: false,
+        }
     }
 }
 
@@ -153,7 +160,12 @@ impl Column for ColumnTags {
                 let indicator = env.config().get("tag.indicator");
                 render_string_right(lines, width, color, &indicator);
             } else if style == "count" {
-                render_string_right(lines, width, color, &format!("[{}]", format_value(&(all.len() as i32))));
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &format!("[{}]", format_value(&(all.len() as i32))),
+                );
             }
         }
         Ok(())
@@ -175,33 +187,53 @@ mod render_tests {
         task.set_tags(&tags);
         let m = column.measure(&mut task, &mut env).unwrap();
         let mut lines = Vec::new();
-        column.render(&mut lines, &mut task, width, &Color::new(), &mut env).unwrap();
+        column
+            .render(&mut lines, &mut task, width, &Color::new(), &mut env)
+            .unwrap();
         (m, lines)
     }
 
     #[test]
     fn list() {
         // Sorted, joined, wrapped.
-        assert_eq!(run("list", &["next", "home", "@chore"], 16), ((6, 16), vec!["@chore home next".to_string()]));
+        assert_eq!(
+            run("list", &["next", "home", "@chore"], 16),
+            ((6, 16), vec!["@chore home next".to_string()])
+        );
         assert_eq!(
             run("default", &["next", "home", "@chore"], 11),
-            ((6, 16), vec!["@chore home".to_string(), "next       ".to_string()])
+            (
+                (6, 16),
+                vec!["@chore home".to_string(), "next       ".to_string()]
+            )
         );
         // A single tag is not wrapped.
-        assert_eq!(run("list", &["longtag"], 7), ((7, 7), vec!["longtag".to_string()]));
-        assert_eq!(run("list", &["界界"], 6), ((4, 4), vec!["界界  ".to_string()]));
+        assert_eq!(
+            run("list", &["longtag"], 7),
+            ((7, 7), vec!["longtag".to_string()])
+        );
+        assert_eq!(
+            run("list", &["界界"], 6),
+            ((4, 4), vec!["界界  ".to_string()])
+        );
         assert_eq!(run("list", &[], 4), ((0, 0), vec![]));
     }
 
     #[test]
     fn indicator() {
-        assert_eq!(run("indicator", &["a", "b"], 2), ((1, 1), vec![" +".to_string()]));
+        assert_eq!(
+            run("indicator", &["a", "b"], 2),
+            ((1, 1), vec![" +".to_string()])
+        );
         assert_eq!(run("indicator", &[], 2), ((0, 0), vec![]));
     }
 
     #[test]
     fn count() {
-        assert_eq!(run("count", &["a", "b"], 4), ((3, 3), vec![" [2]".to_string()]));
+        assert_eq!(
+            run("count", &["a", "b"], 4),
+            ((3, 3), vec![" [2]".to_string()])
+        );
         assert_eq!(run("count", &[], 4), ((0, 0), vec![]));
     }
 }

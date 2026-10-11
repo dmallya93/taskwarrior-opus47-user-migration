@@ -79,10 +79,15 @@ mod tests {
         let lock = env_lock();
         let dir = TempDir::new().unwrap();
         let mut ctx = Context::new();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
         ctx.config.set("nag", nag);
         let guard = CoefficientsGuard;
-        Task::set_coefficients(BTreeMap::from([("urgency.user.tag.hot.coefficient".to_string(), 10.0)]));
+        Task::set_coefficients(BTreeMap::from([(
+            "urgency.user.tag.hot.coefficient".to_string(),
+            10.0,
+        )]));
 
         let mut low = Task::new();
         low.set("description", "low");
@@ -92,7 +97,12 @@ mod tests {
         high.add_tag("hot");
         tdb2::add(&mut ctx, &mut high).unwrap();
 
-        Fixture { ctx, _dir: dir, _coefficients: guard, _lock: lock }
+        Fixture {
+            ctx,
+            _dir: dir,
+            _coefficients: guard,
+            _lock: lock,
+        }
     }
 
     fn task(ctx: &mut Context, description: &str) -> Task {
@@ -142,7 +152,11 @@ mod tests {
         assert!(f.ctx.footnotes.is_empty());
 
         // A later task without nonag still nags; the footnote appears once.
-        let mut tasks = vec![tasks.remove(0), task(&mut f.ctx, "low"), task(&mut f.ctx, "low")];
+        let mut tasks = vec![
+            tasks.remove(0),
+            task(&mut f.ctx, "low"),
+            task(&mut f.ctx, "low"),
+        ];
         nag(&mut f.ctx, &mut tasks).unwrap();
         nag(&mut f.ctx, &mut tasks).unwrap();
         assert_eq!(f.ctx.footnotes, vec![NAG.to_string()]);

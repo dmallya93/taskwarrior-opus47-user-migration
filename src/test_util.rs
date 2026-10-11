@@ -13,7 +13,9 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Acquires [`ENV_LOCK`], ignoring poisoning by an earlier failed test.
 pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
-    ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Saves environment variables and restores them (set or unset) when dropped.
@@ -104,11 +106,20 @@ impl CommandFixture {
         let mut full = vec!["task"];
         full.extend_from_slice(args);
         let ctx = initialized(&full);
-        CommandFixture { ctx, _dir: dir, _statics: statics, _env: env, _lock: lock }
+        CommandFixture {
+            ctx,
+            _dir: dir,
+            _statics: statics,
+            _env: env,
+            _lock: lock,
+        }
     }
 
     /// Runs `command`, asserting it writes nothing to the output buffer.
-    pub(crate) fn run(&mut self, command: &dyn crate::commands::command::Command) -> crate::Result<i32> {
+    pub(crate) fn run(
+        &mut self,
+        command: &dyn crate::commands::command::Command,
+    ) -> crate::Result<i32> {
         let mut output = String::new();
         let result = command.execute(&mut self.ctx, &mut output);
         assert_eq!(output, "");

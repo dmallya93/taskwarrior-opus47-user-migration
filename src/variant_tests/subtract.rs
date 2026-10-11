@@ -17,7 +17,6 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let v4 = Variant::from_time(1234567890, Type::Date)?;
     let v5 = Variant::from_time(1200, Type::Duration)?;
 
-
     // boolean - boolean  -> ERROR
     match v0.op_sub(&v0) {
         Ok(_v00) => t.fail("true - true --> error"),
@@ -79,12 +78,24 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let v1a = Variant::from_int(1300000000);
     let v14 = v1a.op_sub(&v4)?;
     t.is(v14.type_(), Type::Date, "1300000000 - 1234567890 --> date");
-    t.is(v14.get_date(), 65432110, "1300000000 - 1234567890 --> 65432110");
+    t.is(
+        v14.get_date(),
+        65432110,
+        "1300000000 - 1234567890 --> 65432110",
+    );
 
     // integer - duration -> duration
     let v15 = v1a.op_sub(&v5)?;
-    t.is(v15.type_(), Type::Duration, "1300000000 - 1200 --> duration");
-    t.is(v15.get_duration(), 1299998800, "1300000000 - 1200 --> 1299998800");
+    t.is(
+        v15.type_(),
+        Type::Duration,
+        "1300000000 - 1200 --> duration",
+    );
+    t.is(
+        v15.get_duration(),
+        1299998800,
+        "1300000000 - 1200 --> 1299998800",
+    );
 
     // real - boolean  -> real
     let v20 = v2.op_sub(&v0)?;
@@ -111,13 +122,25 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // real - date     -> real
     let v2a = Variant::from_real(1300000000.0);
     let v24 = v2a.op_sub(&v4)?;
-    t.is(v24.type_(), Type::Real, "1300000000.0 - 1234567890 --> real");
-    t.is(v24.get_real(), 65432110.0, "1300000000.0 - 1234567890 --> 65432110");
+    t.is(
+        v24.type_(),
+        Type::Real,
+        "1300000000.0 - 1234567890 --> real",
+    );
+    t.is(
+        v24.get_real(),
+        65432110.0,
+        "1300000000.0 - 1234567890 --> 65432110",
+    );
 
     // real - duration -> real
     let v25 = v2a.op_sub(&v5)?;
     t.is(v25.type_(), Type::Real, "1300000000.0 - 1200 --> real");
-    t.is(v25.get_real(), 1299998800.0, "1300000000.0 - 1200 --> 1299998800");
+    t.is(
+        v25.get_real(),
+        1299998800.0,
+        "1300000000.0 - 1200 --> 1299998800",
+    );
 
     // string - boolean  -> ERROR
     match v3.op_sub(&v0) {
@@ -157,7 +180,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // date - boolean  -> date
     let v40 = v4.op_sub(&v0)?;
     t.is(v40.type_(), Type::Date, "1234567890 - true --> date");
-    t.is(v40.get_date(), 1234567889, "1234567890 - true --> 1234567889");
+    t.is(
+        v40.get_date(),
+        1234567889,
+        "1234567890 - true --> 1234567889",
+    );
 
     // date - integer  -> date
     let v41 = v4.op_sub(&v1)?;
@@ -167,7 +194,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // date - real     -> date
     let v42 = v4.op_sub(&v2)?;
     t.is(v42.type_(), Type::Date, "1234567890 - 3.14 --> date");
-    t.is(v42.get_date(), 1234567887, "1234567890 - 3.14 --> 1234567887");
+    t.is(
+        v42.get_date(),
+        1234567887,
+        "1234567890 - 3.14 --> 1234567887",
+    );
 
     // date - string   -> string
     match v4.op_sub(&v3) {
@@ -177,13 +208,21 @@ fn suite(t: &mut UnitTest) -> Result<()> {
 
     // date - date     -> duration
     let v44 = v4.op_sub(&v4)?;
-    t.is(v44.type_(), Type::Duration, "1234567890 - 1234567890 --> duration");
+    t.is(
+        v44.type_(),
+        Type::Duration,
+        "1234567890 - 1234567890 --> duration",
+    );
     t.is(v44.get_duration(), 0, "1234567890 - 1234567890 --> 0");
 
     // date - duration -> date
     let v45 = v4.op_sub(&v5)?;
     t.is(v45.type_(), Type::Date, "1234567890 - 1200 --> date");
-    t.is(v45.get_date(), 1234566690, "1234567890 - 1200 --> 1234566690");
+    t.is(
+        v45.get_date(),
+        1234566690,
+        "1234567890 - 1200 --> 1234566690",
+    );
 
     // duration - boolean  -> duration
     let v50 = v5.op_sub(&v0)?;

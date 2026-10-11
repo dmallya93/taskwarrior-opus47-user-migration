@@ -21,7 +21,10 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        }
     }
 
     /// C++ `UnitTest::is (int actual, int expected, const std::string& name)`.
@@ -39,7 +42,10 @@ impl UnitTest {
     /// assertions differs from the C++ file's.
     fn finish(self, expected: usize) {
         assert!(self.failures.is_empty(), "{}", self.failures.join("\n"));
-        assert_eq!(self.counter, expected, "assertion count differs from the C++ test");
+        assert_eq!(
+            self.counter, expected,
+            "assertion count differs from the C++ test"
+        );
     }
 }
 
@@ -58,12 +64,27 @@ fn col_test() {
     let mut env = FakeRenderEnv::with_config(&[]);
 
     let mut t1 = Task::new();
-    let cases: [(i32, i32); 6] = [(3, 1), (33, 2), (333, 3), (3333, 4), (33333, 5), (333333, 6)];
+    let cases: [(i32, i32); 6] = [
+        (3, 1),
+        (33, 2),
+        (333, 3),
+        (3333, 4),
+        (33333, 5),
+        (333333, 6),
+    ];
     for (id, width) in cases {
         t1.id = id;
         let (minimum, maximum) = column_id.measure(&mut t1, &mut env).unwrap();
-        test.is(minimum as i32, width, &format!("id:{id} --> ColID::measure minimum {width}"));
-        test.is(maximum as i32, width, &format!("id:{id} --> ColID::measure maximum {width}"));
+        test.is(
+            minimum as i32,
+            width,
+            &format!("id:{id} --> ColID::measure minimum {width}"),
+        );
+        test.is(
+            maximum as i32,
+            width,
+            &format!("id:{id} --> ColID::measure maximum {width}"),
+        );
     }
 
     test.finish(COL_TEST_ASSERTIONS);

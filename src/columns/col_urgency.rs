@@ -6,7 +6,9 @@
 //! [`RenderEnv::urgency`].
 
 use crate::columns::col_type_numeric::ColumnTypeNumeric;
-use crate::columns::column::{column_base, render_double, render_integer, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_double, render_integer, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::shared::format::{format_float, format_value};
@@ -107,7 +109,9 @@ mod tests {
         let mut task = Task::new();
         let m = column.measure(&mut task, &mut env).unwrap();
         let mut lines = Vec::new();
-        column.render(&mut lines, &mut task, width, &Color::new(), &mut env).unwrap();
+        column
+            .render(&mut lines, &mut task, width, &Color::new(), &mut env)
+            .unwrap();
         (m, lines)
     }
 
@@ -115,7 +119,10 @@ mod tests {
     fn real() {
         assert_eq!(run("real", 4.6, 4), ((4, 4), vec![" 4.6".to_string()]));
         // "%g" at 3 significant digits, padded to 4; rendered in width 5.
-        assert_eq!(run("default", 12.345, 5), ((4, 4), vec![" 12.3".to_string()]));
+        assert_eq!(
+            run("default", 12.345, 5),
+            ((4, 4), vec![" 12.3".to_string()])
+        );
         assert_eq!(run("real", 0.0, 4), ((4, 4), vec!["   0".to_string()]));
         assert_eq!(run("real", 0.75, 4), ((4, 4), vec!["0.75".to_string()]));
         assert_eq!(run("real", -1.5, 4), ((4, 4), vec!["-1.5".to_string()]));

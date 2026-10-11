@@ -62,7 +62,9 @@ impl Command for CmdColor {
         let mut rc = 0;
 
         // Get the non-attribute, non-fancy command line arguments.
-        let words = context.cli2.get_words(&context.config, &mut context.debug_messages);
+        let words = context
+            .cli2
+            .get_words(&context.config, &mut context.debug_messages);
         let legend = words.iter().any(|word| close_enough("legend", word, 0));
 
         let mut out = String::new();
@@ -78,8 +80,11 @@ impl Command for CmdColor {
                 view.add("Color");
                 view.add("Definition");
 
-                let items: Vec<(String, String)> =
-                    context.config.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let items: Vec<(String, String)> = context
+                    .config
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 for (name, value) in items {
                     // Skip items with 'color' in their name, that are not
                     // referring to actual colors.
@@ -108,9 +113,13 @@ impl Command for CmdColor {
                 let sample = Color::parse(&swatch)?;
 
                 out.push('\n');
-                out.push_str("Use this command to see how colors are displayed by your terminal.\n");
+                out.push_str(
+                    "Use this command to see how colors are displayed by your terminal.\n",
+                );
                 out.push_str("\n\n");
-                out.push_str("16-color usage (supports underline, bold text, bright background):\n");
+                out.push_str(
+                    "16-color usage (supports underline, bold text, bright background):\n",
+                );
                 for (color, text) in [
                     (one, "task color black on bright yellow"),
                     (two, "task color underline cyan on bright blue"),

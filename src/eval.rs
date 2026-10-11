@@ -77,7 +77,12 @@ pub struct Operator {
 }
 
 const fn opr(op: &'static str, precedence: u32, type_: char, associativity: char) -> Operator {
-    Operator { op, precedence, type_, associativity }
+    Operator {
+        op,
+        precedence,
+        type_,
+        associativity,
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -196,12 +201,20 @@ pub struct FnResolver<'t, F: FnMut(&str) -> Option<Variant>> {
 impl<'t, F: FnMut(&str) -> Option<Variant>> FnResolver<'t, F> {
     /// A resolver over `source` with no current task.
     pub fn new(source: F) -> Self {
-        FnResolver { source, task: None, debug_messages: Vec::new() }
+        FnResolver {
+            source,
+            task: None,
+            debug_messages: Vec::new(),
+        }
     }
 
     /// A resolver over `source` with `task` as the current task.
     pub fn with_task(source: F, task: &'t dyn VariantTask) -> Self {
-        FnResolver { source, task: Some(task), debug_messages: Vec::new() }
+        FnResolver {
+            source,
+            task: Some(task),
+            debug_messages: Vec::new(),
+        }
     }
 }
 
@@ -249,7 +262,10 @@ fn named_constants(name: &str) -> Option<Variant> {
 /// [`crate::dom::ContextResolver`], performs the same steps itself, because
 /// its `getDOM` is fallible. As in C++, a found value gets `identifier` as
 /// its source.
-pub fn dom_source(identifier: &str, get_dom: impl FnOnce(&str) -> Option<Variant>) -> Option<Variant> {
+pub fn dom_source(
+    identifier: &str,
+    get_dom: impl FnOnce(&str) -> Option<Variant>,
+) -> Option<Variant> {
     if let Some(mut value) = get_dom(identifier) {
         value.set_source(identifier);
         return Some(value);
@@ -303,23 +319,36 @@ impl Eval {
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Eval::evaluateInfixExpression`.
-    pub fn evaluate_infix_expression(&self, e: &str, resolver: &mut dyn DomResolver) -> Result<Variant> {
+    pub fn evaluate_infix_expression(
+        &self,
+        e: &str,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<Variant> {
         // Reduce e to a vector of tokens.
         let mut tokens = Self::tokenize(e);
 
         // Parse for syntax checking and operator replacement.
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Infix        {}", self.dump(&tokens)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Infix        {}",
+                self.dump(&tokens)?
+            ));
         }
         self.infix_parse(&mut tokens, resolver)?;
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Infix parsed {}", self.dump(&tokens)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Infix parsed {}",
+                self.dump(&tokens)?
+            ));
         }
 
         // Convert infix --> postfix.
         self.infix_to_postfix(&mut tokens)?;
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Postfix      {}", self.dump(&tokens)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Postfix      {}",
+                self.dump(&tokens)?
+            ));
         }
 
         // Call the postfix evaluator.
@@ -328,12 +357,19 @@ impl Eval {
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Eval::evaluatePostfixExpression`.
-    pub fn evaluate_postfix_expression(&self, e: &str, resolver: &mut dyn DomResolver) -> Result<Variant> {
+    pub fn evaluate_postfix_expression(
+        &self,
+        e: &str,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<Variant> {
         // Reduce e to a vector of tokens.
         let tokens = Self::tokenize(e);
 
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Postfix      {}", self.dump(&tokens)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Postfix      {}",
+                self.dump(&tokens)?
+            ));
         }
 
         // Call the postfix evaluator.
@@ -343,16 +379,26 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Eval::compileExpression`. The resolver is consulted by the syntax
     /// check (C++ `parsePrimitive`) and receives the debug output.
-    pub fn compile_expression(&mut self, precompiled: &[Token], resolver: &mut dyn DomResolver) -> Result<()> {
+    pub fn compile_expression(
+        &mut self,
+        precompiled: &[Token],
+        resolver: &mut dyn DomResolver,
+    ) -> Result<()> {
         let mut compiled = precompiled.to_vec();
 
         // Parse for syntax checking and operator replacement.
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Infix        {}", self.dump(&compiled)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Infix        {}",
+                self.dump(&compiled)?
+            ));
         }
         self.infix_parse(&mut compiled, resolver)?;
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Infix parsed {}", self.dump(&compiled)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Infix parsed {}",
+                self.dump(&compiled)?
+            ));
         }
 
         // Convert infix --> postfix.
@@ -364,7 +410,10 @@ impl Eval {
         self.infix_to_postfix(&mut compiled)?;
         self._compiled = compiled;
         if self._debug {
-            resolver.debug(&format!("\x1b[1;37;42mFILTER\x1b[0m Postfix      {}", self.dump(&self._compiled)?));
+            resolver.debug(&format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Postfix      {}",
+                self.dump(&self._compiled)?
+            ));
         }
 
         Ok(())
@@ -409,7 +458,11 @@ impl Eval {
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::evaluatePostfixStack`.
-    fn evaluate_postfix_stack(&self, tokens: &[Token], resolver: &mut dyn DomResolver) -> Result<Variant> {
+    fn evaluate_postfix_stack(
+        &self,
+        tokens: &[Token],
+        resolver: &mut dyn DomResolver,
+    ) -> Result<Variant> {
         if tokens.is_empty() {
             return err("No expression to evaluate.");
         }
@@ -517,16 +570,27 @@ impl Eval {
                     } else if op == "_notag_" {
                         Variant::from_bool(left.op_notag(&right, context_task)?)
                     } else {
-                        return Err(TwError::Message(format("Unsupported operator '{1}'.", &[&token.0])));
+                        return Err(TwError::Message(format(
+                            "Unsupported operator '{1}'.",
+                            &[&token.0],
+                        )));
                     }
                 } else {
-                    return Err(TwError::Message(format("Unsupported operator '{1}'.", &[&token.0])));
+                    return Err(TwError::Message(format(
+                        "Unsupported operator '{1}'.",
+                        &[&token.0],
+                    )));
                 };
 
                 if self._debug {
                     resolver.debug(&format(
                         "Eval ↓'{1}' {2} ↓'{3}' → ↑'{4}'",
-                        &[&left.to_string(), &token.0, &right.to_string(), &result.to_string()],
+                        &[
+                            &left.to_string(),
+                            &token.0,
+                            &right.to_string(),
+                            &result.to_string(),
+                        ],
                     ));
                 }
                 values.push(result);
@@ -539,12 +603,18 @@ impl Eval {
                         if Lexer::is_all_digits(&token.0) {
                             v.cast(VariantType::Integer)?;
                             if self._debug {
-                                resolver.debug(&format("Eval literal number ↑'{1}'", &[&v.to_string()]));
+                                resolver.debug(&format(
+                                    "Eval literal number ↑'{1}'",
+                                    &[&v.to_string()],
+                                ));
                             }
                         } else {
                             v.cast(VariantType::Real)?;
                             if self._debug {
-                                resolver.debug(&format("Eval literal decimal ↑'{1}'", &[&v.to_string()]));
+                                resolver.debug(&format(
+                                    "Eval literal decimal ↑'{1}'",
+                                    &[&v.to_string()],
+                                ));
                             }
                         }
                     }
@@ -571,7 +641,10 @@ impl Eval {
                         if !found {
                             v.cast(VariantType::String)?;
                             if self._debug {
-                                resolver.debug(&format("Eval identifier source failed '{1}'", &[&token.0]));
+                                resolver.debug(&format(
+                                    "Eval identifier source failed '{1}'",
+                                    &[&token.0],
+                                ));
                             }
                         }
                     }
@@ -586,14 +659,16 @@ impl Eval {
                     Type::duration => {
                         v.cast(VariantType::Duration)?;
                         if self._debug {
-                            resolver.debug(&format("Eval literal duration ↑'{1}'", &[&v.to_string()]));
+                            resolver
+                                .debug(&format("Eval literal duration ↑'{1}'", &[&v.to_string()]));
                         }
                     }
 
                     // Nothing to do.
                     _ => {
                         if self._debug {
-                            resolver.debug(&format("Eval literal string ↑'{1}'", &[&v.to_string()]));
+                            resolver
+                                .debug(&format("Eval literal string ↑'{1}'", &[&v.to_string()]));
                         }
                     }
                 }
@@ -645,7 +720,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseLogical`:
     /// `Logical --> Regex {( "and" | "or" | "xor" ) Regex}`.
-    fn parse_logical(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_logical(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_regex(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["and", "or", "xor"]) {
                 *i += 1;
@@ -663,7 +743,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseRegex`:
     /// `Regex --> Equality {( "~" | "!~" ) Equality}`.
-    fn parse_regex(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_regex(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_equality(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["~", "!~"]) {
                 *i += 1;
@@ -681,7 +766,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseEquality`:
     /// `Equality --> Comparative {( "==" | "=" | "!==" | "!=" ) Comparative}`.
-    fn parse_equality(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_equality(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_comparative(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["==", "=", "!==", "!="]) {
                 *i += 1;
@@ -699,7 +789,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseComparative`:
     /// `Comparative --> Arithmetic {( "<=" | "<" | ">=" | ">" ) Arithmetic}`.
-    fn parse_comparative(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_comparative(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_arithmetic(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["<=", "<", ">=", ">"]) {
                 *i += 1;
@@ -717,7 +812,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseArithmetic`:
     /// `Arithmetic --> Geometric {( "+" | "-" ) Geometric}`.
-    fn parse_arithmetic(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_arithmetic(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_geometric(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["+", "-"]) {
                 *i += 1;
@@ -735,7 +835,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseGeometric`:
     /// `Geometric --> Tag {( "*" | "/" | "%" ) Tag}`.
-    fn parse_geometric(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_geometric(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_tag(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["*", "/", "%"]) {
                 *i += 1;
@@ -753,7 +858,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseTag`:
     /// `Tag --> Unary {( "_hastag_" | "_notag_" ) Unary}`.
-    fn parse_tag(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_tag(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_unary(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["_hastag_", "_notag_"]) {
                 *i += 1;
@@ -771,7 +881,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseUnary`:
     /// `Unary --> [( "-" | "+" | "!" )] Exponent`.
-    fn parse_unary(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_unary(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() {
             if infix[*i].0 == "-" {
                 infix[*i].0 = "_neg_".to_string();
@@ -790,7 +905,12 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parseExponent`:
     /// `Exponent --> Primitive ["^" Primitive]`.
-    fn parse_exponent(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_exponent(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() && self.parse_primitive(infix, i, resolver)? {
             while Self::is_op_at(infix, *i, &["^"]) {
                 *i += 1;
@@ -808,11 +928,19 @@ impl Eval {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ private `Eval::parsePrimitive`:
     /// `Primitive --> "(" Logical ")" | Variant`.
-    fn parse_primitive(&self, infix: &mut [Token], i: &mut usize, resolver: &mut dyn DomResolver) -> Result<bool> {
+    fn parse_primitive(
+        &self,
+        infix: &mut [Token],
+        i: &mut usize,
+        resolver: &mut dyn DomResolver,
+    ) -> Result<bool> {
         if *i < infix.len() {
             if infix[*i].0 == "(" {
                 *i += 1;
-                if *i < infix.len() && self.parse_logical(infix, i, resolver)? && *i < infix.len() && infix[*i].0 == ")"
+                if *i < infix.len()
+                    && self.parse_logical(infix, i, resolver)?
+                    && *i < infix.len()
+                    && infix[*i].0 == ")"
                 {
                     *i += 1;
                     return Ok(true);
@@ -894,7 +1022,9 @@ impl Eval {
                 (token.1, self.identify_operator(&token.0))
             {
                 while let Some(top) = op_stack.last() {
-                    let Some((_type2, precedence2, _associativity2)) = self.identify_operator(&top.0) else {
+                    let Some((_type2, precedence2, _associativity2)) =
+                        self.identify_operator(&top.0)
+                    else {
                         break;
                     };
                     if !((associativity == 'l' && precedence <= precedence2)
@@ -965,7 +1095,11 @@ impl Eval {
             // C++ `color_map[i->second]` default-constructs a trivial Color
             // for unmapped types.
             let mapped = color_map.get(&token.1).copied().unwrap_or_default();
-            let c = if mapped.nontrivial() { mapped } else { Color::parse("rgb000 on gray6")? };
+            let c = if mapped.nontrivial() {
+                mapped
+            } else {
+                Color::parse("rgb000 on gray6")?
+            };
 
             output.push_str(&c.colorize(&token.0));
         }
