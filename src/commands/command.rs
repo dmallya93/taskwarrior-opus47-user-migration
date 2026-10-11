@@ -951,12 +951,14 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 19] = [
+    const PORTED: [&str; 25] = [
+        "_columns",
         "_config",
         "_get",
         "_ids",
         "_show",
         "_unique",
+        "_urgency",
         "_uuids",
         "_version",
         "_zshattributes",
@@ -964,11 +966,15 @@ mod tests {
         "_zshuuids",
         "add",
         "calc",
+        "colors",
+        "columns",
         "config",
         "count",
         "export",
         "ids",
+        "information",
         "log",
+        "reports",
         "uuids",
         "version",
     ];
@@ -1145,9 +1151,17 @@ mod tests {
         let mut all = Registry::new();
         factory(&mut all, &default_config()).unwrap();
         let mut context = Context::new();
+        let config = default_config();
         let mut stubs = 0;
+        let mut custom = 0;
         for (keyword, command) in &all {
             if PORTED.contains(&keyword.as_str()) {
+                continue;
+            }
+            // Custom reports (one CmdCustom per `report.<name>.columns`) are
+            // registered dynamically and are all ported.
+            if config.has(&format!("report.{keyword}.columns")) {
+                custom += 1;
                 continue;
             }
             let mut output = String::new();
@@ -1157,7 +1171,8 @@ mod tests {
             assert_eq!(output, "");
             stubs += 1;
         }
-        assert_eq!(stubs, all.len() - PORTED.len());
+        assert!(custom > 0);
+        assert_eq!(stubs, all.len() - PORTED.len() - custom);
     }
 
     #[test]
@@ -1206,11 +1221,26 @@ mod tests {
                     | "_uuids"
                     | "_zshuuids"
                     | "_unique"
+                    | "_urgency"
+                    | "information"
                     | "_zshattributes"
+                    | "_columns"
             ) {
-                // These read the replica (or, for `_zshattributes`, the column
-                // registry Context::initialize builds); covered end to end in
-                // tests/cli.rs.
+                // These read the replica (or, for `_zshattributes` and
+                // `_columns`, the column registry Context::initialize builds);
+                // covered end to end in tests/cli.rs.
+                continue;
+            }
+            if keyword == "colors" {
+                // Without colour (no TTY, no _forcecolor) the C++ hint and 1.
+                let rc = all[keyword].execute(&mut context, &mut output).unwrap();
+                if !context.color() {
+                    assert_eq!(rc, 1);
+                    assert!(output.starts_with("Color is currently turned off"), "{output:?}");
+                } else {
+                    assert_eq!(rc, 0);
+                    assert!(output.contains("Basic colors"), "{output:?}");
+                }
                 continue;
             }
             let rc = all[keyword].execute(&mut context, &mut output).unwrap();

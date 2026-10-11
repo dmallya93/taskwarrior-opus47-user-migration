@@ -4,7 +4,9 @@
 //! full CLI2 parser (`rc.debug.parser` dumps, default command, assumed
 //! `information`, abbreviations, `--`, argument checks, message colours),
 //! and the milestone 5 commands `add`, `log`, `count`, `_get`, `export`, the
-//! `ids`/`uuids` family, `_unique` and `_zshattributes`.
+//! `ids`/`uuids` family, `_unique` and `_zshattributes`, and the milestone 6
+//! report stack (custom reports, `sort.cpp`, `setHeaderUnderline` and the
+//! column factory).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -740,11 +742,11 @@ fn unknown_word_is_a_filter_for_the_default_command() {
     );
     assert_eq!(output.status.code(), Some(2));
 
-    // With the stock default command ('next', not yet ported).
+    // With the stock default command ('next'): the word is a filter term.
     let env = Env::new("");
     let output = env.task(&["nosuchcommand"]);
-    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stderr(&output), env.override_headers() + "No matches.\nRecently upgraded to 3.5.0. Please run 'task news' to read highlights about the new release.\n");
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -767,16 +769,16 @@ fn id_without_command_assumes_information() {
     let output = env.task(&["rc.verbose=default", "1"]);
     assert_eq!(
         stderr(&output),
-        "No command specified - assuming 'information'.\nCommand 'information' is not yet implemented.\n"
+        "No command specified - assuming 'information'.\n"
     );
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(1));
 
     // The header needs the 'default' verbosity token; a UUID also counts.
     for args in [&["1", "3"][..], &["a1b2c3d4-0000-4000-8000-000000000000"][..]] {
         let output = env.task(args);
         assert_eq!(
             stderr(&output),
-            env.override_headers() + "Command 'information' is not yet implemented.\n",
+            env.override_headers() + "No matches.\n",
             "{args:?}"
         );
     }
@@ -784,7 +786,8 @@ fn id_without_command_assumes_information() {
     // C++ defaultCommand only looks for number/uuid lexemes: a range or list
     // (a Lexer 'set') falls through to the default command.
     let output = env.task(&["1-2,4"]);
-    assert_eq!(stderr(&output), env.override_headers() + "Command 'next' is not yet implemented.\n");
+    assert_eq!(stderr(&output), env.override_headers() + "No matches.\nRecently upgraded to 3.5.0. Please run 'task news' to read highlights about the new release.\n");
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -797,10 +800,13 @@ fn command_abbreviation() {
 
     // Below abbreviation.minimum (2) it is not a command: a filter word for
     // the default command.
+    // (`next` with a non-matching filter word: no output, status 1).
     let output = env.task(&["rc.verbose=nothing", "v"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+    assert_eq!(output.status.code(), Some(1));
     let output = env.task(&["rc.verbose=nothing", "rc.abbreviation.minimum=5", "vers"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+    assert_eq!(output.status.code(), Some(1));
 }
 
 #[test]
@@ -887,6 +893,7 @@ fn forced_color_message_colors() {
         "rc.color.header=blue",
         "rc.color.footnote=green",
         "rc.color.error=red",
+        "rc.report.next.labels=X",
         "nosuchcommand",
     ]);
     assert_eq!(
@@ -897,7 +904,8 @@ fn forced_color_message_colors() {
              {ESC}[32mConfiguration override rc.color.header=blue{ESC}[0m\n\
              {ESC}[32mConfiguration override rc.color.footnote=green{ESC}[0m\n\
              {ESC}[32mConfiguration override rc.color.error=red{ESC}[0m\n\
-             {ESC}[31mCommand 'next' is not yet implemented.{ESC}[0m\n",
+             {ESC}[32mConfiguration override rc.report.next.labels=X{ESC}[0m\n\
+             {ESC}[31mThere are different numbers of columns and labels for report 'next'.{ESC}[0m\n",
             env.rc().display(),
             env.data().display()
         )
@@ -915,10 +923,11 @@ fn forced_color_message_colors() {
 
     // An empty rule leaves the text alone; without a TTY or _forcecolor there
     // is no colour at all.
-    let output = env.task(&["rc._forcecolor=on", "rc.color.error=", "rc.verbose=nothing", "nosuchcommand"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
-    let output = env.task(&["rc.color=on", "rc.color.error=red", "rc.verbose=nothing", "nosuchcommand"]);
-    assert_eq!(stderr(&output), "Command 'next' is not yet implemented.\n");
+    let mismatch = "There are different numbers of columns and labels for report 'next'.\n";
+    let output = env.task(&["rc._forcecolor=on", "rc.color.error=", "rc.verbose=nothing", "rc.report.next.labels=X"]);
+    assert_eq!(stderr(&output), mismatch);
+    let output = env.task(&["rc.color=on", "rc.color.error=red", "rc.verbose=nothing", "rc.report.next.labels=X"]);
+    assert_eq!(stderr(&output), mismatch);
 }
 
 #[test]
@@ -1421,4 +1430,612 @@ fn zsh_attributes_lists_sorted_columns() {
     assert_eq!((stdout(&output), stderr(&output)), (lines(&all), String::new()));
     // Accepts no filter.
     assert_eq!(quiet(&env, &["1", "_zshattributes"]).2, 2);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdColor.cpp
+
+#[test]
+fn colors_off_sample_legend_and_chart() {
+    let env = Env::new("");
+    // Not a TTY and no _forcecolor: the hint, exit status 1.
+    assert_eq!(
+        quiet(&env, &["colors"]),
+        (
+            "Color is currently turned off in your .taskrc file.  To enable color, remove the line \
+             'color=off', or change the 'off' to 'on'.\n"
+                .into(),
+            String::new(),
+            1
+        )
+    );
+
+    // A sample of the words as a colour spec.
+    let (out, err, rc) = quiet(&env, &["rc._forcecolor:on", "colors", "red"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "\nUse this command to see how colors are displayed by your terminal.\n\n\n\
+         16-color usage (supports underline, bold text, bright background):\n\
+         \x20 \x1b[30;103mtask color black on bright yellow\x1b[0m\n\
+         \x20 \x1b[4;36;104mtask color underline cyan on bright blue\x1b[0m\n\n\
+         256-color usage (supports underline):\n\
+         \x20 \x1b[38;5;214;48;5;202mtask color color214 on color202\x1b[0m\n\
+         \x20 \x1b[38;5;82;48;5;28mtask color rgb150 on rgb020\x1b[0m\n\
+         \x20 \x1b[4;38;5;242;48;5;235mtask color underline grey10 on grey3\x1b[0m\n\
+         \x20 \x1b[38;5;1;48;5;173mtask color red on color173\x1b[0m\n\n\
+         Your sample:\n\n\
+         \x20 \x1b[31mtask color red\x1b[0m\n\n"
+    );
+
+    // Unrecognized colour: the Color error, exit status 2.
+    let (out, err, rc) = quiet(&env, &["rc._forcecolor:on", "colors", "bogus"]);
+    assert_eq!((out.as_str(), rc), ("", 2));
+    assert!(err.contains("The color 'bogus' is not recognized."), "{err:?}");
+
+    // Legend (any prefix of "legend"), obeying rc overrides.
+    let (out, _, rc) = quiet(&env, &["rc._forcecolor:on", "rc.color.debug:red", "colors", "leg"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("\nHere are the colors currently in use:\n"), "{out:?}");
+    assert!(out.contains("color.debug              \x1b[0m \x1b[31mred"), "{out:?}");
+    assert!(!out.contains("_forcecolor"));
+    assert!(out.ends_with("\x1b[0m\n\n"), "{out:?}");
+
+    // The full chart.
+    let (out, _, rc) = quiet(&env, &["rc._forcecolor:on", "colors"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("\nBasic colors\n \x1b[30m black \x1b[0m \x1b[31m red \x1b[0m"), "{out:?}");
+    assert!(out.contains("\n\ncolor0 - color15\n  0 1 2 . . .\n  \x1b[48;5;0m  \x1b[0m"));
+    assert!(out.contains("Color cube rgb\x1b[1;31m0\x1b[0m"));
+    assert!(out.contains("\x1b[48;5;231m  \x1b[0m \n\nGray ramp gray0 - gray23 (also color232 - color255)\n"));
+    assert!(out.ends_with("\x1b[48;5;255m  \x1b[0m\n\nTry running 'task color white on red'.\n\n"), "{out:?}");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdUrgency.cpp
+
+#[test]
+fn urgency_per_task_and_no_match() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "one"]).2, 0);
+    assert_eq!(quiet(&env, &["add", "two", "+x", "project:P"]).2, 0);
+    assert_eq!(quiet(&env, &["1", "_urgency"]), ("task 1 urgency 0\n".into(), String::new(), 0));
+    assert_eq!(quiet(&env, &["2", "_urgency"]), ("task 2 urgency 1.8\n".into(), String::new(), 0));
+    let (out, _, rc) = quiet(&env, &["_urgency"]);
+    let mut lines: Vec<&str> = out.lines().collect();
+    lines.sort_unstable();
+    assert_eq!((lines, rc), (vec!["task 1 urgency 0", "task 2 urgency 1.8"], 0));
+    // Nothing selected: footnote and exit status 1 (helper commands are quiet).
+    let output = env.task(&["99", "_urgency"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), String::new()));
+}
+
+#[test]
+fn information_tables_and_no_match() {
+    let env = Env::new("");
+    assert_eq!(quiet(&env, &["add", "one", "+x", "project:P", "due:2030-01-01"]).2, 0);
+    assert_eq!(quiet(&env, &["add", "two", "depends:1"]).2, 0);
+    let (out, err, rc) = quiet(&env, &["rc.dateformat.info=Y-M-D", "1", "information"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Name                  Value");
+    assert!(lines[1].starts_with("--------------------- ---"), "{out}");
+    assert_eq!(lines[2], "ID                    1");
+    assert_eq!(lines[3], "Description           one");
+    assert_eq!(lines[4], "Status                Pending");
+    assert_eq!(lines[5], "Project               P");
+    assert_eq!(lines[6], "This task is blocking 2 two");
+    assert!(lines.contains(&"Due                   2030-01-01"), "{out}");
+    assert!(lines.contains(&"Tags                  x"), "{out}");
+    assert!(lines.contains(&"Virtual tags          BLOCKING PENDING PROJECT READY TAGGED UNBLOCKED"), "{out}");
+    // Urgency breakdown and journal.
+    assert!(lines.contains(&"    project       1 *    1 =      1"), "{out}");
+    assert!(lines.contains(&"    blocking      1 *    8 =      8"), "{out}");
+    assert!(lines.contains(&"                               12.2"), "{out}");
+    assert!(out.contains("Date       Modification\n---------- "), "{out}");
+    assert!(out.contains("Description set to 'one'."), "{out}");
+    assert!(out.contains("Due set to '2030-01-01'."), "{out}");
+    assert!(out.contains("Tag 'x' added."), "{out}");
+    // rc.journal.info=off drops the journal table.
+    let (out, _, _) = quiet(&env, &["rc.journal.info=off", "1", "information"]);
+    assert!(!out.contains("Modification"), "{out}");
+    // Abbreviated keyword; nothing selected: footnote and exit status 1.
+    let output = env.task(&["rc.verbose=footnote", "99", "info"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!((stdout(&output), stderr(&output)), (String::new(), "No matches.\n".to_string()));
+}
+
+#[test]
+fn columns_substring_table_and_errors() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\n");
+    // Case-insensitive substring filter; the <uda> rows and footnote text always follow.
+    let (out, err, rc) = quiet(&env, &["columns", "PROJ"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "Columns Type   Modifiable Supported Formats Example\n\
+         ------- ------ ---------- ----------------- -------------\n\
+         project string Modifiable full*             home.garden\n\
+         \x20                         parent            home\n\
+         \x20                         indented            home.garden\n\
+         <uda>   <type> Modifiable default*\n\
+         \x20                         indicator\n\
+         \n\
+         * Means default format, and therefore optional.  For example, 'due' and 'due.formatted' are equivalent.\n"
+    );
+    // Blank line with the default verbosity; `escr` matches only description.
+    let output = env.task(&["columns", "escr"]);
+    let out = stdout(&output);
+    assert!(out.starts_with("\nColumns     Type   Modifiable"), "{out:?}");
+    assert!(out.contains("description string Modifiable combined*") && !out.contains("uuid") && !out.contains("project"));
+    // fontunderline (default on) without colour underlines the labels instead of dashes.
+    let (out, _, _) = quiet(&env, &["rc.fontunderline=on", "columns", "proj"]);
+    assert!(out.starts_with("\x1b[4mColumns\x1b[0m \x1b[4mType  \x1b[0m"), "{out:?}");
+    // More than one search word.
+    let (out, err, rc) = quiet(&env, &["columns", "a", "b"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "You can only specify one search string.\n", 2));
+}
+
+#[test]
+fn completion_columns_include_udas() {
+    let env = Env::new("uda.zzz.type=string\n");
+    let (out, err, rc) = quiet(&env, &["_columns"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let names: Vec<&str> = out.lines().collect();
+    assert_eq!(names.first(), Some(&"depends"));
+    assert_eq!(names.last(), Some(&"zzz"));
+    assert!(names.contains(&"description") && names.contains(&"urgency") && names.contains(&"uuid"), "{out}");
+    let mut sorted = names.clone();
+    sorted.sort_unstable();
+    assert_eq!(names, sorted);
+}
+
+#[test]
+fn reports_table_and_count() {
+    let env = Env::new("defaultwidth=80\ndetection=off\nfontunderline=off\nreport.mine.columns=id\nreport.mine.description=Mine\n");
+    let output = env.task(&["reports"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = stdout(&output);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "");
+    assert_eq!(lines[1], "Report           Description");
+    assert_eq!(lines[2], "---------------- --------------------------------------------------");
+    assert_eq!(lines[3], "active           Active tasks");
+    assert!(lines.contains(&"mine             Mine"), "{out}");
+    assert!(lines.contains(&"information      Shows all data and metadata"), "{out}");
+    assert!(out.ends_with("waiting          Waiting (hidden) tasks\n\n30 reports\n"), "{out:?}");
+    // Forced colour: the header takes color.label, alternate rows color.alternate.
+    let (out, _, rc) = quiet(&env, &["rc._forcecolor=on", "rc.color.alternate=on gray2", "rc.color.label=bold", "reports"]);
+    assert_eq!(rc, 0);
+    assert!(out.starts_with("\x1b[1mReport          \x1b[0m"), "{out:?}");
+    assert!(out.contains("\x1b[48;5;234mactive          \x1b[0m"), "{out:?}");
+    assert!(out.ends_with("\n30 reports\n") && !out.contains("\n\n30"), "{out:?}");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdCustom: report.* reports
+
+/// The `news` nag footnote CmdCustom adds (`news.version=2.6.0` in the rc).
+const NEWS_NAG: &str = "Recently upgraded to 3.5.0. Please run 'task news' to read highlights about the new release.\n";
+
+/// Three tasks with fixed entry dates, for reports run at 2031-06-15 12:00 UTC.
+fn report_env(rc: &str) -> Option<Env> {
+    let env = Env::new(rc);
+    for args in [
+        &["rc.verbose=nothing", "add", "one", "entry:2031-06-01", "project:Home", "+x", "due:2031-06-20"][..],
+        &["rc.verbose=nothing", "add", "two", "entry:2031-06-14", "priority:H"][..],
+        &["rc.verbose=nothing", "add", "three", "entry:2031-06-15T11:00:00"][..],
+    ] {
+        let output = faketime_task(&env, "2031-06-15 12:00:00", args)?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {}", stderr(&output));
+    }
+    Some(env)
+}
+
+#[test]
+fn list_report_end_to_end() {
+    let Some(env) = report_env("") else {
+        return;
+    };
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["list"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "\n\
+         ID Age  P Project Tags Due        Description Urg\n\
+         -- ---- - ------- ---- ---------- ----------- ----\n \
+         1 2w     Home    x    2031-06-20 one         8.62\n \
+         2 1d   H                         two         6.01\n \
+         3 1h                             three          0\n\
+         \n\
+         3 tasks\n"
+    );
+    assert_eq!(stderr(&output), env.override_headers() + NEWS_NAG);
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn next_report_limit_and_affected() {
+    let Some(env) = report_env("") else {
+        return;
+    };
+    // limit:N truncates rows; the affected line says how many were shown.
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["rc.verbose=affected,label", "next", "limit:2"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "ID Age  P Project Tag Due  Description Urg\n\
+         -- ---- - ------- --- ---- ----------- ----\n \
+         1 2w     Home    x   4d   one         8.62\n \
+         2 1d   H                  two         6.01\n\
+         3 tasks, 2 shown\n"
+    );
+    assert_eq!(stderr(&output), "");
+    assert_eq!(output.status.code(), Some(0));
+
+    // No matches: footnote and status 1.
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["next", "nosuchword"]).unwrap();
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), env.override_headers() + "No matches.\n" + NEWS_NAG);
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn custom_report_labels_sort_breaks_and_limit() {
+    let Some(env) = report_env(
+        "verbose=label,affected\n\
+         report.mine.columns=id,project,description\n\
+         report.mine.labels=Num,Proj,What\n\
+         report.mine.sort=project-/,description+\n\
+         report.mine.filter=status:pending\n",
+    ) else {
+        return;
+    };
+    // Custom labels, a descending break column (blank line between groups),
+    // and the report filter.
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["mine"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "Num Proj What\n--- ---- -----\n  1 Home one\n\n  3      three\n  2      two\n3 tasks\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    // limit:N (with the report filter present; a lone `limit:N` term
+    // evaluates false in C++ Filter::subset).
+    let output = faketime_task(&env, "2031-06-15 12:00:00", &["mine", "limit:2"]).unwrap();
+    assert_eq!(
+        stdout(&output),
+        "Num Proj What\n--- ---- -----\n  1 Home one\n\n  3      three\n3 tasks, 2 shown\n"
+    );
+
+    // Forced colour: color.label for headers, color.label.sort for sorted
+    // columns (widths are measured over the shown rows only).
+    let output = faketime_task(
+        &env,
+        "2031-06-15 12:00:00",
+        &["rc._forcecolor=on", "rc.fontunderline=off", "rc.color.label=bold", "rc.color.label.sort=red", "mine", "limit:1"],
+    )
+    .unwrap();
+    assert!(
+        stdout(&output).starts_with(
+            "\x1b[1mNum\x1b[0m \x1b[31mProj\x1b[0m \x1b[31mWhat\x1b[0m\n\x1b[1m---\x1b[0m \x1b[31m----\x1b[0m \x1b[31m----\x1b[0m\n"
+        ),
+        "{:?}",
+        stdout(&output)
+    );
+
+    // Mismatched columns and labels.
+    let output = env.task(&["rc.verbose=nothing", "rc.report.mine.labels=Num", "mine"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "There are different numbers of columns and labels for report 'mine'.\n");
+    assert_eq!(output.status.code(), Some(2));
+
+    // An unknown column.
+    let output = env.task(&["rc.verbose=nothing", "rc.report.mine.columns=id,bogus", "rc.report.mine.labels=", "mine"]);
+    assert_eq!(stderr(&output), "Unrecognized column name 'bogus'.\n");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// sort.cpp, util.cpp setHeaderUnderline and the Column factory, end to end
+// through custom reports (`rc.report.X.*` overrides).
+
+/// An environment with tasks added by `task rc.verbose=nothing add <args>`.
+fn tasks_env(rc: &str, tasks: &[&[&str]]) -> Env {
+    let env = Env::new(rc);
+    for args in tasks {
+        let mut all = vec!["add"];
+        all.extend_from_slice(args);
+        let (_, err, rc) = quiet(&env, &all);
+        assert_eq!((err.as_str(), rc), ("", 0), "add {args:?}");
+    }
+    env
+}
+
+/// The stdout of the custom report `r` with `columns` and `sort`, run
+/// quietly (plus any extra `args`); asserts success and an empty stderr.
+fn sorted_report(env: &Env, columns: &str, sort: &str, args: &[&str]) -> String {
+    let columns = format!("rc.report.r.columns={columns}");
+    let sort = format!("rc.report.r.sort={sort}");
+    let mut all = vec![columns.as_str(), sort.as_str()];
+    all.extend_from_slice(args);
+    all.push("r");
+    let (out, err, rc) = quiet(env, &all);
+    assert_eq!((err.as_str(), rc), ("", 0), "{all:?}: {out}");
+    out
+}
+
+#[test]
+fn sort_ascending_and_descending() {
+    let env = tasks_env("", &[&["bravo"], &["alpha"], &["charlie"]]);
+    assert_eq!(
+        sorted_report(&env, "id,description", "description+", &[]),
+        " 2 alpha\n 1 bravo\n 3 charlie\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,description", "description-", &[]),
+        " 3 charlie\n 1 bravo\n 2 alpha\n"
+    );
+    // No direction means ascending.
+    assert_eq!(
+        sorted_report(&env, "id,description", "description", &[]),
+        " 2 alpha\n 1 bravo\n 3 charlie\n"
+    );
+}
+
+#[test]
+fn sort_multiple_keys() {
+    let env = tasks_env(
+        "",
+        &[&["b1", "project:B"], &["a2", "project:A"], &["b2", "project:B"], &["a1", "project:A"]],
+    );
+    // The second key only orders tasks equal on the first.
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project+,description-", &[]),
+        " 2 A       a2\n 4 A       a1\n 3 B       b2\n 1 B       b1\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project-,id+", &[]),
+        " 1 B       b1\n 3 B       b2\n 2 A       a2\n 4 A       a1\n"
+    );
+}
+
+#[test]
+fn sort_break_marker_groups_rows() {
+    let env = tasks_env(
+        "",
+        &[&["b1", "project:B"], &["none"], &["a1", "project:A"], &["b2", "project:B"]],
+    );
+    // `/` after the direction: a blank line wherever the project changes.
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project+/,id+", &[]),
+        " 2         none\n\n 3 A       a1\n\n 1 B       b1\n 4 B       b2\n"
+    );
+    // A break column without a direction (`project/`) keeps the slash in
+    // the key name (C++ Context::decomposeSortField), so it is rejected.
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id", "rc.report.r.sort=project/", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "The 'project/' column is not a valid sort field.\n", 2));
+}
+
+#[test]
+fn sort_uda_custom_values_order() {
+    let env = tasks_env(
+        "uda.size.type=string\nuda.size.label=Size\nuda.size.values=S,M,,L\n",
+        &[&["large", "size:L"], &["none"], &["small", "size:S"], &["medium", "size:M"]],
+    );
+    // Column widths include the label ("Size") even without the `label`
+    // verbosity (C++ ViewTask::render).
+    // C++ Context stores uda.X.values reversed in Task::customOrder, so
+    // ascending runs from the last value to the first; the empty value
+    // sorts at its position in the list.
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size+", &[]),
+        " 1 L    large\n 2      none\n 4 M    medium\n 3 S    small\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size-", &[]),
+        " 3 S    small\n 4 M    medium\n 2      none\n 1 L    large\n"
+    );
+    // Without uda.X.values: plain string order, empty values always last.
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size+", &["rc.uda.size.values="]),
+        " 1 L    large\n 4 M    medium\n 3 S    small\n 2      none\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,size,description", "size-", &["rc.uda.size.values="]),
+        " 3 S    small\n 4 M    medium\n 1 L    large\n 2      none\n"
+    );
+}
+
+#[test]
+fn sort_by_depends() {
+    let env = tasks_env(
+        "",
+        &[&["first"], &["second"], &["needs2", "depends:2"], &["needs1", "depends:1"], &["free"]],
+    );
+    // Tasks without dependencies first (ascending), then by the ID of the
+    // first dependency.
+    assert_eq!(
+        sorted_report(&env, "id,depends,description", "depends+,id+", &[]),
+        " 1         first\n 2         second\n 5         free\n 4 1       needs1\n 3 2       needs2\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,depends,description", "depends-,id+", &[]),
+        " 3 2       needs2\n 4 1       needs1\n 1         first\n 2         second\n 5         free\n"
+    );
+}
+
+#[test]
+fn sort_by_urgency() {
+    let env = tasks_env(
+        "urgency.age.coefficient=0\n",
+        &[&["low", "priority:L"], &["high", "priority:H"], &["none"], &["medium", "priority:M"]],
+    );
+    assert_eq!(
+        sorted_report(&env, "id,urgency,description", "urgency-", &[]),
+        " 2       6 high\n 4     3.9 medium\n 1     1.8 low\n 3       0 none\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,urgency,description", "urgency+", &[]),
+        " 3       0 none\n 1     1.8 low\n 4     3.9 medium\n 2       6 high\n"
+    );
+}
+
+#[test]
+fn sort_ids_numerically() {
+    let tasks: Vec<Vec<String>> = (1..=11).map(|i| vec![format!("t{i}")]).collect();
+    let tasks: Vec<Vec<&str>> = tasks.iter().map(|t| t.iter().map(String::as_str).collect()).collect();
+    let tasks: Vec<&[&str]> = tasks.iter().map(Vec::as_slice).collect();
+    let env = tasks_env("", &tasks);
+    // Natural (numeric) ID order: 1, 2, 10, 11 rather than 1, 10, 11, 2.
+    assert_eq!(sorted_report(&env, "id,description", "id+", &["1,2,10,11"]), " 1 t1\n 2 t2\n10 t10\n11 t11\n");
+    assert_eq!(sorted_report(&env, "id,description", "id-", &["1,2,10,11"]), "11 t11\n10 t10\n 2 t2\n 1 t1\n");
+    // Descriptions sort as strings.
+    assert_eq!(sorted_report(&env, "id,description", "description+", &["1,2,10,11"]), " 1 t1\n10 t10\n11 t11\n 2 t2\n");
+}
+
+#[test]
+fn sort_projects_with_hierarchy() {
+    let env = tasks_env(
+        "",
+        &[&["work", "project:Work"], &["garden", "project:Home.Garden"], &["home", "project:Home"], &["hw", "project:Homework"], &["none"]],
+    );
+    // Project names compare as strings: a subproject follows its parent
+    // ('.' sorts before letters), empty projects first.
+    assert_eq!(
+        sorted_report(&env, "id,project,description", "project+", &[]),
+        " 5             none\n 3 Home        home\n 2 Home.Garden garden\n 4 Homework    hw\n 1 Work        work\n"
+    );
+    assert_eq!(
+        sorted_report(&env, "id,project.indented,description", "project-", &[]),
+        " 1 Work     work\n 4 Homework hw\n 2   Garden garden\n 3 Home     home\n 5          none\n"
+    );
+}
+
+#[test]
+fn report_header_underline_color_and_fontunderline() {
+    let env = tasks_env("color.label=bold\ncolor.label.sort=red\ncolor.alternate=on gray2\n", &[&["one"], &["two"]]);
+    let header = |color: &str, underline: &str| {
+        let color = format!("rc._forcecolor={color}");
+        let underline = format!("rc.fontunderline={underline}");
+        sorted_report(&env, "id,description", "id+", &["rc.verbose=label", &color, &underline])
+    };
+    // No colour: dashes, whatever fontunderline says.
+    let plain = "ID Description\n-- -----------\n 1 one\n 2 two\n";
+    assert_eq!(header("off", "off"), plain);
+    assert_eq!(header("off", "on"), plain);
+    // Rows are trimmed on the right (C++ ViewTask::render), so only the
+    // coloured alternate row keeps its padding.
+    // Colour without fontunderline: label colours (color.label.sort for the
+    // sorted ID column) on both the label and the dashes.
+    assert_eq!(
+        header("on", "off"),
+        "\x1b[31mID\x1b[0m \x1b[1mDescription\x1b[0m\n\
+         \x1b[31m--\x1b[0m \x1b[1m-----------\x1b[0m\n \
+         1 one\n\
+         \x1b[48;5;234m 2\x1b[0m\x1b[48;5;234m \x1b[0m\x1b[48;5;234mtwo        \x1b[0m\n"
+    );
+    // Colour and fontunderline: underlined labels, no dash line.
+    assert_eq!(
+        header("on", "on"),
+        "\x1b[4;31mID\x1b[0m \x1b[1;4mDescription\x1b[0m\n \
+         1 one\n\
+         \x1b[48;5;234m 2\x1b[0m\x1b[48;5;234m \x1b[0m\x1b[48;5;234mtwo        \x1b[0m\n"
+    );
+}
+
+#[test]
+fn set_header_underline_on_reports_table() {
+    let env = Env::new("defaultwidth=80\ndetection=off\ncolor.label=bold\ncolor.alternate=on gray2\n");
+    let head = |color: &str, underline: &str| {
+        let color = format!("rc._forcecolor={color}");
+        let underline = format!("rc.fontunderline={underline}");
+        let (out, err, rc) = quiet(&env, &[&color, &underline, "reports"]);
+        assert_eq!((err.as_str(), rc), ("", 0));
+        out.lines().take(3).collect::<Vec<_>>().join("\n")
+    };
+    let label = "Report          ";
+    let desc = "Description                                       ";
+    assert_eq!(
+        head("off", "off"),
+        format!("Report           Description\n{} {}\nactive           Active tasks", "-".repeat(16), "-".repeat(50))
+    );
+    // Without colour C++ still applies Color("underline") to the header:
+    // CmdReports never calls Table::withColor (whose default is true).
+    assert_eq!(
+        head("off", "on"),
+        format!("\x1b[4m{label}\x1b[0m \x1b[4m{desc}\x1b[0m\nactive           Active tasks\nall              All tasks")
+    );
+    let alt = "\x1b[48;5;234mactive          \x1b[0m\x1b[48;5;234m \x1b[0m\x1b[48;5;234mActive tasks                                      \x1b[0m";
+    assert_eq!(
+        head("on", "off"),
+        format!(
+            "\x1b[1m{label}\x1b[0m \x1b[1m{desc}\x1b[0m\n\x1b[1m{}\x1b[0m \x1b[1m{}\x1b[0m\n{alt}",
+            "-".repeat(16),
+            "-".repeat(50)
+        )
+    );
+    assert_eq!(
+        head("on", "on"),
+        format!("\x1b[1;4m{label}\x1b[0m \x1b[1;4m{desc}\x1b[0m\n{alt}\nall              All tasks")
+    );
+}
+
+#[test]
+fn report_uda_columns_of_each_type() {
+    let env = tasks_env(
+        "uda.size.type=string\nuda.size.label=Size\n\
+         uda.cost.type=numeric\nuda.cost.label=Cost\n\
+         uda.when.type=date\nuda.when.label=When\n\
+         uda.span.type=duration\nuda.span.label=Span\n\
+         uda.ref.type=uuid\nuda.ref.label=Ref\n",
+        &[
+            &["one", "size:big", "cost:3", "when:2030-01-02", "span:2d", "ref:a0b1c2d3-e4f5-4789-abcd-0123456789ab"],
+            &["two", "cost:12.5", "span:10d"],
+        ],
+    );
+    // Durations render right-aligned in ISO form; dates in rc.dateformat.
+    let columns = "id,size,cost,when,span,ref,ref.short,description";
+    assert_eq!(
+        sorted_report(&env, columns, "id+", &["rc.verbose=label", "rc.defaultwidth=120"]),
+        "ID Size Cost When       Span Ref                                  Ref      Description\n\
+         -- ---- ---- ---------- ---- ------------------------------------ -------- -----------\n \
+         1 big     3 2030-01-02  P2D a0b1c2d3-e4f5-4789-abcd-0123456789ab a0b1c2d3 one\n \
+         2      12.5            P10D                                               two\n"
+    );
+    // UDA styles: indicators (right-aligned, default "U"; widths include
+    // the labels), and an unknown style.
+    assert_eq!(
+        sorted_report(&env, "id,size.indicator,when.indicator,description", "id+", &["rc.uda.when.indicator=W"]),
+        " 1    U    W one\n 2           two\n"
+    );
+    let (_, err, rc) = quiet(&env, &["rc.report.r.columns=id,cost.donkey", "r"]);
+    assert_eq!((err.as_str(), rc), ("Unrecognized column format 'cost.donkey'\n", 2));
+}
+
+#[test]
+fn report_column_factory_errors() {
+    let env = tasks_env("", &[&["one"], &["two"]]);
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id,bogus", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "Unrecognized column name 'bogus'.\n", 2));
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id,description.donkey", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "Unrecognized column format 'description.donkey'\n", 2));
+    // An unknown sort key fails in the comparator (C++ validateSortColumns
+    // only maps legacy names), so it needs two tasks to compare.
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id", "rc.report.r.sort=bogus+", "r"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("", "The 'bogus' column is not a valid sort field.\n", 2));
+    let (out, err, rc) = quiet(&env, &["rc.report.r.columns=id", "rc.report.r.sort=bogus+", "r", "1"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), (" 1\n", "", 0));
+}
+
+#[test]
+fn report_without_labels_uses_column_labels() {
+    let env = tasks_env("uda.size.type=string\nuda.size.label=Size\nuda.nolabel.type=string\n", &[&["one", "project:P", "+t", "size:x", "nolabel:y"]]);
+    // Each column's default label (Column metadata); a UDA without
+    // uda.X.label has an empty one, rendered as blanks (C++ ViewTask::render).
+    assert_eq!(
+        sorted_report(&env, "id,project,tags,status,size,nolabel,description", "id+", &["rc.verbose=label"]),
+        "ID Project Tags Status  Size   Description\n\
+         -- ------- ---- ------- ----   -----------\n \
+         1 P       t    Pending x    y one\n"
+    );
 }

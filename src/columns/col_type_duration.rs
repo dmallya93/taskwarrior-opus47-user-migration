@@ -1,7 +1,8 @@
 //! Rust translation of `src/columns/ColTypeDuration.cpp`.
 //!
-//! `ColumnTypeDuration`: the base of the duration UDA columns. Rendering
-//! (none of its own in C++) arrives with milestone 6.
+//! `ColumnTypeDuration`: the base of the duration UDA columns. C++ declares no
+//! `measure` / `render` of its own, so it keeps the no-op [`Column`]
+//! defaults (`measure` -> `(0, 0)`, `render` -> no lines).
 
 use crate::columns::column::{column_base, Column, ColumnBase, ModifyEnv, MODIFICATION_LABEL};
 use crate::error::{Result, TwError};
@@ -73,5 +74,65 @@ impl Column for ColumnTypeDuration {
 
     fn modify(&self, task: &mut Task, value: &str, env: &mut dyn ModifyEnv) -> Result<()> {
         ColumnTypeDuration::modify_duration(self, task, value, env)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! C++ `ColumnTypeDuration::validate` / `modify` on the bare type column.
+    use super::*;
+    use crate::columns::column::FakeModifyEnv;
+
+    fn column() -> ColumnTypeDuration {
+        let mut c = ColumnTypeDuration::new();
+        c.base.name = "len".to_string();
+        c
+    }
+
+    fn modified(value: &str, env: &mut FakeModifyEnv) -> Result<String> {
+        let mut task = Task::new();
+        ColumnTypeDuration::modify_duration(&column(), &mut task, value, env)?;
+        Ok(task.get("len"))
+    }
+
+    #[test]
+    fn constructor_and_validate() {
+        let c = ColumnTypeDuration::new();
+        assert_eq!(c.type_(), "duration");
+        assert!(c.modifiable());
+        assert!(ColumnTypeDuration::validate_duration("1d") && ColumnTypeDuration::validate_duration("x"));
+        assert!(!ColumnTypeDuration::validate_duration(""));
+        assert!(c.validate("1d") && !c.validate(""));
+    }
+
+    #[test]
+    fn modify_stores_normalised_durations() {
+        let mut env = FakeModifyEnv::default();
+        assert_eq!(modified("1w", &mut env).unwrap(), "P7D");
+        assert_eq!(modified("PT1H", &mut env).unwrap(), "PT1H");
+        assert_eq!(modified("90min", &mut env).unwrap(), "PT1H30M");
+        assert_eq!(
+            env.debug,
+            vec![
+                format!("{MODIFICATION_LABEL}len <-- P7D <-- '1w'"),
+                format!("{MODIFICATION_LABEL}len <-- PT1H <-- 'PT1H'"),
+                format!("{MODIFICATION_LABEL}len <-- PT1H30M <-- '90min'"),
+            ]
+        );
+    }
+
+    #[test]
+    fn modify_rejects_non_durations() {
+        let mut env = FakeModifyEnv::default();
+        for value in ["5", "abc", "", "2030-01-01", "("] {
+            assert_eq!(
+                modified(value, &mut env).unwrap_err().to_string(),
+                format!("The duration value '{value}' is not supported."),
+                "{value}"
+            );
+        }
+        assert!(env.debug.is_empty());
+        // libshared Duration: a bare number of at least 60 is seconds.
+        assert_eq!(modified("3600", &mut env).unwrap(), "PT1H");
     }
 }

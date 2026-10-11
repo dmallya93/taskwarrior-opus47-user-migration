@@ -1,7 +1,8 @@
 //! Rust translation of `src/columns/ColTypeString.cpp`.
 //!
-//! `ColumnTypeString`: the base of every string-typed column. Rendering
-//! (none of its own in C++) arrives with milestone 6.
+//! `ColumnTypeString`: the base of every string-typed column. C++ declares no
+//! `measure` / `render` of its own, so it keeps the no-op [`Column`]
+//! defaults (`measure` -> `(0, 0)`, `render` -> no lines).
 
 use crate::columns::column::{column_base, Column, ColumnBase, ModifyEnv, MODIFICATION_LABEL};
 use crate::error::{Result, TwError};
@@ -92,5 +93,69 @@ impl Column for ColumnTypeString {
 
     fn modify(&self, task: &mut Task, value: &str, env: &mut dyn ModifyEnv) -> Result<()> {
         ColumnTypeString::modify_string(self, task, value, env)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! C++ `ColumnTypeString::validate` / `modify` on the bare type column.
+    use super::*;
+    use crate::columns::column::FakeModifyEnv;
+    use crate::variant::Variant;
+
+    fn column() -> ColumnTypeString {
+        let mut c = ColumnTypeString::new();
+        c.base.name = "x".to_string();
+        c
+    }
+
+    fn label(text: &str) -> String {
+        format!("{MODIFICATION_LABEL}{text}")
+    }
+
+    #[test]
+    fn constructor_and_validate() {
+        let c = ColumnTypeString::new();
+        assert_eq!(c.type_(), "string");
+        assert_eq!(c.name(), "");
+        assert!(c.modifiable() && !c.is_uda());
+        assert!(ColumnTypeString::validate_string("a") && ColumnTypeString::validate_string(" "));
+        assert!(!ColumnTypeString::validate_string(""));
+        assert!(c.validate("a") && !c.validate(""));
+    }
+
+    #[test]
+    fn modify_plain_values() {
+        let c = column();
+        let mut env = FakeModifyEnv::default();
+        let mut task = Task::new();
+        c.modify(&mut task, "hello", &mut env).unwrap();
+        assert_eq!(task.get("x"), "hello");
+        // Not a lone DOM token: stored as given.
+        c.modify(&mut task, "rc.a b", &mut env).unwrap();
+        assert_eq!(task.get("x"), "rc.a b");
+        assert_eq!(env.debug, vec![label("x <-- 'hello'"), label("x <-- 'rc.a b'")]);
+        let err = c.modify(&mut task, "", &mut env).unwrap_err();
+        assert_eq!(err.to_string(), "The 'x' attribute does not allow a value of ''.");
+        assert_eq!(task.get("x"), "rc.a b");
+    }
+
+    #[test]
+    fn modify_dom_reference() {
+        let c = column();
+        let mut env = FakeModifyEnv::default();
+        env.dom.insert("rc.a".to_string(), Variant::from_string("A"));
+        env.dom.insert("rc.empty".to_string(), Variant::from_string(""));
+        let mut task = Task::new();
+        ColumnTypeString::modify_string(&c, &mut task, "rc.a", &mut env).unwrap();
+        assert_eq!(task.get("x"), "A");
+        assert_eq!(env.debug, vec![label("x <-- 'A' <-- 'rc.a'")]);
+        // An unresolved DOM reference evaluates to its own text (C++ Eval:
+        // "An identifier that fails lookup is a string").
+        ColumnTypeString::modify_string(&c, &mut task, "rc.missing", &mut env).unwrap();
+        assert_eq!(task.get("x"), "rc.missing");
+        // The error names the original value, not the evaluated one.
+        let err = ColumnTypeString::modify_string(&c, &mut task, "rc.empty", &mut env).unwrap_err();
+        assert_eq!(err.to_string(), "The 'x' attribute does not allow a value of 'rc.empty'.");
     }
 }

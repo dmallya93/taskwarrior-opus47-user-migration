@@ -2,21 +2,53 @@
 //!
 //! Holds the [`Column`] trait (C++ `class Column`), the shared member state
 //! [`ColumnBase`] (the C++ protected members and `Column::Column ()`), the
-//! narrow environment [`ModifyEnv`] that `Column::modify` implementations
-//! use in place of `Context::getContext ()`, and the factories
+//! narrow environments [`ModifyEnv`] (for `Column::modify`) and
+//! [`RenderEnv`] (for `measure` / `render`) that replace
+//! `Context::getContext ()`, the protected `render*` helpers, and the
+//! factories
 //! [`factory`] (`Column::factory (name, report)`), [`factory_all`]
 //! (`Column::factory (std::map&)`), [`uda_all`] (`Column::uda (std::map&)`)
 //! and [`uda`] (`Column::uda (name)`).
 //!
-//! # Not yet ported: rendering (milestone 6)
+//! # Rendering
 //!
-//! The C++ rendering interface is deliberately absent from the trait until
-//! milestone 6 ports reports: `measure (const std::string&, ...)`,
-//! `measure (Task&, ...)`, `renderHeader`, both `render` overloads and the
-//! protected helpers `renderInteger`, `renderDouble`, `renderStringLeft`
-//! and `renderStringRight`. The member state those use (`_report`,
-//! `_hyphenate`, `_indent`, `_dateformat`, ...) is already carried by the
-//! structs so the milestone-6 port only adds methods.
+//! The C++ rendering interface is on the trait with C++ defaults:
+//! [`Column::measure_str`] / [`Column::measure`] (C++ `measure (const
+//! std::string&, ...)` / `measure (Task&, ...)`, no-ops returning `(0, 0)`),
+//! [`Column::render_header`] (C++ `Column::renderHeader`),
+//! [`Column::render_str`] / [`Column::render`] (C++ `render (..., const
+//! std::string&, ...)` / `render (..., Task&, ...)`, no-ops). The C++
+//! protected helpers `renderInteger`, `renderDouble`, `renderStringLeft` and
+//! `renderStringRight` are the free functions [`render_integer`],
+//! [`render_double`], [`render_string_left`] and [`render_string_right`].
+//!
+//! C++ returns the widths through `unsigned int&` out-parameters; here they
+//! are the returned `(minimum, maximum)` pair. ViewTask always passes both
+//! as 0, so "leave untouched" (the C++ no-op default) is `(0, 0)`. Widths are
+//! `usize` (C++ `int`; ViewTask never passes a negative one).
+//!
+//! `measure (Task&)` and `render (Task&)` return `Result` because concrete
+//! overrides can throw: urgency (`urgency.inherit` reads the replica),
+//! `getDependencyTasks` (replica errors) and `getStatus`. The string
+//! overloads and `renderHeader` cannot throw in C++ and return plain values.
+//!
+//! ## `RenderEnv`
+//!
+//! At render time the C++ columns reach `Context::getContext ()` for the
+//! configuration (`dateformat*`, `report.<r>.dateformat`, the
+//! `*.indicator` values, `fontunderline`), `verbose ("label")`, `color ()`,
+//! `task.urgency ()` (needs Context) and `task.getDependencyTasks ()` (needs
+//! `tdb2`). Those are the methods of the narrow [`RenderEnv`] trait, which
+//! [`Context`] implements; unit tests use a fake. "Now" is never part of the
+//! environment: date styles take `Datetime ()` (libc `time`, so faketime
+//! applies) at the point of use, exactly as C++ does.
+//!
+//! ## Type-behaviour composition
+//!
+//! A concrete column delegates to the associated helpers of its C++ base
+//! (`ColumnTypeDate::measure_date (this, ...)` / `render_date`), passing
+//! itself as `this: &dyn Column` so its `name`/`style`/`report` are used,
+//! mirroring how `validate_date` / `modify_date` work.
 //!
 //! # Hierarchy
 //!
@@ -61,8 +93,9 @@ use crate::context::Context;
 use crate::dom;
 use crate::error::{Result, TwError};
 use crate::eval::Eval;
+use crate::shared::color::{Color, ColorId};
 use crate::shared::configuration::Configuration;
-use crate::shared::format::format;
+use crate::shared::format::{format, format_double, left_justify, right_justify, right_justify_int};
 use crate::shared::shared::split;
 use crate::task::Task;
 use crate::variant::Variant;
@@ -221,9 +254,110 @@ impl ModifyEnv for Context {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// C++ `class Column`: column metadata and the non-rendering behaviour
-/// (`validate`, `modify`, `setStyle`/`setLabel`/`setReport`). See the module
-/// documentation for the rendering methods milestone 6 adds.
+/// The parts of `Context::getContext ()` that the C++ `measure`,
+/// `renderHeader` and `render` implementations (every `Col*.cpp`) reach.
+/// [`Context`] implements it; tests use a fake.
+pub trait RenderEnv {
+    /// C++ `Context::getContext ().config`.
+    fn config(&self) -> &Configuration;
+
+    /// C++ `Context::getContext ().verbose (token)`.
+    fn verbose(&mut self, token: &str) -> bool;
+
+    /// C++ `Context::getContext ().color ()`.
+    fn color(&mut self) -> bool;
+
+    /// C++ `task.urgency ()` (ColUrgency): the cached urgency, computed with
+    /// the Context's coefficients (and the replica for `urgency.inherit`).
+    ///
+    /// # Errors
+    /// Those of `Task::urgency`.
+    fn urgency(&mut self, task: &mut Task) -> Result<f32>;
+
+    /// C++ `task.getDependencyTasks ()` (ColDepends): the pending tasks
+    /// `task` depends on, read through `Context::getContext ().tdb2`.
+    ///
+    /// # Errors
+    /// Those of `Task::get_dependency_tasks`.
+    fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>>;
+}
+
+impl RenderEnv for Context {
+    fn config(&self) -> &Configuration {
+        &self.config
+    }
+
+    fn verbose(&mut self, token: &str) -> bool {
+        Context::verbose(self, token)
+    }
+
+    fn color(&mut self) -> bool {
+        Context::color(self)
+    }
+
+    fn urgency(&mut self, task: &mut Task) -> Result<f32> {
+        task.urgency(self)
+    }
+
+    fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>> {
+        task.get_dependency_tasks(&mut self.tdb2)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// C++ `void Column::renderHeader (std::vector<std::string>& lines, int
+/// width, Color& color)`, the default [`Column::render_header`], for a column
+/// labelled `label`: nothing unless `verbose ("label")` and the label is
+/// non-empty; then the left-justified label, underlined when colour and
+/// `fontunderline` are on, otherwise followed by a dashed line.
+pub fn render_header_label(label: &str, lines: &mut Vec<String>, width: usize, color: &Color, env: &mut dyn RenderEnv) {
+    if env.verbose("label") && !label.is_empty() {
+        // Create a basic label.
+        let header = label;
+
+        // Create a fungible copy.
+        let mut c = *color;
+
+        // Now underline the header, or add a dashed line.
+        if env.color() && env.config().get_boolean("fontunderline") {
+            c.blend(&Color::from_ids(ColorId::Nocolor, ColorId::Nocolor, true, false, false));
+            lines.push(c.colorize(&left_justify(header, width as i32)));
+        } else {
+            lines.push(c.colorize(&left_justify(header, width as i32)));
+            lines.push(c.colorize(&"-".repeat(width)));
+        }
+    }
+}
+
+/// C++ `void Column::renderInteger (std::vector<std::string>& lines, int
+/// width, Color& color, int value)`.
+pub fn render_integer(lines: &mut Vec<String>, width: usize, color: &Color, value: i32) {
+    lines.push(color.colorize(&right_justify_int(value, width as i32)));
+}
+
+/// C++ `void Column::renderDouble (std::vector<std::string>& lines, int
+/// width, Color& color, double value)`: `format (value, 4, 3)`,
+/// right-justified.
+pub fn render_double(lines: &mut Vec<String>, width: usize, color: &Color, value: f64) {
+    lines.push(color.colorize(&right_justify(&format_double(value, 4, 3), width as i32)));
+}
+
+/// C++ `void Column::renderStringLeft (std::vector<std::string>& lines, int
+/// width, Color& color, const std::string& value)`.
+pub fn render_string_left(lines: &mut Vec<String>, width: usize, color: &Color, value: &str) {
+    lines.push(color.colorize(&left_justify(value, width as i32)));
+}
+
+/// C++ `void Column::renderStringRight (std::vector<std::string>& lines, int
+/// width, Color& color, const std::string& value)`.
+pub fn render_string_right(lines: &mut Vec<String>, width: usize, color: &Color, value: &str) {
+    lines.push(color.colorize(&right_justify(value, width as i32)));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// C++ `class Column`: column metadata, `validate`, `modify`,
+/// `setStyle`/`setLabel`/`setReport` and the rendering interface (see the
+/// module documentation).
 pub trait Column {
     /// The C++ protected members.
     fn base(&self) -> &ColumnBase;
@@ -303,6 +437,59 @@ pub trait Column {
 
     /// C++ `virtual void modify (Task&, const std::string&) {}`.
     fn modify(&self, _task: &mut Task, _value: &str, _env: &mut dyn ModifyEnv) -> Result<()> {
+        Ok(())
+    }
+
+    /// C++ `virtual void measure (const std::string&, unsigned int& minimum,
+    /// unsigned int& maximum) {}`: `(minimum, maximum)`; the no-op default
+    /// leaves both at 0.
+    fn measure_str(&self, _value: &str, _env: &mut dyn RenderEnv) -> (usize, usize) {
+        (0, 0)
+    }
+
+    /// C++ `virtual void measure (Task&, unsigned int& minimum, unsigned int&
+    /// maximum) {}`: `(minimum, maximum)`; the no-op default leaves both at
+    /// 0.
+    ///
+    /// # Errors
+    /// Whatever the override's C++ throws (urgency, dependency lookups,
+    /// `getStatus`).
+    fn measure(&self, _task: &mut Task, _env: &mut dyn RenderEnv) -> Result<(usize, usize)> {
+        Ok((0, 0))
+    }
+
+    /// C++ `virtual void renderHeader (std::vector<std::string>&, int,
+    /// Color&)`: [`render_header_label`] with this column's label.
+    fn render_header(&self, lines: &mut Vec<String>, width: usize, color: &Color, env: &mut dyn RenderEnv) {
+        render_header_label(self.label(), lines, width, color, env);
+    }
+
+    /// C++ `virtual void render (std::vector<std::string>&, const
+    /// std::string&, int, Color&) {}`.
+    fn render_str(
+        &self,
+        _lines: &mut Vec<String>,
+        _value: &str,
+        _width: usize,
+        _color: &Color,
+        _env: &mut dyn RenderEnv,
+    ) {
+    }
+
+    /// C++ `virtual void render (std::vector<std::string>&, Task&, int,
+    /// Color&) {}`.
+    ///
+    /// # Errors
+    /// Whatever the override's C++ throws (urgency, dependency lookups,
+    /// `getStatus`).
+    fn render(
+        &self,
+        _lines: &mut Vec<String>,
+        _task: &mut Task,
+        _width: usize,
+        _color: &Color,
+        _env: &mut dyn RenderEnv,
+    ) -> Result<()> {
         Ok(())
     }
 }
@@ -520,63 +707,124 @@ pub fn uda(name: &str, config: &Configuration) -> Result<Option<Box<dyn Column>>
     Ok(Some(c))
 }
 
+/// A [`ModifyEnv`] with a real Eval whose DOM resolves from `dom`, and
+/// recorders for debug output, special-tag feedback and dependency
+/// operations.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct FakeModifyEnv {
+    pub dom: std::collections::BTreeMap<String, Variant>,
+    pub debug: Vec<String>,
+    pub feedback: Vec<String>,
+    pub tasks: Vec<Task>,
+    pub added: Vec<String>,
+    pub added_ids: Vec<i32>,
+    pub removed_ids: Vec<i32>,
+}
+
+#[cfg(test)]
+impl ModifyEnv for FakeModifyEnv {
+    fn evaluate_dom_expression(&mut self, value: &str) -> Result<Variant> {
+        let dom = &self.dom;
+        let mut resolver = crate::eval::FnResolver::new(|name: &str| crate::eval::dom_source(name, |n| dom.get(n).cloned()));
+        crate::eval::Eval::new().evaluate_infix_expression(value, &mut resolver)
+    }
+
+    fn debug(&mut self, message: &str) {
+        self.debug.push(message.to_string());
+    }
+
+    fn feedback_special_tags(&mut self, _task: &Task, tag: &str) {
+        self.feedback.push(tag.to_string());
+    }
+
+    fn get_task(&mut self, uuid: &str) -> Result<Option<Task>> {
+        Ok(self.tasks.iter().find(|t| t.get_ref("uuid").starts_with(uuid)).cloned())
+    }
+
+    fn add_dependency(&mut self, _task: &mut Task, uuid: &str) -> Result<()> {
+        self.added.push(uuid.to_string());
+        Ok(())
+    }
+
+    fn add_dependency_id(&mut self, _task: &mut Task, id: i32) -> Result<()> {
+        self.added_ids.push(id);
+        Ok(())
+    }
+
+    fn remove_dependency_id(&mut self, _task: &mut Task, id: i32) -> Result<()> {
+        self.removed_ids.push(id);
+        Ok(())
+    }
+}
+
+/// A [`RenderEnv`] fake for column unit tests (shared by every `col_*`
+/// test module): a plain [`Configuration`], fixed `verbose` / `color`
+/// answers (recording each `verbose` token asked), a fixed urgency, and
+/// `dependency_tasks` answered from `tasks` by the task's dependency UUIDs.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct FakeRenderEnv {
+    /// Answers [`RenderEnv::config`].
+    pub config: Configuration,
+    /// Answers every [`RenderEnv::verbose`] call.
+    pub verbose: bool,
+    /// Tokens passed to [`RenderEnv::verbose`], in order.
+    pub verbose_asked: Vec<String>,
+    /// Answers [`RenderEnv::color`].
+    pub color: bool,
+    /// Answers [`RenderEnv::urgency`].
+    pub urgency: f32,
+    /// The tasks [`RenderEnv::dependency_tasks`] selects from.
+    pub tasks: Vec<Task>,
+}
+
+#[cfg(test)]
+impl FakeRenderEnv {
+    /// A fake with `verbose` on and colour off, over `pairs` as the config.
+    pub(crate) fn with_config(pairs: &[(&str, &str)]) -> Self {
+        let mut config = Configuration::new();
+        for (key, value) in pairs {
+            config.set(key, *value);
+        }
+        FakeRenderEnv { config, verbose: true, ..FakeRenderEnv::default() }
+    }
+}
+
+#[cfg(test)]
+impl RenderEnv for FakeRenderEnv {
+    fn config(&self) -> &Configuration {
+        &self.config
+    }
+
+    fn verbose(&mut self, token: &str) -> bool {
+        self.verbose_asked.push(token.to_string());
+        self.verbose
+    }
+
+    fn color(&mut self) -> bool {
+        self.color
+    }
+
+    fn urgency(&mut self, _task: &mut Task) -> Result<f32> {
+        Ok(self.urgency)
+    }
+
+    fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>> {
+        let uuids = task.get_dependency_uuids();
+        Ok(self.tasks.iter().filter(|t| uuids.iter().any(|u| u == t.get_ref("uuid"))).cloned().collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Factory contents, style/label linking, `validate` and `modify` of
     //! every column class, against a fake [`ModifyEnv`].
     use super::*;
-    use crate::eval::{dom_source, FnResolver};
     use crate::shared::datetime::Datetime;
     use crate::shared::localtime;
 
-    /// A [`ModifyEnv`] with a real Eval whose DOM resolves from `dom`, and
-    /// recorders for debug output, special-tag feedback and dependency
-    /// operations.
-    #[derive(Default)]
-    struct FakeEnv {
-        dom: BTreeMap<String, Variant>,
-        debug: Vec<String>,
-        feedback: Vec<String>,
-        tasks: Vec<Task>,
-        added: Vec<String>,
-        added_ids: Vec<i32>,
-        removed_ids: Vec<i32>,
-    }
-
-    impl ModifyEnv for FakeEnv {
-        fn evaluate_dom_expression(&mut self, value: &str) -> Result<Variant> {
-            let dom = &self.dom;
-            let mut resolver = FnResolver::new(|name: &str| dom_source(name, |n| dom.get(n).cloned()));
-            Eval::new().evaluate_infix_expression(value, &mut resolver)
-        }
-
-        fn debug(&mut self, message: &str) {
-            self.debug.push(message.to_string());
-        }
-
-        fn feedback_special_tags(&mut self, _task: &Task, tag: &str) {
-            self.feedback.push(tag.to_string());
-        }
-
-        fn get_task(&mut self, uuid: &str) -> Result<Option<Task>> {
-            Ok(self.tasks.iter().find(|t| t.get_ref("uuid").starts_with(uuid)).cloned())
-        }
-
-        fn add_dependency(&mut self, _task: &mut Task, uuid: &str) -> Result<()> {
-            self.added.push(uuid.to_string());
-            Ok(())
-        }
-
-        fn add_dependency_id(&mut self, _task: &mut Task, id: i32) -> Result<()> {
-            self.added_ids.push(id);
-            Ok(())
-        }
-
-        fn remove_dependency_id(&mut self, _task: &mut Task, id: i32) -> Result<()> {
-            self.removed_ids.push(id);
-            Ok(())
-        }
-    }
+    use super::FakeModifyEnv as FakeEnv;
 
     fn config(pairs: &[(&str, &str)]) -> Configuration {
         let mut config = Configuration::new();
@@ -1045,5 +1293,345 @@ mod tests {
         let fixed: Vec<&str> =
             all.iter().filter(|(_, c)| !c.modifiable()).map(|(name, _)| name.as_str()).collect();
         assert_eq!(fixed, vec!["id", "imask", "last", "mask", "parent", "rtype", "template", "urgency", "uuid"]);
+    }
+
+    #[test]
+    fn render_helpers_justify_and_colorize() {
+        let plain = Color::new();
+        let mut lines = Vec::new();
+        render_integer(&mut lines, 4, &plain, 42);
+        render_integer(&mut lines, 1, &plain, -123);
+        render_double(&mut lines, 6, &plain, 4.6);
+        render_double(&mut lines, 6, &plain, 12.34567);
+        render_double(&mut lines, 6, &plain, 0.123456);
+        render_string_left(&mut lines, 5, &plain, "ab");
+        render_string_right(&mut lines, 5, &plain, "ab");
+        // Wider values are not truncated; display width counts, not bytes.
+        render_string_left(&mut lines, 2, &plain, "abcd");
+        render_string_right(&mut lines, 4, &plain, "\u{e9}t\u{e9}");
+        assert_eq!(
+            lines,
+            strings(&["  42", "-123", "   4.6", "  12.3", "  0.12", "ab   ", "   ab", "abcd", " \u{e9}t\u{e9}"])
+        );
+
+        let red = Color::parse("red").unwrap();
+        let mut lines = Vec::new();
+        render_string_left(&mut lines, 3, &red, "x");
+        render_integer(&mut lines, 3, &red, 7);
+        assert_eq!(lines, vec![red.colorize("x  "), red.colorize("  7")]);
+        assert_eq!(lines[0], "\x1b[31mx  \x1b[0m");
+    }
+
+    #[test]
+    fn render_header_label_dashes_underline_and_verbosity() {
+        let all = registry(&Configuration::new());
+        let plain = Color::new();
+
+        // verbose label, no colour: label line plus a dashed line.
+        let mut env = FakeRenderEnv::with_config(&[("fontunderline", "on")]);
+        let mut lines = Vec::new();
+        all["due"].render_header(&mut lines, 6, &plain, &mut env);
+        assert_eq!(lines, strings(&["Due   ", "------"]));
+        assert_eq!(env.verbose_asked, strings(&["label"]));
+
+        // Colour and fontunderline: one underlined line, blended into the
+        // given colour.
+        env.color = true;
+        let mut lines = Vec::new();
+        let red = Color::parse("red").unwrap();
+        all["project"].render_header(&mut lines, 8, &red, &mut env);
+        let underline = Color::parse("underline red").unwrap();
+        assert_eq!(lines, vec![underline.colorize("Project ")]);
+        assert_eq!(lines[0], "\x1b[4;31mProject \x1b[0m");
+
+        // Colour without fontunderline: dashes, coloured.
+        env.config.set("fontunderline", "off");
+        let mut lines = Vec::new();
+        all["id"].render_header(&mut lines, 3, &red, &mut env);
+        assert_eq!(lines, vec![red.colorize("ID "), red.colorize("---")]);
+
+        // Width narrower than the label: no truncation, dashes to width.
+        env.color = false;
+        let mut lines = Vec::new();
+        all["description"].render_header(&mut lines, 4, &plain, &mut env);
+        assert_eq!(lines, strings(&["Description", "----"]));
+
+        // Not verbose, or an empty label: nothing.
+        env.verbose = false;
+        let mut lines = Vec::new();
+        all["due"].render_header(&mut lines, 6, &plain, &mut env);
+        assert!(lines.is_empty());
+        env.verbose = true;
+        env.verbose_asked.clear();
+        let rtype = factory("rtype.indicator", "", &Configuration::new()).unwrap();
+        assert_eq!(rtype.label(), "");
+        rtype.render_header(&mut lines, 6, &plain, &mut env);
+        assert!(lines.is_empty());
+        // verbose is consulted first, as C++ `verbose ("label") && _label != ""`.
+        assert_eq!(env.verbose_asked, strings(&["label"]));
+    }
+
+    #[test]
+    fn default_render_interface_is_a_no_op() {
+        // C++ Column / ColumnTypeString / Numeric / Duration declare no
+        // measure or render bodies: nothing is measured or rendered.
+        use crate::columns::col_type_duration::ColumnTypeDuration;
+        use crate::columns::col_type_numeric::ColumnTypeNumeric;
+        use crate::columns::col_type_string::ColumnTypeString;
+        let mut env = FakeRenderEnv::with_config(&[]);
+        let plain = Color::new();
+        let mut task = Task::new();
+        task.set("description", "hello");
+        task.set("size", "5");
+        task.set("est", "P1D");
+
+        let mut s = ColumnTypeString::new();
+        s.base.name = "description".to_string();
+        let mut n = ColumnTypeNumeric::new();
+        n.base.name = "size".to_string();
+        let mut d = ColumnTypeDuration::new();
+        d.base.name = "est".to_string();
+        let columns: [&dyn Column; 3] = [&s, &n, &d];
+        for c in columns {
+            assert_eq!(c.measure(&mut task, &mut env).unwrap(), (0, 0), "{}", c.name());
+            assert_eq!(c.measure_str("hello", &mut env), (0, 0));
+            let mut lines = Vec::new();
+            c.render(&mut lines, &mut task, 10, &plain, &mut env).unwrap();
+            c.render_str(&mut lines, "hello", 10, &plain, &mut env);
+            assert!(lines.is_empty(), "{}", c.name());
+        }
+    }
+
+    #[test]
+    fn fake_render_env_dependency_tasks() {
+        let mut env = FakeRenderEnv::with_config(&[]);
+        let mut a = Task::new();
+        a.set("uuid", "aaaaaaaa-0000-0000-0000-000000000000");
+        let mut b = Task::new();
+        b.set("uuid", "bbbbbbbb-0000-0000-0000-000000000000");
+        env.tasks = vec![a, b];
+        let mut t = Task::new();
+        t.set(&Task::dep2attr("bbbbbbbb-0000-0000-0000-000000000000"), "x");
+        let deps = env.dependency_tasks(&t).unwrap();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].get("uuid"), "bbbbbbbb-0000-0000-0000-000000000000");
+        env.urgency = 4.5;
+        assert_eq!(env.urgency(&mut t).unwrap(), 4.5);
+    }
+
+    /// A column with only the C++ `Column` base behaviour.
+    struct BareColumn {
+        base: ColumnBase,
+    }
+
+    impl Column for BareColumn {
+        column_base!(base);
+    }
+
+    #[test]
+    fn base_validate_and_modify_defaults() {
+        // C++ `Column::validate` returns false; `Column::modify` is a no-op.
+        let c = BareColumn { base: ColumnBase::new() };
+        assert!(!c.validate("x") && !c.validate(""));
+        let mut env = FakeEnv::default();
+        let t = modify(&c, "x", &mut env).unwrap();
+        assert_eq!(t, Task::new());
+        assert!(env.debug.is_empty());
+    }
+
+    #[test]
+    fn validate_every_builtin() {
+        let all = registry(&Configuration::new());
+        // Every built-in but rtype inherits ColumnType*::validate: non-empty.
+        for (name, c) in &all {
+            if name == "rtype" {
+                continue;
+            }
+            assert!(c.validate("x") && c.validate(" "), "{name}");
+            assert!(!c.validate(""), "{name}");
+        }
+        let rtype = &all["rtype"];
+        assert!(rtype.validate("periodic") && rtype.validate("chained"));
+        assert!(!rtype.validate("Periodic") && !rtype.validate("") && !rtype.validate("periodic "));
+    }
+
+    #[test]
+    fn examples_of_every_builtin() {
+        let config = config(&[
+            ("tag.indicator", "+"),
+            ("dependency.indicator", "D"),
+            ("recurrence.indicator", "R"),
+            ("active.indicator", "*"),
+            ("dateformat", "Y-M-D H:N:S"),
+        ]);
+        let before = localtime::time_now() - 125;
+        let all = registry(&config);
+        let after = localtime::time_now() - 125;
+        const UUID: &str = "f30cb9c3-3fc0-483f-bfb2-3bf134f00694";
+        let fixed: &[(&str, &[&str])] = &[
+            ("id", &["123"]),
+            ("imask", &["12"]),
+            ("last", &["12"]),
+            ("mask", &["++++---"]),
+            ("parent", &[UUID, "f30cb9c3"]),
+            ("template", &[UUID, "f30cb9c3"]),
+            ("uuid", &[UUID, "f30cb9c3"]),
+            ("rtype", &["periodic", "chained"]),
+            ("status", &["Pending", "P"]),
+            ("recur", &["weekly", "R"]),
+            ("depends", &["1 2 10", "[3]", "D"]),
+            ("tags", &["home @chore next", "+", "[2]"]),
+            ("project", &["home.garden", "home", "  home.garden"]),
+            ("urgency", &["4.6", "4"]),
+        ];
+        for (name, examples) in fixed {
+            assert_eq!(all[*name].examples(), strings(examples), "{name}");
+        }
+
+        // ColumnTypeDate: one example per style from "now - 125 s".
+        for name in ["due", "end", "entry", "modified", "scheduled", "start", "until", "wait"] {
+            let examples = all[name].examples();
+            assert_eq!(examples.len(), if name == "start" { 9 } else { 8 }, "{name}");
+            let epoch: i64 = examples[2].parse().unwrap();
+            assert!(epoch >= before && epoch <= after, "{name}");
+            let then = Datetime::from_epoch(epoch);
+            assert_eq!(examples[0], then.to_string("Y-M-D H:N:S"), "{name}");
+            assert_eq!(examples[1], format_double(then.to_julian(), 13, 12), "{name}");
+            assert_eq!(examples[3], then.to_iso(), "{name}");
+            assert_eq!(examples[5], format!("-{}", examples[4]), "{name}");
+            assert_eq!(examples[6], "", "{name}");
+            assert!(examples[7].contains(':'), "{name}: {}", examples[7]);
+            if name == "start" {
+                assert_eq!(examples[8], "*");
+            }
+        }
+    }
+
+    #[test]
+    fn description_examples_use_annotation_dateformat() {
+        let d = "Move your clothes down on to the lower peg";
+        let annotations = [
+            "Immediately before your lunch",
+            "If you are playing in the match this afternoon",
+            "Before you write your letter home",
+            "If you're not getting your hair cut",
+        ];
+        for (pairs, format_) in [
+            (vec![("dateformat", "Y-M-D")], "Y-M-D"),
+            (vec![("dateformat", "Y-M-D"), ("dateformat.annotation", "D/M")], "D/M"),
+        ] {
+            let all = registry(&config(&pairs));
+            let examples = all["description"].examples();
+            let t = Datetime::new().to_string(format_);
+            let oneline: Vec<String> = annotations.iter().map(|a| format!("{t} {a}")).collect();
+            assert_eq!(examples[2], format!("{d} {}", oneline.join(" ")), "{format_}");
+            let combined: Vec<String> = annotations.iter().map(|a| format!("\n  {t} {a}")).collect();
+            assert_eq!(examples[0], format!("{d}{}", combined.join("")), "{format_}");
+        }
+    }
+
+    #[test]
+    fn indicator_labels_follow_indicator_length() {
+        let config = config(&[
+            ("dependency.indicator", "DDD"),
+            ("recurrence.indicator", "R"),
+            ("rtype.indicator", "RT"),
+            ("tag.indicator", "++"),
+        ]);
+        for (name, label) in [
+            ("depends.indicator", "Dep"),
+            ("recur.indicator", "R"),
+            ("rtype.indicator", "Re"),
+            ("tags.indicator", "Ta"),
+            ("start.active", "A"),
+            ("entry.age", "Age"),
+            ("due.countdown", "Count"),
+            ("end.countdown", "Completed"),
+            ("status.long", "Status"),
+            ("uuid.short", "UUID"),
+        ] {
+            assert_eq!(factory(name, "", &config).unwrap().label(), label, "{name}");
+        }
+    }
+
+    #[test]
+    fn uda_metadata_per_type() {
+        let config = config(&[
+            ("uda.s.type", "string"),
+            ("uda.s.label", "Str"),
+            ("uda.n.type", "numeric"),
+            ("uda.n.label", "Num"),
+            ("uda.d.type", "date"),
+            ("uda.d.label", "Date"),
+            ("uda.d.values", "1700000000"),
+            ("uda.du.type", "duration"),
+            ("uda.du.values", "P1D,P2D"),
+            ("uda.u.type", "uuid"),
+            ("uda.u.label", "Ref"),
+        ]);
+        let all = registry(&config);
+        assert_eq!(all.len(), 23 + 5);
+        // name, type, label, number of examples
+        let expected: &[(&str, &str, &str, usize)] = &[
+            ("s", "string", "Str", 0),
+            ("n", "numeric", "Num", 0),
+            // ColumnUDADate keeps the ColumnTypeDate examples (C++ does not
+            // reset _examples).
+            ("d", "date", "Date", 8),
+            // No uda.du.label: empty.
+            ("du", "duration", "", 0),
+            ("u", "uuid", "Ref", 2),
+        ];
+        for (name, type_, label, examples) in expected {
+            let c = &all[*name];
+            assert_eq!(c.name(), *name);
+            assert_eq!(c.type_(), *type_, "{name}");
+            assert_eq!(c.label(), *label, "{name}");
+            assert_eq!(c.examples().len(), *examples, "{name}");
+            assert!(c.is_uda() && c.modifiable() && !c.is_fixed_width(), "{name}");
+        }
+        assert!(all["d"].validate("1700000000") && !all["d"].validate("1"));
+        assert!(all["du"].validate("P2D") && !all["du"].validate("P3D") && !all["du"].validate(""));
+        assert!(all["s"].validate("") && all["n"].validate(""));
+
+        // factory: UDA columns of every type, with styles and errors.
+        for (name, style, label) in [
+            ("s.indicator", "indicator", "Str"),
+            ("n", "default", "Num"),
+            ("d.indicator", "indicator", "Date"),
+            ("du.default", "default", ""),
+            ("u.short", "short", "Ref"),
+        ] {
+            let c = factory(name, "r", &config).unwrap();
+            assert_eq!((c.style(), c.label()), (style, label), "{name}");
+            assert!(c.is_uda(), "{name}");
+        }
+        assert_eq!(err(factory("n.real", "", &config)), "Unrecognized column format 'n.real'");
+        assert_eq!(err(factory("d.formatted", "", &config)), "Unrecognized column format 'd.formatted'");
+        assert_eq!(err(factory("u.indicator", "", &config)), "Unrecognized column format 'u.indicator'");
+        assert_eq!(err(factory("", "", &config)), "Unrecognized column name ''.");
+        assert_eq!(err(factory(".list", "", &config)), "Unrecognized column name ''.");
+    }
+
+    #[test]
+    fn factory_all_propagates_uda_errors() {
+        let mut all = ColumnRegistry::new();
+        assert_eq!(
+            err(factory_all(&mut all, &config(&[("uda.x.type", "integer")]))),
+            "User defined attributes may only be of type 'string', 'uuid', 'date', 'duration' or 'numeric'."
+        );
+        // Built-ins were registered before the UDA pass failed.
+        assert_eq!(all.len(), 23);
+        for core in ["due", "description", "id", "urgency", "uuid", "wait"] {
+            let mut all = ColumnRegistry::new();
+            assert_eq!(
+                err(factory_all(&mut all, &config(&[(&format!("uda.{core}.type"), "string")]))),
+                format!("The UDA named '{core}' is the same as a core attribute, and is not permitted.")
+            );
+        }
+        // A UDA without a type is not registered.
+        let mut all = ColumnRegistry::new();
+        factory_all(&mut all, &config(&[("uda.lbl.label", "L"), ("uda.lbl.values", "a")])).unwrap();
+        assert!(!all.contains_key("lbl"));
     }
 }

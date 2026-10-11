@@ -1,4 +1,4 @@
-//! Columns (metadata, validate/modify, factory; rendering in milestone 6): one module per `src/columns/Col*.cpp`; `column` is `Column.cpp`.
+//! Columns (metadata, validate/modify, measure/render, factory): one module per `src/columns/Col*.cpp`; `column` is `Column.cpp`.
 
 pub mod column;
 
@@ -30,3 +30,4 @@ pub mod col_uuid;
 pub mod col_until;
 pub mod col_urgency;
 pub mod col_wait;
+#[cfg(test)] mod col_tests;

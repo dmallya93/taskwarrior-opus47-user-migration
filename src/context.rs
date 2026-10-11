@@ -59,9 +59,10 @@
 //! - **Milestone 7**: `Hooks::initialize` / `onLaunch` / `onExit`
 //!   ([`crate::hooks::Hooks`]), `handleUntil` / `handleRecurrence`
 //!   ([`crate::recur`]).
-//! - **Milestone 6**: the per-task colour rules of `rules.cpp`
-//!   (`autoColorize`) are not called by Context; only report rendering uses
-//!   them.
+//!
+//! Per-task colour rules (`rules.cpp` `autoColorize`) are not part of
+//! Context: they are rendered by [`crate::view_task::ViewTask`], which calls
+//! [`crate::rules::auto_colorize`] for each row, and Context never calls them.
 //!
 //! # `TASK_RCDIR`
 //!
@@ -1422,9 +1423,12 @@ impl Context {
                     let name = if key.len() >= 11 { &rest[..rest.len() - 7] } else { rest };
                     let values = split(value, ',');
 
-                    let order = custom_order.entry(name.to_string()).or_default();
+                    // C++ `Task::customOrder[name]` is only reached inside
+                    // the loop, so an empty `uda.X.values` (split yields no
+                    // values) creates no entry and sort_compare falls back to
+                    // plain string order with empty values last.
                     for r in values.iter().rev() {
-                        order.push(r.clone());
+                        custom_order.entry(name.to_string()).or_default().push(r.clone());
                     }
                 }
             }
@@ -2227,11 +2231,13 @@ mod tests {
         assert_eq!(stdout, "");
         assert_eq!(stderr, "Command 'prepend' is not yet implemented.\n");
 
-        // A default custom report dispatches the same way.
+        // A default custom report (CmdCustom, ported) dispatches to the
+        // report: no tasks, so the `No matches.` footnote and status 1.
         let mut context = Context::new();
-        assert_eq!(init(&mut context, &["task", "next"]).0, 0);
-        let (rc, _, stderr) = run(&mut context);
-        assert_eq!((rc, stderr.as_str()), (2, "Command 'next' is not yet implemented.\n"));
+        assert_eq!(init(&mut context, &["task", "rc.verbose=footnote", "next"]).0, 0);
+        let (rc, stdout, stderr) = run(&mut context);
+        assert_eq!((rc, stdout.as_str()), (1, ""));
+        assert!(stderr.ends_with("No matches.\n"), "{stderr}");
     }
 
     #[test]
@@ -2422,7 +2428,7 @@ mod tests {
         write(
             &format!("{}/.taskrc", f.home),
             "default.project=home\ndefault.due=eom\ndefault.scheduled=tomorrow\nsearch.case.sensitive=0\n\
-             regex=0\nuda.size.values=S,M,L\nurgency.user.tag.foo.coefficient=2.5\nurgency.uda.size.L.coefficient=1.5\n",
+             regex=0\nuda.size.values=S,M,L\nuda.blank.values=\nurgency.user.tag.foo.coefficient=2.5\nurgency.uda.size.L.coefficient=1.5\n",
         );
         let mut context = context();
         let (status, _, _) = init(&mut context, &["task", "alpha"]);
@@ -2434,6 +2440,9 @@ mod tests {
         assert!(!Task::regex());
         let order = Task::custom_order();
         assert_eq!(order["size"], vec!["L", "M", "S"]);
+        // An empty uda.X.values creates no entry (C++ only indexes the map
+        // inside the per-value loop).
+        assert!(!order.contains_key("blank"));
         assert_eq!(order["priority"], vec!["", "L", "M", "H"]);
         assert_eq!(Task::urgency_project_coefficient(), 1.0);
         assert_eq!(Task::urgency_active_coefficient(), 4.0);
