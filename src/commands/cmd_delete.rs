@@ -208,3 +208,161 @@ impl Command for CmdDelete {
         Ok(rc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const TWO: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+    const GONE: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+    const PARENT: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    const CHILD1: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+    const CHILD2: &str = "bbbbbbbb-0000-4000-8000-000000000003";
+
+    /// IDs 1 and 2 plain pending tasks, a deleted task, a recurring
+    /// template with two pending children.
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z","project":"home"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000002","description":"two","status":"pending","entry":"20260101T000000Z"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000003","description":"gone","status":"deleted","entry":"20260101T000000Z","end":"20260102T000000Z"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000001","description":"rec","status":"recurring","entry":"20260101T000000Z","due":"20260101T000000Z","recur":"daily","mask":"--"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000002","description":"rec","status":"pending","entry":"20260101T000000Z","due":"20260101T000000Z","recur":"daily","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"0"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000003","description":"rec","status":"pending","entry":"20260101T000000Z","due":"20260102T000000Z","recur":"daily","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"1"}"#,
+    ];
+
+    fn fixture(rc_lines: &str, args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, &format!("confirmation=off\n{rc_lines}"), args)
+    }
+
+    #[test]
+    fn deletes_and_stamps_end() {
+        let mut f = fixture("", &["2", "delete", "+bye"]);
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        let t = f.task(TWO);
+        assert_eq!(t.get("status"), "deleted");
+        assert!(t.has("end"));
+        assert!(t.get_tags().contains(&"bye".to_string()));
+        assert_eq!(f.task(ONE).get("status"), "pending");
+    }
+
+    #[test]
+    fn deleted_task_is_not_deletable() {
+        let mut f = fixture("", &[GONE, "delete"]);
+        begin_console_override("");
+        let rc = f.run(&CmdDelete::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown, "Task aaaaaaaa 'gone' is not deletable.\n");
+    }
+
+    #[test]
+    fn no_tasks_specified() {
+        let mut f = fixture("", &["99", "delete"]);
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 1);
+        assert!(f.ctx.footnotes.iter().any(|m| m == "No tasks specified."), "{:?}", f.ctx.footnotes);
+    }
+
+    #[test]
+    fn single_task_confirmation_declined() {
+        // needs_confirm: even a single task asks, without the diff.
+        let mut f = fixture("confirmation=on\n", &["1", "delete"]);
+        begin_console_override("no\n");
+        let rc = f.run(&CmdDelete::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown, "Delete task 1 'one'? (yes/no) Task not deleted.\n");
+        assert_eq!(f.task(ONE).get("status"), "pending");
+    }
+
+    #[test]
+    fn single_task_confirmation_accepted() {
+        let mut f = fixture("confirmation=on\n", &["1", "delete"]);
+        begin_console_override("yes\n");
+        let rc = f.run(&CmdDelete::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 0);
+        assert_eq!(shown, "Delete task 1 'one'? (yes/no) ");
+        assert_eq!(f.task(ONE).get("status"), "deleted");
+    }
+
+    #[test]
+    fn bulk_quit_stops_the_loop() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1-2", "delete"]);
+        begin_console_override("quit\n");
+        let rc = f.run(&CmdDelete::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown, "Delete task 1 'one'? (yes/no/all/quit) Task not deleted.\n");
+        assert_eq!(f.task(TWO).get("status"), "pending");
+    }
+
+    #[test]
+    fn bulk_all_deletes_every_task() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1-2", "delete"]);
+        begin_console_override("all\n");
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        end_console_override();
+        assert_eq!(f.task(ONE).get("status"), "deleted");
+        assert_eq!(f.task(TWO).get("status"), "deleted");
+    }
+
+    #[test]
+    fn child_with_confirmation_yes_deletes_siblings_and_parent() {
+        let mut f = fixture("recurrence.confirmation=yes\n", &[CHILD1, "delete"]);
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        for uuid in [PARENT, CHILD1, CHILD2] {
+            let t = f.task(uuid);
+            assert_eq!(t.get("status"), "deleted", "{uuid}");
+            assert!(t.has("end"), "{uuid}");
+        }
+        // The parent mask records the deleted children.
+        assert_eq!(f.task(PARENT).get("mask"), "XX");
+    }
+
+    #[test]
+    fn child_with_confirmation_no_deletes_only_the_child() {
+        let mut f = fixture("recurrence.confirmation=no\n", &[CHILD1, "delete"]);
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        assert_eq!(f.task(CHILD1).get("status"), "deleted");
+        assert_eq!(f.task(CHILD2).get("status"), "pending");
+        assert_eq!(f.task(PARENT).get("status"), "recurring");
+    }
+
+    #[test]
+    fn template_with_prompt_deletes_children() {
+        let mut f = fixture("recurrence.confirmation=prompt\n", &[PARENT, "delete"]);
+        begin_console_override("yes\n");
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        let shown = end_console_override();
+        assert_eq!(shown, format!("{STRING_CMD_DELETE_CONFIRM_R} (yes/no) "));
+        for uuid in [PARENT, CHILD1, CHILD2] {
+            assert_eq!(f.task(uuid).get("status"), "deleted", "{uuid}");
+        }
+    }
+
+    #[test]
+    fn template_with_prompt_declined_keeps_children() {
+        let mut f = fixture("recurrence.confirmation=prompt\n", &[PARENT, "delete"]);
+        begin_console_override("no\n");
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        end_console_override();
+        assert_eq!(f.task(PARENT).get("status"), "deleted");
+        assert_eq!(f.task(CHILD1).get("status"), "pending");
+        assert_eq!(f.task(CHILD2).get("status"), "pending");
+    }
+
+    #[test]
+    fn project_change_footnoted() {
+        let mut f = fixture("verbose=project\n", &["1", "delete"]);
+        assert_eq!(f.run(&CmdDelete::new()).unwrap(), 0);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m
+                == "The project 'home' has changed.  Project 'home' is 0% complete (0 of 0 tasks remaining)."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+}
