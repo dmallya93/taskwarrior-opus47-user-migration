@@ -188,12 +188,16 @@ fn no_command_with_empty_default_command() {
 
 #[test]
 fn stub_command_is_not_implemented() {
+    // `diagnostics` is still an unported stub. The dispatch path itself is
+    // also covered by a test-only stub command in the Context unit tests
+    // (`stub_command_dispatch_reports_not_implemented`), which keeps working
+    // once every command is ported.
     let env = Env::new("");
-    let output = env.task(&["news"]);
+    let output = env.task(&["diagnostics"]);
     assert_eq!(stdout(&output), "");
     assert_eq!(
         stderr(&output),
-        env.override_headers() + "Command 'news' is not yet implemented.\n"
+        env.override_headers() + "Command 'diagnostics' is not yet implemented.\n"
     );
     assert_eq!(output.status.code(), Some(2));
 }
@@ -202,12 +206,186 @@ fn stub_command_is_not_implemented() {
 fn no_override_headers_without_taskrc_taskdata() {
     let env = Env::new("");
     std::fs::copy(env.rc(), env.home().join(".taskrc")).unwrap();
-    let output = env.command(&["news"]).output().unwrap();
-    assert_eq!(
-        stderr(&output),
-        "Command 'news' is not yet implemented.\n"
-    );
+    let output = env.command(&["calc"]).output().unwrap();
+    assert_eq!(stderr(&output), "No expression to evaluate.\n");
     assert_eq!(output.status.code(), Some(2));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CmdNews.cpp
+
+/// The `wait_for_enter` prompt and the escapes that erase it.
+const NEWS_PRESS_ENTER: &str = "\nPress enter to continue..\x1b[2K\x1b[A\x1b[2K";
+
+/// `task <args>` (TASKRC/TASKDATA set) with `stdin` as input.
+fn task_with_stdin(env: &Env, args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = env
+        .command(args)
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn news_non_interactive_shows_all_unread_and_records_version() {
+    // stdin at end of input: every wait returns at once.
+    let env = Env::new("");
+    let output = env.task(&["news"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), env.override_headers());
+    let out = stdout(&output);
+    // Not a TTY, so no colour - but the banner is bold regardless, as in C++.
+    assert!(out.starts_with(concat!(
+        "\x1b[1m\n",
+        "================================================\n",
+        "Taskwarrior 2.6.0 through 3.5.0 Release Highlights\n",
+        "================================================\n",
+        "\x1b[0m\n(1/7) New data model and sync backend (3.0.0)\n",
+        "\nPress enter to continue..\x1b[2K\x1b[A\x1b[2K",
+        "  What changed in 3.0.0?\n",
+        "The sync functionality for Taskwarrior has been rewritten entirely, and no longer\n"
+    )), "{out:?}");
+    for title in [
+        "\n(2/7) Purging Tasks, Manually or Automatically (3.1.0)\n",
+        "\n(3/7) Improved 'task news' (3.1.0)\n",
+        "\n(4/7) `task info` Journal Restored (3.2.0)\n",
+        "\n(5/7) AWS S3 Sync (3.3.0)\n",
+        "\n(6/7) Read-Only Access (3.4.0)\n",
+        "\n(7/7) Scheduled attribute of recurring tasks (3.5.0)\n",
+    ] {
+        assert!(out.contains(title), "{title:?} in {out:?}");
+    }
+    assert!(out.ends_with(&format!(
+        "that assume the old behavior.\n\n\n{NEWS_PRESS_ENTER}Thank you for catching up on the new features!\n{NEWS_PRESS_ENTER}"
+    )), "{out:?}");
+    // Two waits per item, plus the final one.
+    assert_eq!(out.matches("Press enter to continue..").count(), 15);
+
+    // news.version was rewritten in place.
+    let rc = std::fs::read_to_string(env.rc()).unwrap();
+    assert!(rc.contains("\nnews.version=3.5.0\n"), "{rc}");
+    assert!(!rc.contains("2.6.0"), "{rc}");
+
+    // Now up to date: nothing but the bold notice and one wait.
+    let output = env.task(&["news"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!("\x1b[1mYou are up to date!\n\x1b[0m{NEWS_PRESS_ENTER}")
+    );
+    assert_eq!(std::fs::read_to_string(env.rc()).unwrap(), rc);
+
+    // ...and custom reports no longer nag.
+    let output = env.task(&["rc.verbose=footnote", "next"]);
+    assert_eq!(stderr(&output), "No matches.\n");
+}
+
+#[test]
+fn news_interactive_pages_with_enter() {
+    let env = Env::new("news.version=3.4.0\n");
+    // The rc now holds news.version twice; both lines are rewritten.
+    let output = task_with_stdin(&env, &["rc.verbose=nothing", "news"], "\n\n\n");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            concat!(
+                "\x1b[1m\n",
+                "================================================\n",
+                "Taskwarrior 3.4.0 through 3.5.0 Release Highlights\n",
+                "================================================\n",
+                "\x1b[0m",
+                "\n(1/1) Scheduled attribute of recurring tasks (3.5.0)\n",
+                "{p}",
+                "  What changed in 3.5.0?\n",
+                "The `scheduled` attribute is now updated for new instances of recurring tasks\n",
+                "Previously, the value of `scheduled` for a recurring task was copied from the\n",
+                "parent task without modification. It is now offset from the recurrence time\n",
+                "just like `wait`. While this fixes a bug, it may interact poorly with any hooks\n",
+                "that assume the old behavior.\n\n\n",
+                "{p}",
+                "Thank you for catching up on the new features!\n",
+                "{p}"
+            ),
+            p = NEWS_PRESS_ENTER
+        )
+    );
+    let rc = std::fs::read_to_string(env.rc()).unwrap();
+    assert_eq!(rc.matches("news.version=3.5.0\n").count(), 2, "{rc}");
+}
+
+#[test]
+fn news_colors_headers_with_forcecolor() {
+    let env = Env::new("news.version=3.4.0\n");
+    let output = env.task(&[
+        "rc._forcecolor=on",
+        "rc.color.header=green",
+        "rc.color.footnote=red",
+        "rc.verbose=nothing",
+        "news",
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let out = stdout(&output);
+    assert!(out.contains(
+        "\n(1/1) \x1b[1m\x1b[32mScheduled attribute of recurring tasks (3.5.0)\n\x1b[0m\x1b[0m"
+    ), "{out:?}");
+    assert!(out.contains("  \x1b[4mWhat changed in 3.5.0?\n\x1b[0m\x1b[31mThe `scheduled` attribute is now updated for new instances of recurring tasks\n\x1b[0m"), "{out:?}");
+}
+
+#[test]
+fn news_sigint_while_waiting() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let env = Env::new("news.version=3.4.0\n");
+    let mut child = env
+        .command(&["rc._forcecolor=on", "rc.color.footnote=red", "news"])
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let _stdin = child.stdin.take().unwrap(); // kept open: the wait blocks
+    let mut out = child.stdout.take().unwrap();
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    while !String::from_utf8_lossy(&seen).contains("Press enter to continue..") {
+        let n = out.read(&mut buf).unwrap();
+        assert!(n > 0, "{}", String::from_utf8_lossy(&seen));
+        seen.extend_from_slice(&buf[..n]);
+    }
+    // SAFETY: signalling our own child process.
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGINT);
+    }
+    out.read_to_end(&mut seen).unwrap();
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&seen).ends_with(concat!(
+        "\nPress enter to continue..",
+        "\n\nCome back and read about new features later!\n",
+        "\x1b[31m\nIf you enjoy Taskwarrior, please consider supporting the project at:\n",
+        "    https://github.com/sponsors/GothenburgBitFactory/\n\x1b[0m"
+    )), "{:?}", String::from_utf8_lossy(&seen));
+    // Interrupted: news.version is unchanged.
+    assert!(std::fs::read_to_string(env.rc()).unwrap().contains("news.version=3.4.0"));
 }
 
 #[test]

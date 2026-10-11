@@ -999,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 66] = [
+    const PORTED: [&str; 67] = [
         "_columns",
         "_config",
         "_context",
@@ -1050,6 +1050,7 @@ mod tests {
         "information",
         "log",
         "modify",
+        "news",
         "prepend",
         "projects",
         "purge",
@@ -1372,10 +1373,12 @@ mod tests {
                     | "tags"
                     | "_tags"
                     | "udas"
+                    | "news"
             ) {
                 // These read the replica (or, for `_zshattributes` and
-                // `_columns`, the column registry Context::initialize builds);
-                // covered end to end in tests/cli.rs.
+                // `_columns`, the column registry Context::initialize builds;
+                // `news` waits on stdin and rewrites the rc file); covered in
+                // their own unit tests and end to end in tests/cli.rs.
                 continue;
             }
             if keyword == "colors" {
