@@ -4514,3 +4514,174 @@ fn ghistory_colour_bar_wider_than_offset() {
     assert_eq!(rc, 0);
     assert!(out.contains("\n2015 January   2 +\n"), "{out:?}");
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// summary / timesheet / stats
+
+/// A frozen 2021-06-15 12:00:00 UTC scenario: pending `one` (a.b, +x),
+/// started `two` (a, due 06-20), `three` (c, done today), logged `four`
+/// (a.b.c, 06-02 to 06-08), pending `five` (+x +y) and deleted `six`
+/// (depends on `one`). Returns `None` when `faketime` is not installed.
+fn graphs_env() -> Option<Env> {
+    let env = Env::new("defaultwidth=80\ndetection=off\nconfirmation=off\ndateformat=Y-M-D\n");
+    for args in [
+        &["add", "one", "entry:2021-06-01", "project:a.b", "+x"][..],
+        &["add", "two", "entry:2021-06-03", "project:a", "due:2021-06-20"],
+        &["2", "start"],
+        &["add", "three", "entry:2021-06-05", "project:c"],
+        &["3", "done"],
+        &["log", "four", "entry:2021-06-02", "end:2021-06-08", "project:a.b.c"],
+        &["add", "five", "entry:2021-06-04", "+y", "+x"],
+        &["add", "six", "entry:2021-06-06", "depends:1"],
+        &["description:six", "delete"],
+    ] {
+        let mut all = vec!["rc.verbose=nothing"];
+        all.extend_from_slice(args);
+        let output = faketime_task(&env, "2021-06-15 12:00:00", &all)?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    Some(env)
+}
+
+/// `faketime` `task <args>` at the report scenario time.
+fn graphs(env: &Env, args: &[&str]) -> (String, String, i32) {
+    let output = faketime_task(env, "2021-06-15 12:00:00", args).unwrap();
+    (
+        stdout(&output),
+        stderr(&output),
+        output.status.code().unwrap(),
+    )
+}
+
+/// `summary`: the project tree of pending projects with parents indented,
+/// remaining counts, average ages, % complete and the `=` bars; with
+/// `summary.all.projects` the completed-only projects too; colour bars use
+/// `color.summary.bar`/`background`. As in C++ the average age divides by
+/// every task of the project (`counter`), so the deleted `six` halves the
+/// `(none)` age although it adds nothing to the sum.
+#[test]
+fn summary_project_tree() {
+    let Some(env) = graphs_env() else {
+        return;
+    };
+    let (out, err, rc) = graphs(&env, &["rc.verbose=blank,footnote", "summary"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    assert_eq!(
+        out,
+        "
+Project Remaining Avg age Complete 0%                        100%
+------- --------- ------- -------- ------------------------------
+(none)          1      5d       0%
+a               2     11d      33% ==========
+  b             1     10d      50% ===============
+
+3 projects
+"
+    );
+
+    let (out, _, rc) = graphs(&env, &["rc.verbose=nothing", "rc.summary.all.projects=1", "summary"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("\n    c           0      6d     100% ==============================\n"), "{out}");
+    assert!(out.contains("\nc               0     10d     100% ==============================\n"), "{out}");
+    assert!(out.ends_with("\n5 projects\n"), "{out}");
+
+    let (out, _, _) = graphs(
+        &env,
+        &[
+            "rc.verbose=nothing",
+            "rc._forcecolor=on",
+            "rc.color.alternate=",
+            "rc.color.summary.bar=on red",
+            "rc.color.summary.background=on blue",
+            "project:a.b",
+            "summary",
+        ],
+    );
+    assert!(
+        out.contains("\x1b[41m               \x1b[0m\x1b[44m               \x1b[0m"),
+        "{out:?}"
+    );
+
+    let (out, err, rc) = graphs(&env, &["rc.verbose=nothing", "project:none", "summary"]);
+    assert_eq!((out.as_str(), err.as_str(), rc), ("No projects.\n", "", 1));
+}
+
+/// `timesheet`: the default 4-week filter, weekly blocks separated by a
+/// blank row, repeated week/date/day cells blanked, and the affected line.
+#[test]
+fn timesheet_weekly_blocks() {
+    let Some(env) = graphs_env() else {
+        return;
+    };
+    let (out, err, rc) = graphs(&env, &["rc.verbose=blank,affected", "rc.fontunderline=0", "timesheet"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let lines: Vec<&str> = out.lines().map(str::trim_end).collect();
+    assert_eq!(lines[0], "");
+    assert_eq!(lines[1], "Wk  Date       Day ID       Action    Project Due        Task");
+    assert!(lines[3].starts_with("W23 2021-06-08 Tue "), "{out}");
+    assert!(lines[3].ends_with(" Completed a.b.c              four"), "{out}");
+    assert_eq!(lines[4], "");
+    // `two` was started and `three` completed in the same (frozen) second:
+    // equal `_key`s keep the unstable C++ `std::sort` order, which follows
+    // the replica's load order, so either may come first. The second row of
+    // the week has blank week/date/day cells; the first one's day is blank
+    // too, as 06-08 was also a Tuesday.
+    let (started, completed) = if lines[5].contains("Started") { (5, 6) } else { (6, 5) };
+    let lead = |i: usize| if i == 5 { "W24 2021-06-15     " } else { "                   " };
+    assert!(lines[started].starts_with(lead(started)), "{out}");
+    assert!(lines[started].ends_with("2        Started   a       2021-06-20 two"), "{out}");
+    assert!(lines[completed].starts_with(lead(completed)), "{out}");
+    assert!(lines[completed].ends_with(" Completed c                  three"), "{out}");
+    assert_eq!(&lines[7..], ["", "2 completed, 1 started."]);
+
+    // An explicit filter replaces the default one.
+    let (out, _, rc) = graphs(&env, &["rc.verbose=affected", "description:four", "timesheet"]);
+    assert_eq!(rc, 0);
+    assert!(out.contains("four") && !out.contains("three"), "{out}");
+    assert!(out.ends_with("\n1 completed, 0 started.\n"), "{out}");
+}
+
+/// `stats`: status counts, tags/projects, blocked/blocking, replica undo and
+/// backlog counts, then the derived dates and averages.
+#[test]
+fn stats_database_statistics() {
+    let Some(env) = graphs_env() else {
+        return;
+    };
+    let (out, err, rc) = graphs(&env, &["rc.verbose=nothing", "stats"]);
+    assert_eq!((err.as_str(), rc), ("", 0));
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Category                   Data");
+    assert_eq!(lines[1], "-------------------------  ------------");
+    let expected = [
+        "Pending                    3",
+        "Waiting                    0",
+        "Recurring                  0",
+        "Completed                  2",
+        "Deleted                    1",
+        "Total                      6",
+        "Annotations                0",
+        "Unique tags                2",
+        "Projects                   4",
+        "Blocked tasks              0",
+        "Blocking tasks             0",
+    ];
+    assert_eq!(&lines[2..13], expected, "{out}");
+    assert!(lines[13].starts_with("Undo transactions          "), "{out}");
+    assert!(lines[14].starts_with("Sync backlog transactions  "), "{out}");
+    assert_eq!(
+        &lines[15..],
+        [
+            "Tasks tagged               33.3%",
+            "Oldest task                2021-06-01",
+            "Newest task                2021-06-06",
+            "Task used for              5d",
+            "Task added every           20h",
+            "Task completed every       2d",
+            "Task deleted every         5d",
+            "Average time pending       11d",
+            "Average desc length        3 characters",
+        ],
+        "{out}"
+    );
+}
