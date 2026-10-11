@@ -5096,3 +5096,214 @@ fn context_filter_and_write_context_application() {
     quiet(&["context", "none"]);
     assert_eq!(quiet(&["count"]), "4\n");
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// `edit` (CmdEdit.cpp) with scripted editors.
+
+/// `task rc.verbose=<verbose> <args>` with `TASKRC`/`TASKDATA`, `VISUAL` and
+/// `EDITOR` removed unless given in `vars`, and `stdin` piped in.
+fn edit_task(env: &Env, args: &[&str], vars: &[(&str, &str)], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut command = env.command(args);
+    command
+        .env("TASKRC", env.rc())
+        .env("TASKDATA", env.data())
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (name, value) in vars {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// Writes an executable `/bin/sh` editor script `name` and returns its path.
+fn editor_script(env: &Env, name: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = env.path(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path.display().to_string()
+}
+
+/// An environment with one task; returns it and the edit temp file name.
+fn edit_env() -> (Env, String) {
+    let env = Env::new("verbose=footnote\nconfirmation=off\n");
+    let output = env.task(&["add", "hello", "project:x", "+t"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let uuid = stdout(&env.task(&["_get", "1.uuid"]));
+    let file = format!("task.{}.task", &uuid[..8]);
+    (env, file)
+}
+
+#[test]
+fn edit_scripted_editor_modifies_task() {
+    let (env, file) = edit_env();
+    let editor = editor_script(
+        &env,
+        "ed.sh",
+        "sed -i -e 's/^  Project:.*/  Project: y/' -e 's/^  Description:.*/  Description: bye/' \
+         -e 's/^  Tags:.*/  Tags: u v/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Launching '{editor} \"{file}\"' now...\nEditing complete.\nEdits were detected.\n"
+        )
+    );
+    assert_eq!(
+        stderr(&output),
+        "Project modified.\nDescription modified.\n"
+    );
+    assert_eq!(
+        stdout(&env.task(&["_get", "1.project", "1.description", "1.tags"])),
+        "y bye u,v\n"
+    );
+    // The temp file is removed.
+    assert!(!env.data().join(&file).exists());
+}
+
+#[test]
+fn edit_without_changes_and_editor_precedence() {
+    let (env, file) = edit_env();
+    // $VISUAL wins over $EDITOR.
+    let output = edit_task(
+        &env,
+        &["1", "edit"],
+        &[("VISUAL", "true"), ("EDITOR", "false")],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!("Launching 'true \"{file}\"' now...\nEditing complete.\nNo edits were detected.\n")
+    );
+    // $EDITOR when $VISUAL is unset; rc.editor wins over both.
+    let output = edit_task(&env, &["1", "edit"], &[("EDITOR", "true")], "");
+    assert!(stdout(&output).starts_with("Launching 'true "));
+    let output = edit_task(&env, &["rc.editor=true", "1", "edit"], &[("VISUAL", "false")], "");
+    assert!(stdout(&output).starts_with("Launching 'true "));
+}
+
+#[test]
+fn edit_editor_failure_and_no_matches() {
+    let (env, file) = edit_env();
+    let editor = editor_script(&env, "fail.sh", "exit 3");
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0));
+    // The raw system () wait status, as C++ prints it.
+    assert_eq!(
+        stdout(&output),
+        format!("Launching '{editor} \"{file}\"' now...\nEditing failed with exit code 768.\n")
+    );
+    assert!(!env.data().join(&file).exists());
+
+    let output = edit_task(&env, &["rc.editor=true", "99", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "No matches.\n");
+}
+
+#[test]
+fn edit_already_being_edited() {
+    let (env, file) = edit_env();
+    std::fs::write(env.data().join(&file), "").unwrap();
+    let output = edit_task(&env, &["rc.editor=true", "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "Task is already being edited.\n");
+}
+
+#[test]
+fn edit_parse_error_declined_and_retried() {
+    let (env, file) = edit_env();
+    let editor = editor_script(
+        &env,
+        "bad.sh",
+        "sed -i 's/^  Description:.*/  Description:/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "no\n");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "Launching '{editor} \"{file}\"' now...\nEditing complete.\nEdits were detected.\n\
+             Taskwarrior couldn't handle your edits.  Would you like to try again? (yes/no) "
+        )
+    );
+    assert_eq!(stderr(&output), "Error: Cannot remove description.\n");
+    assert_eq!(stdout(&env.task(&["_get", "1.description"])), "hello\n");
+    assert!(!env.data().join(&file).exists());
+
+    // The second launch sees the preserved (broken) edits and fixes them.
+    let marker = env.path("second");
+    let editor = editor_script(
+        &env,
+        "retry.sh",
+        &format!(
+            "if [ -e '{m}' ]; then grep -q '^  Description:$' \"$1\" && \
+             sed -i 's/^  Description:.*/  Description: fixed/' \"$1\"; \
+             else touch '{m}'; sed -i 's/^  Description:.*/  Description:/' \"$1\"; fi",
+            m = marker.display()
+        ),
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "yes\n");
+    assert_eq!(output.status.code(), Some(0));
+    let launching = format!("Launching '{editor} \"{file}\"' now...\n");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "{launching}Editing complete.\nEdits were detected.\n\
+             Taskwarrior couldn't handle your edits.  Would you like to try again? (yes/no) \
+             {launching}Editing complete.\nEdits were detected.\n"
+        )
+    );
+    assert_eq!(
+        stderr(&output),
+        "Error: Cannot remove description.\nDescription modified.\n"
+    );
+    assert_eq!(stdout(&env.task(&["_get", "1.description"])), "fixed\n");
+}
+
+#[test]
+fn edit_annotations_dependencies_and_udas() {
+    let (env, _file) = edit_env();
+    assert!(env.task(&["add", "other"]).status.success());
+    assert!(env
+        .task(&["1", "annotate", "keep me"])
+        .status
+        .success());
+    let editor = editor_script(
+        &env,
+        "ed.sh",
+        "sed -i -e 's/^  Dependencies:.*/  Dependencies: 2/' \
+         -e 's/^  UDA priority:.*/  UDA priority: H/' \"$1\"",
+    );
+    let rc = format!("rc.editor={editor}");
+    let output = edit_task(&env, &[&rc, "1", "edit"], &[], "");
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "UDA priority modified.\n");
+    let uuid2 = stdout(&env.task(&["_get", "2.uuid"]));
+    assert_eq!(
+        stdout(&env.task(&["_get", "1.depends", "1.priority", "1.annotations.count"])),
+        format!("{} H 1\n", uuid2.trim_end())
+    );
+}

@@ -999,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 65] = [
+    const PORTED: [&str; 66] = [
         "_columns",
         "_config",
         "_context",
@@ -1034,6 +1034,7 @@ mod tests {
         "denotate",
         "done",
         "duplicate",
+        "edit",
         "export",
         "ghistory.annual",
         "ghistory.daily",
@@ -1344,6 +1345,7 @@ mod tests {
                     | "append"
                     | "prepend"
                     | "duplicate"
+                    | "edit"
                     | "import"
                     | "import-v2"
                     | "undo"
