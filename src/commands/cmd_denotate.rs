@@ -195,3 +195,142 @@ impl Command for CmdDenotate {
         Ok(rc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const TWO: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+    const THREE: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+
+    /// ID 1 has the annotations "foo bar" (older) and "foo" (newer); ID 2
+    /// has none; ID 3 has "foo".
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z","project":"home","annotations":[{"entry":"20260101T000000Z","description":"foo bar"},{"entry":"20260102T000000Z","description":"foo"}]}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000002","description":"two","status":"pending","entry":"20260101T000000Z"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000003","description":"three","status":"pending","entry":"20260101T000000Z","annotations":[{"entry":"20260101T000000Z","description":"foo"}]}"#,
+    ];
+
+    fn fixture(rc_lines: &str, args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, &format!("confirmation=off\n{rc_lines}"), args)
+    }
+
+    fn annotations(f: &mut CommandFixture, uuid: &str) -> Vec<String> {
+        f.task(uuid).get_annotations().values().cloned().collect()
+    }
+
+    #[test]
+    fn exact_match_wins_over_earlier_partial_match() {
+        let mut f = fixture("", &["1", "denotate", "foo"]);
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 0);
+        assert_eq!(annotations(&mut f, ONE), vec!["foo bar".to_string()]);
+    }
+
+    #[test]
+    fn partial_match_removes_first_containing_annotation() {
+        let mut f = fixture("", &["1", "denotate", "bar"]);
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 0);
+        assert_eq!(annotations(&mut f, ONE), vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn words_are_joined_into_one_pattern() {
+        let mut f = fixture("", &["1", "denotate", "foo", "bar"]);
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 0);
+        assert_eq!(annotations(&mut f, ONE), vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn case_insensitive_partial_match() {
+        let mut f = fixture("search.case.sensitive=no\n", &["1", "denotate", "BAR"]);
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 0);
+        assert_eq!(annotations(&mut f, ONE), vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn case_sensitive_no_match() {
+        let mut f = fixture("search.case.sensitive=yes\n", &["1", "denotate", "BAR"]);
+        begin_console_override("");
+        let rc = f.run(&CmdDenotate::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(
+            shown,
+            "Did not find any matching annotation to be deleted for 'BAR'.\n"
+        );
+        assert_eq!(annotations(&mut f, ONE).len(), 2);
+    }
+
+    #[test]
+    fn task_without_annotations_is_an_error() {
+        let mut f = fixture("", &["2", "denotate", "foo"]);
+        let err = f.run(&CmdDenotate::new()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "The specified task has no annotations that can be deleted."
+        );
+        assert!(annotations(&mut f, TWO).is_empty());
+    }
+
+    #[test]
+    fn no_tasks_specified() {
+        let mut f = fixture("", &["99", "denotate", "foo"]);
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 1);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "No tasks specified."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+
+    #[test]
+    fn declined_permission_returns_1() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1", "3", "denotate", "foo"]);
+        begin_console_override("no\nno\n");
+        let rc = f.run(&CmdDenotate::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert!(
+            shown.contains("Denotate task 1 'one'? (yes/no/all/quit) Task not denotated.\n"),
+            "{shown}"
+        );
+        assert_eq!(shown.matches("Task not denotated.").count(), 2, "{shown}");
+        assert_eq!(annotations(&mut f, ONE).len(), 2);
+        assert_eq!(annotations(&mut f, THREE).len(), 1);
+    }
+
+    #[test]
+    fn bulk_quit_stops_the_loop() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1", "3", "denotate", "foo"]);
+        begin_console_override("quit\n");
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 1);
+        let shown = end_console_override();
+        assert_eq!(shown.matches("Task not denotated.").count(), 1, "{shown}");
+        assert_eq!(annotations(&mut f, THREE).len(), 1);
+    }
+
+    #[test]
+    fn bulk_all_denotates_every_task() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1", "3", "denotate", "foo"]);
+        begin_console_override("all\n");
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 0);
+        end_console_override();
+        assert_eq!(annotations(&mut f, ONE), vec!["foo bar".to_string()]);
+        assert!(annotations(&mut f, THREE).is_empty());
+    }
+
+    #[test]
+    fn project_change_footnoted() {
+        let mut f = fixture("verbose=project\n", &["1", "denotate", "foo"]);
+        assert_eq!(f.run(&CmdDenotate::new()).unwrap(), 0);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m
+                == "Project 'home' is 0% complete (1 task remaining)."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+}

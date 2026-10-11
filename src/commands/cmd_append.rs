@@ -163,3 +163,151 @@ impl Command for CmdAppend {
         Ok(rc)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const TWO: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+    const PARENT: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    const CHILD1: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+    const CHILD2: &str = "bbbbbbbb-0000-4000-8000-000000000003";
+
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z","project":"home"}"#,
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000002","description":"two","status":"pending","entry":"20260101T000000Z"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000001","description":"rec","status":"recurring","entry":"20260101T000000Z","due":"20260101T000000Z","recur":"daily","mask":"--"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000002","description":"rec","status":"pending","entry":"20260101T000000Z","due":"20260101T000000Z","recur":"daily","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"0"}"#,
+        r#"{"uuid":"bbbbbbbb-0000-4000-8000-000000000003","description":"rec","status":"pending","entry":"20260101T000000Z","due":"20260102T000000Z","recur":"daily","parent":"bbbbbbbb-0000-4000-8000-000000000001","imask":"1"}"#,
+    ];
+
+    fn fixture(rc_lines: &str, args: &[&str]) -> CommandFixture {
+        CommandFixture::new(SEED, &format!("confirmation=off\n{rc_lines}"), args)
+    }
+
+    fn applied(f: &mut CommandFixture, uuid: &str) -> bool {
+        f.task(uuid).get("description").ends_with(" note")
+    }
+
+    #[test]
+    fn applies_the_text() {
+        let mut f = fixture("", &["2", "append", "note"]);
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        assert!(applied(&mut f, TWO));
+        assert!(!applied(&mut f, ONE));
+    }
+
+    #[test]
+    fn missing_text_is_an_error() {
+        let mut f = fixture("", &["2", "append"]);
+        let err = f.run(&CmdAppend::new()).unwrap_err();
+        assert_eq!(err.to_string(), "Additional text must be provided.");
+        assert!(!applied(&mut f, TWO));
+    }
+
+    #[test]
+    fn no_tasks_specified() {
+        let mut f = fixture("", &["99", "append", "note"]);
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 1);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m == "No tasks specified."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+
+    #[test]
+    fn recurrence_confirmation_yes_changes_siblings_and_parent() {
+        let mut f = fixture("recurrence.confirmation=yes\n", &[CHILD1, "append", "note"]);
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        for uuid in [PARENT, CHILD1, CHILD2] {
+            assert!(applied(&mut f, uuid), "{uuid}");
+        }
+    }
+
+    #[test]
+    fn recurrence_confirmation_no_changes_only_the_task() {
+        let mut f = fixture("recurrence.confirmation=no\n", &[CHILD1, "append", "note"]);
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        assert!(applied(&mut f, CHILD1));
+        assert!(!applied(&mut f, CHILD2));
+        assert!(!applied(&mut f, PARENT));
+    }
+
+    #[test]
+    fn recurrence_confirmation_prompt_asks() {
+        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "append", "note"]);
+        begin_console_override("yes\n");
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        let shown = end_console_override();
+        assert_eq!(
+            shown,
+            "This is a recurring task.  Do you want to append to all pending recurrences of this same task? (yes/no) "
+        );
+        assert!(applied(&mut f, CHILD2));
+        assert!(applied(&mut f, PARENT));
+    }
+
+    #[test]
+    fn recurrence_confirmation_prompt_declined() {
+        let mut f = fixture("recurrence.confirmation=prompt\n", &[CHILD1, "append", "note"]);
+        begin_console_override("no\n");
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        end_console_override();
+        assert!(applied(&mut f, CHILD1));
+        assert!(!applied(&mut f, CHILD2));
+        assert!(!applied(&mut f, PARENT));
+    }
+
+    #[test]
+    fn declined_permission_returns_1() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1", "2", "append", "note"]);
+        begin_console_override("no\nno\n");
+        let rc = f.run(&CmdAppend::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert!(
+            shown.contains("Append to task 2 'two'? (yes/no/all/quit) Task not appended.\n"),
+            "{shown}"
+        );
+        assert_eq!(shown.matches("Task not appended.").count(), 2, "{shown}");
+        assert!(!applied(&mut f, TWO));
+    }
+
+    #[test]
+    fn bulk_quit_stops_the_loop() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1", "2", "append", "note"]);
+        begin_console_override("quit\n");
+        let rc = f.run(&CmdAppend::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 1);
+        assert_eq!(shown.matches("Task not appended.").count(), 1, "{shown}");
+        assert!(!applied(&mut f, ONE));
+        assert!(!applied(&mut f, TWO));
+    }
+
+    #[test]
+    fn bulk_all_changes_every_task() {
+        let mut f = fixture("confirmation=on\nbulk=2\n", &["1", "2", "append", "note"]);
+        begin_console_override("all\n");
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        end_console_override();
+        assert!(applied(&mut f, ONE));
+        assert!(applied(&mut f, TWO));
+    }
+
+    #[test]
+    fn project_change_footnoted() {
+        let mut f = fixture("verbose=project\n", &["1", "append", "note"]);
+        assert_eq!(f.run(&CmdAppend::new()).unwrap(), 0);
+        assert!(
+            f.ctx.footnotes.iter().any(|m| m
+                == "Project 'home' is 0% complete (1 task remaining)."),
+            "{:?}",
+            f.ctx.footnotes
+        );
+    }
+}
