@@ -7,7 +7,8 @@
 
 use crate::columns::col_type_string::ColumnTypeString;
 use crate::columns::column::{
-    column_base, label_prefix, render_string_left, render_string_right, strings, Column, ModifyEnv, RenderEnv,
+    column_base, label_prefix, render_string_left, render_string_right, strings, Column, ModifyEnv,
+    RenderEnv,
 };
 use crate::error::{Result, TwError};
 use crate::shared::color::Color;
@@ -38,8 +39,15 @@ impl ColumnDepends {
         parent.base.style = "list".to_string();
         parent.base.label = STRING_COLUMN_LABEL_DEP.to_string();
         parent.base.styles = strings(&["list", "count", "indicator"]);
-        parent.base.examples = vec!["1 2 10".to_string(), "[3]".to_string(), config.get("dependency.indicator")];
-        ColumnDepends { parent, hyphenate: false }
+        parent.base.examples = vec![
+            "1 2 10".to_string(),
+            "[3]".to_string(),
+            config.get("dependency.indicator"),
+        ];
+        ColumnDepends {
+            parent,
+            hyphenate: false,
+        }
     }
 }
 
@@ -138,7 +146,12 @@ impl Column for ColumnDepends {
         if !deptasks.is_empty() {
             let style = self.style();
             if style == "indicator" {
-                render_string_right(lines, width, color, &env.config().get("dependency.indicator"));
+                render_string_right(
+                    lines,
+                    width,
+                    color,
+                    &env.config().get("dependency.indicator"),
+                );
             } else if style == "count" {
                 render_string_right(lines, width, color, &format!("[{}]", deptasks.len() as i32));
             } else if style == "default" || style == "list" {
@@ -208,7 +221,10 @@ impl Column for ColumnDepends {
             }
             // ID range
             else if let Some((lower, upper)) = hyphen.and_then(|hyphen| {
-                Some((extract_long_integer(&dep[..hyphen])?, extract_long_integer(&dep[hyphen + 1..])?))
+                Some((
+                    extract_long_integer(&dep[..hyphen])?,
+                    extract_long_integer(&dep[hyphen + 1..])?,
+                ))
             }) {
                 for i in lower..=upper {
                     // C++ passes the `long` to `addDependency (int)`.
@@ -227,7 +243,10 @@ impl Column for ColumnDepends {
                     env.add_dependency_id(task, lower as i32)?;
                 }
             } else {
-                return Err(TwError::Message(format("Invalid dependency value: '{1}'", &[&dep])));
+                return Err(TwError::Message(format(
+                    "Invalid dependency value: '{1}'",
+                    &[&dep],
+                )));
             }
         }
 
@@ -287,8 +306,14 @@ mod tests {
         let mut env = env();
         let none = Color::new();
         let mut task = blocked(3);
-        assert_eq!(run("depends", &mut task, 9, &none, &mut env), ((3, 8), vec!["3 12 100 ".to_string()]));
-        assert_eq!(run("depends.list", &mut task, 8, &none, &mut env), ((3, 8), vec!["3 12 100".to_string()]));
+        assert_eq!(
+            run("depends", &mut task, 9, &none, &mut env),
+            ((3, 8), vec!["3 12 100 ".to_string()])
+        );
+        assert_eq!(
+            run("depends.list", &mut task, 8, &none, &mut env),
+            ((3, 8), vec!["3 12 100".to_string()])
+        );
         // Wrapped at word boundaries, each line padded to the width.
         assert_eq!(
             run("depends.list", &mut task, 4, &none, &mut env),
@@ -300,7 +325,10 @@ mod tests {
         );
         let red = Color::parse("red").unwrap();
         let mut one = blocked(1);
-        assert_eq!(run("depends", &mut one, 2, &red, &mut env), ((1, 1), vec!["\x1b[31m3 \x1b[0m".to_string()]));
+        assert_eq!(
+            run("depends", &mut one, 2, &red, &mut env),
+            ((1, 1), vec!["\x1b[31m3 \x1b[0m".to_string()])
+        );
     }
 
     #[test]
@@ -308,10 +336,22 @@ mod tests {
         let mut env = env();
         let none = Color::new();
         let mut task = blocked(2);
-        assert_eq!(run("depends.count", &mut task, 3, &none, &mut env), ((3, 3), vec!["[2]".to_string()]));
-        assert_eq!(run("depends.count", &mut task, 5, &none, &mut env), ((3, 3), vec!["  [2]".to_string()]));
-        assert_eq!(run("depends.indicator", &mut task, 1, &none, &mut env), ((1, 1), vec!["D".to_string()]));
-        assert_eq!(run("depends.indicator", &mut task, 3, &none, &mut env), ((1, 1), vec!["  D".to_string()]));
+        assert_eq!(
+            run("depends.count", &mut task, 3, &none, &mut env),
+            ((3, 3), vec!["[2]".to_string()])
+        );
+        assert_eq!(
+            run("depends.count", &mut task, 5, &none, &mut env),
+            ((3, 3), vec!["  [2]".to_string()])
+        );
+        assert_eq!(
+            run("depends.indicator", &mut task, 1, &none, &mut env),
+            ((1, 1), vec!["D".to_string()])
+        );
+        assert_eq!(
+            run("depends.indicator", &mut task, 3, &none, &mut env),
+            ((1, 1), vec!["  D".to_string()])
+        );
         env.config.set("dependency.indicator", "\u{2192}\u{2192}");
         assert_eq!(
             run("depends.indicator", &mut task, 2, &none, &mut env),
@@ -329,8 +369,20 @@ mod tests {
         let mut gone = Task::new();
         gone.set("dep_00000000-0000-4000-8000-0000000000ff", "x");
         for style in ["list", "count", "indicator"] {
-            assert_eq!(run(&format!("depends.{style}"), &mut unblocked, 5, &none, &mut env), ((0, 0), vec![]));
-            assert_eq!(run(&format!("depends.{style}"), &mut gone, 5, &none, &mut env), ((0, 0), vec![]));
+            assert_eq!(
+                run(
+                    &format!("depends.{style}"),
+                    &mut unblocked,
+                    5,
+                    &none,
+                    &mut env
+                ),
+                ((0, 0), vec![])
+            );
+            assert_eq!(
+                run(&format!("depends.{style}"), &mut gone, 5, &none, &mut env),
+                ((0, 0), vec![])
+            );
         }
     }
 
@@ -340,9 +392,15 @@ mod tests {
         assert!(is_valid_uuid_prefix("abcdef01-234"));
         assert!(is_valid_uuid_prefix("f30cb9c3-3fc0-483f-bfb2-3bf134f00694"));
         assert!(!is_valid_uuid_prefix("abcdef0"));
-        assert!(!is_valid_uuid_prefix("abcdef012"), "1..3 trailing chars do not match");
+        assert!(
+            !is_valid_uuid_prefix("abcdef012"),
+            "1..3 trailing chars do not match"
+        );
         assert!(!is_valid_uuid_prefix("ABCDEF01"));
-        assert!(!is_valid_uuid_prefix("abcdef01-3fc0-483f-bfb2-3bf134f00694x"), "more than 28 trailing chars");
+        assert!(
+            !is_valid_uuid_prefix("abcdef01-3fc0-483f-bfb2-3bf134f00694x"),
+            "more than 28 trailing chars"
+        );
         assert!(!is_valid_uuid_prefix("abcdefg1"));
     }
 }

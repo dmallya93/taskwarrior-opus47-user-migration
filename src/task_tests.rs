@@ -30,13 +30,18 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new(), diags: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+            diags: Vec::new(),
+        }
     }
 
     fn ok(&mut self, expression: bool, name: &str) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -61,7 +66,12 @@ impl UnitTest {
 
     /// Fails on any failed assertion, then checks the executed count.
     fn finish(&self, expected: usize) {
-        assert!(self.failures.is_empty(), "{}\n{}", self.failures.join("\n"), self.diags.join("\n"));
+        assert!(
+            self.failures.is_empty(),
+            "{}\n{}",
+            self.failures.join("\n"),
+            self.diags.join("\n")
+        );
         assert_eq!(self.counter, expected, "number of assertions executed");
     }
 }
@@ -92,8 +102,16 @@ impl Upstream {
 
         let dir = TempDir::new().unwrap();
         let mut ctx = Context::new();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
-        Upstream { ctx, _dir: dir, attributes, env: Some(env), _lock: lock }
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
+        Upstream {
+            ctx,
+            _dir: dir,
+            attributes,
+            env: Some(env),
+            _lock: lock,
+        }
     }
 }
 
@@ -124,18 +142,51 @@ fn t_test_cpp() {
     let context = &mut f.ctx;
     let mut test = UnitTest::new();
 
-    test.is(text_to_status("pending"), Status::Pending as i32, "textToStatus pending");
-    test.is(text_to_status("completed"), Status::Completed as i32, "textToStatus completed");
-    test.is(text_to_status("deleted"), Status::Deleted as i32, "textToStatus deleted");
-    test.is(text_to_status("recurring"), Status::Recurring as i32, "textToStatus recurring");
+    test.is(
+        text_to_status("pending"),
+        Status::Pending as i32,
+        "textToStatus pending",
+    );
+    test.is(
+        text_to_status("completed"),
+        Status::Completed as i32,
+        "textToStatus completed",
+    );
+    test.is(
+        text_to_status("deleted"),
+        Status::Deleted as i32,
+        "textToStatus deleted",
+    );
+    test.is(
+        text_to_status("recurring"),
+        Status::Recurring as i32,
+        "textToStatus recurring",
+    );
 
-    test.is(Task::status_to_text(Status::Pending), "pending", "statusToText pending");
-    test.is(Task::status_to_text(Status::Completed), "completed", "statusToText completed");
-    test.is(Task::status_to_text(Status::Deleted), "deleted", "statusToText deleted");
-    test.is(Task::status_to_text(Status::Recurring), "recurring", "statusToText recurring");
+    test.is(
+        Task::status_to_text(Status::Pending),
+        "pending",
+        "statusToText pending",
+    );
+    test.is(
+        Task::status_to_text(Status::Completed),
+        "completed",
+        "statusToText completed",
+    );
+    test.is(
+        Task::status_to_text(Status::Deleted),
+        "deleted",
+        "statusToText deleted",
+    );
+    test.is(
+        Task::status_to_text(Status::Recurring),
+        "recurring",
+        "statusToText recurring",
+    );
 
     // Task::operator==
-    let mut left = Task::from_input(context, "{\"one\":\"1\", \"two\":\"2\", \"three\":\"3\"}").unwrap();
+    let mut left =
+        Task::from_input(context, "{\"one\":\"1\", \"two\":\"2\", \"three\":\"3\"}").unwrap();
     let right = left.clone();
     test.ok(left == right, "left == right -> true");
     left.set("one", "1.0");
@@ -145,7 +196,11 @@ fn t_test_cpp() {
     // Task::set
     let mut task = Task::new();
     task.set("name", "value");
-    test.is(task.compose_json(context, false).unwrap(), "{\"name\":\"value\"}", "Task::set");
+    test.is(
+        task.compose_json(context, false).unwrap(),
+        "{\"name\":\"value\"}",
+        "Task::set",
+    );
 
     // Task::has
     test.ok(task.has("name"), "Task::has");
@@ -153,7 +208,11 @@ fn t_test_cpp() {
 
     // Task::get_int
     task.set_int("one", 1);
-    test.is(task.compose_json(context, false).unwrap(), r#"{"name":"value","one":"1"}"#, "Task::set");
+    test.is(
+        task.compose_json(context, false).unwrap(),
+        r#"{"name":"value","one":"1"}"#,
+        "Task::set",
+    );
     test.is(task.get_int("one"), 1, "Task::get_int");
 
     // Task::get_ulong
@@ -163,12 +222,20 @@ fn t_test_cpp() {
         r#"{"name":"value","one":"1","two":"4294967295"}"#,
         "Task::set",
     );
-    test.is(task.get_ulong("two") as usize, 4294967295usize, "Task::get_ulong");
+    test.is(
+        task.get_ulong("two") as usize,
+        4294967295usize,
+        "Task::get_ulong",
+    );
 
     // Task::remove
     task.remove("one");
     task.remove("two");
-    test.is(task.compose_json(context, false).unwrap(), "{\"name\":\"value\"}", "Task::remove");
+    test.is(
+        task.compose_json(context, false).unwrap(),
+        "{\"name\":\"value\"}",
+        "Task::remove",
+    );
 
     // Task::all
     test.is(task.all().len(), 1usize, "Task::all size");
@@ -218,7 +285,10 @@ fn t_test_cpp() {
 
     good = true;
     let mut t7 = Task::new();
-    match Task::from_input(context, r#"{"description":"DESC","entry":"20130602T224000Z","tags":["tag1","tag2"]}"#) {
+    match Task::from_input(
+        context,
+        r#"{"description":"DESC","entry":"20130602T224000Z","tags":["tag1","tag2"]}"#,
+    ) {
         Ok(parsed) => t7 = parsed,
         Err(e) => {
             test.diag(&e.to_string());
@@ -257,15 +327,25 @@ fn tw_2689_test_cpp() {
     );
     let mut json = Task::from_input(context, sample).unwrap();
     let mut value = json.get("uuid");
-    test.is(value.as_str(), "00000000-0000-0000-0000-000000000000", "json [..] uuid");
+    test.is(
+        value.as_str(),
+        "00000000-0000-0000-0000-000000000000",
+        "json [..] uuid",
+    );
     value = json.get("depends");
     test.is(
         value.as_str(),
         "92a40a34-37f3-4785-8ca1-ff89cfbfd105,e08e35fa-e42b-4de0-acc4-518fca8f6365",
         "json [..] depends",
     );
-    test.ok(json.has("dep_92a40a34-37f3-4785-8ca1-ff89cfbfd105"), "json [..] dep attr");
-    test.ok(json.has("dep_e08e35fa-e42b-4de0-acc4-518fca8f6365"), "json [..] dep attr");
+    test.ok(
+        json.has("dep_92a40a34-37f3-4785-8ca1-ff89cfbfd105"),
+        "json [..] dep attr",
+    );
+    test.ok(
+        json.has("dep_e08e35fa-e42b-4de0-acc4-518fca8f6365"),
+        "json [..] dep attr",
+    );
 
     // depends in comma-delimited string from a taskserver (deprecated format)
     sample = concat!(
@@ -276,15 +356,25 @@ fn tw_2689_test_cpp() {
     );
     json = Task::from_input(context, sample).unwrap();
     value = json.get("uuid");
-    test.is(value.as_str(), "00000000-0000-0000-0000-000000000000", "json comma-separated uuid");
+    test.is(
+        value.as_str(),
+        "00000000-0000-0000-0000-000000000000",
+        "json comma-separated uuid",
+    );
     value = json.get("depends");
     test.is(
         value.as_str(),
         "92a40a34-37f3-4785-8ca1-ff89cfbfd105,e08e35fa-e42b-4de0-acc4-518fca8f6365",
         "json comma-separated depends",
     );
-    test.ok(json.has("dep_92a40a34-37f3-4785-8ca1-ff89cfbfd105"), "json comma-separated dep attr");
-    test.ok(json.has("dep_e08e35fa-e42b-4de0-acc4-518fca8f6365"), "json comma-separated dep attr");
+    test.ok(
+        json.has("dep_92a40a34-37f3-4785-8ca1-ff89cfbfd105"),
+        "json comma-separated dep attr",
+    );
+    test.ok(
+        json.has("dep_e08e35fa-e42b-4de0-acc4-518fca8f6365"),
+        "json comma-separated dep attr",
+    );
 
     // depends in a JSON array from a taskserver
     sample = concat!(
@@ -296,15 +386,25 @@ fn tw_2689_test_cpp() {
     );
     json = Task::from_input(context, sample).unwrap();
     value = json.get("uuid");
-    test.is(value.as_str(), "00000000-0000-0000-0000-000000000000", "json array uuid");
+    test.is(
+        value.as_str(),
+        "00000000-0000-0000-0000-000000000000",
+        "json array uuid",
+    );
     value = json.get("depends");
     test.is(
         value.as_str(),
         "92a40a34-37f3-4785-8ca1-ff89cfbfd105,e08e35fa-e42b-4de0-acc4-518fca8f6365",
         "json array depends",
     );
-    test.ok(json.has("dep_92a40a34-37f3-4785-8ca1-ff89cfbfd105"), "json array dep attr");
-    test.ok(json.has("dep_e08e35fa-e42b-4de0-acc4-518fca8f6365"), "json array dep attr");
+    test.ok(
+        json.has("dep_92a40a34-37f3-4785-8ca1-ff89cfbfd105"),
+        "json array dep attr",
+    );
+    test.ok(
+        json.has("dep_e08e35fa-e42b-4de0-acc4-518fca8f6365"),
+        "json array dep attr",
+    );
 
     test.finish(TW_2689_TEST_ASSERTIONS);
 }

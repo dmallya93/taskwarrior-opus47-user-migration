@@ -40,7 +40,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v03.get_bool(), false, "true xor 'foo' --> false");
 
     let v04 = Variant::from_bool(v0.op_xor(&v4));
-    t.is(v04.type_(), Type::Boolean, "true xor 1234567890 --> boolean");
+    t.is(
+        v04.type_(),
+        Type::Boolean,
+        "true xor 1234567890 --> boolean",
+    );
     t.is(v04.get_bool(), false, "true xor 1234567890 --> false");
 
     let v05 = Variant::from_bool(v0.op_xor(&v5));
@@ -89,7 +93,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v23.get_bool(), false, "3.14 xor 'foo' --> false");
 
     let v24 = Variant::from_bool(v2.op_xor(&v4));
-    t.is(v24.type_(), Type::Boolean, "3.14 xor 1234567890 --> boolean");
+    t.is(
+        v24.type_(),
+        Type::Boolean,
+        "3.14 xor 1234567890 --> boolean",
+    );
     t.is(v24.get_bool(), false, "3.14 xor 1234567890 --> false");
 
     let v25 = Variant::from_bool(v2.op_xor(&v5));
@@ -113,7 +121,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v33.get_bool(), false, "'foo' xor 'foo' --> false");
 
     let v34 = Variant::from_bool(v3.op_xor(&v4));
-    t.is(v34.type_(), Type::Boolean, "'foo' xor 1234567890 --> boolean");
+    t.is(
+        v34.type_(),
+        Type::Boolean,
+        "'foo' xor 1234567890 --> boolean",
+    );
     t.is(v34.get_bool(), false, "'foo' xor 1234567890 --> false");
 
     let v35 = Variant::from_bool(v3.op_xor(&v5));
@@ -121,7 +133,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v35.get_bool(), false, "'foo' xor 1200 --> false");
 
     let v40 = Variant::from_bool(v4.op_xor(&v0));
-    t.is(v40.type_(), Type::Boolean, "1234567890 xor true --> boolean");
+    t.is(
+        v40.type_(),
+        Type::Boolean,
+        "1234567890 xor true --> boolean",
+    );
     t.is(v40.get_bool(), false, "1234567890 xor true --> false");
 
     let v41 = Variant::from_bool(v4.op_xor(&v1));
@@ -129,19 +145,35 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v41.get_bool(), false, "1234567890 xor 42 --> false");
 
     let v42 = Variant::from_bool(v4.op_xor(&v2));
-    t.is(v42.type_(), Type::Boolean, "1234567890 xor 3.14 --> boolean");
+    t.is(
+        v42.type_(),
+        Type::Boolean,
+        "1234567890 xor 3.14 --> boolean",
+    );
     t.is(v42.get_bool(), false, "1234567890 xor 3.14 --> false");
 
     let v43 = Variant::from_bool(v4.op_xor(&v3));
-    t.is(v43.type_(), Type::Boolean, "1234567890 xor 'foo' --> boolean");
+    t.is(
+        v43.type_(),
+        Type::Boolean,
+        "1234567890 xor 'foo' --> boolean",
+    );
     t.is(v43.get_bool(), false, "1234567890 xor 'foo' --> false");
 
     let v44 = Variant::from_bool(v4.op_xor(&v4));
-    t.is(v44.type_(), Type::Boolean, "1234567890 xor 1234567890 --> boolean");
+    t.is(
+        v44.type_(),
+        Type::Boolean,
+        "1234567890 xor 1234567890 --> boolean",
+    );
     t.is(v44.get_bool(), false, "1234567890 xor 1234567890 --> false");
 
     let v45 = Variant::from_bool(v4.op_xor(&v5));
-    t.is(v45.type_(), Type::Boolean, "1234567890 xor 1200 --> boolean");
+    t.is(
+        v45.type_(),
+        Type::Boolean,
+        "1234567890 xor 1200 --> boolean",
+    );
     t.is(v45.get_bool(), false, "1234567890 xor 1200 --> false");
 
     let v50 = Variant::from_bool(v5.op_xor(&v0));
@@ -162,7 +194,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
 
     // As in the C++, the two checks below test v04 rather than v54.
     let _v54 = Variant::from_bool(v5.op_xor(&v4));
-    t.is(v04.type_(), Type::Boolean, "1200 xor 1234567890 --> boolean");
+    t.is(
+        v04.type_(),
+        Type::Boolean,
+        "1200 xor 1234567890 --> boolean",
+    );
     t.is(v04.get_bool(), false, "1200 xor 1234567890 --> false");
 
     let v55 = Variant::from_bool(v5.op_xor(&v5));

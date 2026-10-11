@@ -67,7 +67,10 @@ impl Command for CmdUrgency {
         let mut out = String::new();
         for task in &mut filtered {
             let urgency = task.urgency(context)?;
-            out.push_str(&format("task {1} urgency {2}", &[&task.identifier(false), &urgency]));
+            out.push_str(&format(
+                "task {1} urgency {2}",
+                &[&task.identifier(false), &urgency],
+            ));
             out.push('\n');
         }
 

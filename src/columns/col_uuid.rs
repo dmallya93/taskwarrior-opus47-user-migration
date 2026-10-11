@@ -5,7 +5,9 @@
 //! `ColumnUDAUUID` reuses these through its `parent`.
 
 use crate::columns::col_type_string::ColumnTypeString;
-use crate::columns::column::{column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::task::Task;
@@ -71,7 +73,11 @@ impl Column for ColumnUUID {
 impl ColumnUUID {
     /// C++ `ColumnUUID::measure` for the most-derived column `this` (its
     /// `_style`), so `ColumnUDAUUID` can delegate to it.
-    pub fn measure_uuid(this: &dyn Column, _task: &Task, _env: &mut dyn RenderEnv) -> Result<(usize, usize)> {
+    pub fn measure_uuid(
+        this: &dyn Column,
+        _task: &Task,
+        _env: &mut dyn RenderEnv,
+    ) -> Result<(usize, usize)> {
         // Mandatory attribute, no need to check the value.
         let style = this.style();
         if style == "default" || style == "long" {
@@ -103,7 +109,12 @@ impl ColumnUUID {
         } else if style == "short" {
             let value = task.get(this.name());
             let bytes = value.as_bytes();
-            render_string_left(lines, width, color, &String::from_utf8_lossy(&bytes[..bytes.len().min(8)]));
+            render_string_left(
+                lines,
+                width,
+                color,
+                &String::from_utf8_lossy(&bytes[..bytes.len().min(8)]),
+            );
         }
         Ok(())
     }
@@ -124,7 +135,9 @@ mod tests {
         task.set("uuid", UUID);
         let m = column.measure(&mut task, &mut env).unwrap();
         let mut lines = Vec::new();
-        column.render(&mut lines, &mut task, width, &Color::new(), &mut env).unwrap();
+        column
+            .render(&mut lines, &mut task, width, &Color::new(), &mut env)
+            .unwrap();
         (m, lines)
     }
 

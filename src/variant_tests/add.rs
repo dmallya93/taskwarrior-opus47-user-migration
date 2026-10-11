@@ -23,7 +23,6 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let v4 = Variant::from_time(1234567890, Type::Date)?;
     let v5 = Variant::from_time(1200, Type::Duration)?;
 
-
     // boolean + boolean  -> ERROR
     match v0.op_add(&v0) {
         Ok(_v00) => t.fail("true + true --> error"),
@@ -50,7 +49,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v04.type_(), Type::Date, "true + 1234567890 --> date");
     // C++ `t.is (time_t, "1234567891", ...)` resolves to `is (bool, bool, ...)`:
     // both arguments convert to bool (non-zero date, non-null pointer).
-    t.is(v04.get_date() != 0, true, "true + 1234567890 --> 1234567891");
+    t.is(
+        v04.get_date() != 0,
+        true,
+        "true + 1234567890 --> 1234567891",
+    );
 
     // boolean + duration -> duration
     let v05 = v0.op_add(&v5)?;
@@ -111,7 +114,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // real + date     -> date
     let v24 = v2.op_add(&v4)?;
     t.is(v24.type_(), Type::Date, "3.14 + 1234567890 --> date");
-    t.is(v24.get_date(), 1234567893, "3.14 + 1234567890 --> 1234567893");
+    t.is(
+        v24.get_date(),
+        1234567893,
+        "3.14 + 1234567890 --> 1234567893",
+    );
 
     // real + duration -> duration
     let v25 = v2.op_add(&v5)?;
@@ -142,11 +149,31 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let v34 = v3.op_add(&v4)?;
     t.is(v34.type_(), Type::String, "foo + 1234567890 --> string");
     let mut s = v34.get_string().to_string();
-    t.is(byte_at(&s, 7), i32::from(b'-'), "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss");
-    t.is(byte_at(&s, 10), i32::from(b'-'), "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss");
-    t.is(byte_at(&s, 13), i32::from(b'T'), "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss");
-    t.is(byte_at(&s, 16), i32::from(b':'), "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss");
-    t.is(byte_at(&s, 19), i32::from(b':'), "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss");
+    t.is(
+        byte_at(&s, 7),
+        i32::from(b'-'),
+        "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss",
+    );
+    t.is(
+        byte_at(&s, 10),
+        i32::from(b'-'),
+        "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss",
+    );
+    t.is(
+        byte_at(&s, 13),
+        i32::from(b'T'),
+        "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss",
+    );
+    t.is(
+        byte_at(&s, 16),
+        i32::from(b':'),
+        "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss",
+    );
+    t.is(
+        byte_at(&s, 19),
+        i32::from(b':'),
+        "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss",
+    );
     t.is(s.len(), 22, "foo + 1234567890 --> fooYYYY-MM-DDThh:mm:ss");
 
     // string + duration -> string
@@ -157,7 +184,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // date + boolean  -> date
     let v40 = v4.op_add(&v0)?;
     t.is(v40.type_(), Type::Date, "1234567890 + true --> date");
-    t.is(v40.get_date(), 1234567891, "1234567890 + true --> 1234567891");
+    t.is(
+        v40.get_date(),
+        1234567891,
+        "1234567890 + true --> 1234567891",
+    );
 
     // date + integer  -> date
     let v41 = v4.op_add(&v1)?;
@@ -167,17 +198,41 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // date + real     -> date
     let v42 = v4.op_add(&v2)?;
     t.is(v42.type_(), Type::Date, "1234567890 + 3.14 --> date");
-    t.is(v42.get_date(), 1234567893, "1234567890 + 3.14 --> 1234567893");
+    t.is(
+        v42.get_date(),
+        1234567893,
+        "1234567890 + 3.14 --> 1234567893",
+    );
 
     // date + string   -> string
     let v43 = v4.op_add(&v3)?;
     t.is(v43.type_(), Type::String, "1234567890 + foo --> string");
     s = v43.get_string().to_string();
-    t.is(byte_at(&s, 4), i32::from(b'-'), "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo");
-    t.is(byte_at(&s, 7), i32::from(b'-'), "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo");
-    t.is(byte_at(&s, 10), i32::from(b'T'), "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo");
-    t.is(byte_at(&s, 13), i32::from(b':'), "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo");
-    t.is(byte_at(&s, 16), i32::from(b':'), "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo");
+    t.is(
+        byte_at(&s, 4),
+        i32::from(b'-'),
+        "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo",
+    );
+    t.is(
+        byte_at(&s, 7),
+        i32::from(b'-'),
+        "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo",
+    );
+    t.is(
+        byte_at(&s, 10),
+        i32::from(b'T'),
+        "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo",
+    );
+    t.is(
+        byte_at(&s, 13),
+        i32::from(b':'),
+        "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo",
+    );
+    t.is(
+        byte_at(&s, 16),
+        i32::from(b':'),
+        "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo",
+    );
     t.is(s.len(), 22, "1234567890 + foo --> YYYY-MM-DDThh:mm:ssfoo");
 
     // date + date     -> ERROR
@@ -189,7 +244,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // date + duration -> date
     let v45 = v4.op_add(&v5)?;
     t.is(v45.type_(), Type::Date, "1234567890 + 1200 --> date");
-    t.is(v45.get_date(), 1234569090, "1234567890 + 1200 --> 1234569090");
+    t.is(
+        v45.get_date(),
+        1234569090,
+        "1234567890 + 1200 --> 1234569090",
+    );
 
     // duration + boolean  -> duration
     let v50 = v5.op_add(&v0)?;
@@ -214,7 +273,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // duration + date     -> date
     let v54 = v5.op_add(&v4)?;
     t.is(v54.type_(), Type::Date, "1200 + 1234567890 --> date");
-    t.is(v54.get_date(), 1234569090, "1200 + 1234567890 --> 1234569090");
+    t.is(
+        v54.get_date(),
+        1234569090,
+        "1200 + 1234567890 --> 1234569090",
+    );
 
     // duration + duration -> duration
     let v55 = v5.op_add(&v5)?;

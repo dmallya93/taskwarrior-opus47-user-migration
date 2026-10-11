@@ -117,9 +117,13 @@ fn strtol(text: &str, base: u32) -> i64 {
     let mut value: i64 = 0;
     while let Some(digit) = bytes.get(i).and_then(|&b| (b as char).to_digit(base)) {
         value = if negative {
-            value.saturating_mul(i64::from(base)).saturating_sub(i64::from(digit))
+            value
+                .saturating_mul(i64::from(base))
+                .saturating_sub(i64::from(digit))
         } else {
-            value.saturating_mul(i64::from(base)).saturating_add(i64::from(digit))
+            value
+                .saturating_mul(i64::from(base))
+                .saturating_add(i64::from(digit))
         };
         i += 1;
     }
@@ -237,7 +241,8 @@ impl Color {
         let mut fg_value: u64 = 0;
         let mut bg_value: u64 = 0;
 
-        let not_recognized = |word: &str| TwError::Message(format("The color '{1}' is not recognized.", &[&word]));
+        let not_recognized =
+            |word: &str| TwError::Message(format("The color '{1}' is not recognized.", &[&word]));
 
         let mut bg = false;
         for word in words {
@@ -460,7 +465,11 @@ impl Color {
             let bg = ((self.value & COLOR_BG) >> 8) as u32;
             self.value &= !COLOR_BG;
             self.value &= !COLOR_BRIGHT;
-            let index = if bright { bg.wrapping_add(7) } else { bg.wrapping_sub(1) };
+            let index = if bright {
+                bg.wrapping_add(7)
+            } else {
+                bg.wrapping_sub(1)
+            };
             self.value |= u64::from(index.wrapping_shl(8));
         }
 
@@ -610,7 +619,11 @@ impl Color {
                 result.push_str("48;5;");
                 result.push_str(&((self.value & COLOR_BG) >> 8).to_string());
             } else {
-                let base = if self.value & COLOR_BRIGHT != 0 { 99 } else { 39 };
+                let base = if self.value & COLOR_BRIGHT != 0 {
+                    99
+                } else {
+                    39
+                };
                 result.push_str(&(base + ((self.value & COLOR_BG) >> 8)).to_string());
             }
         }
@@ -638,7 +651,8 @@ impl Color {
         }
 
         // Only ASCII bytes end an escape sequence, so the result is valid UTF-8.
-        String::from_utf8(output).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        String::from_utf8(output)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 
     /// Static `Color::colorize (input, spec)`.
@@ -742,7 +756,11 @@ impl Color {
 
             if self.value & COLOR_HASBG != 0 {
                 separator(&mut result);
-                let base = if self.value & COLOR_BRIGHT != 0 { 99 } else { 39 };
+                let base = if self.value & COLOR_BRIGHT != 0 {
+                    99
+                } else {
+                    39
+                };
                 result.push_str(&(base + ((self.value & COLOR_BG) >> 8)).to_string());
             }
 
@@ -944,10 +962,18 @@ mod tests {
 
     impl UnitTest {
         fn new() -> Self {
-            UnitTest { counter: 0, failures: Vec::new() }
+            UnitTest {
+                counter: 0,
+                failures: Vec::new(),
+            }
         }
 
-        fn is<A: PartialEq<E> + Debug, E: Debug>(&mut self, actual: A, expected: E, name: impl AsRef<str>) {
+        fn is<A: PartialEq<E> + Debug, E: Debug>(
+            &mut self,
+            actual: A,
+            expected: E,
+            name: impl AsRef<str>,
+        ) {
             self.counter += 1;
             if actual != expected {
                 self.failures.push(format!(
@@ -974,33 +1000,89 @@ mod tests {
     /// `int main ()` of color.t.cpp.
     fn color_t(t: &mut UnitTest) {
         // Names matched to values.
-        t.is(color("").to_int(), Color::from_id(ColorId::Nocolor).to_int(), "''        == Color::nocolor");
-        t.is(color("black").to_int(), Color::from_id(ColorId::Black).to_int(), "'black'   == Color::black");
-        t.is(color("red").to_int(), Color::from_id(ColorId::Red).to_int(), "'red'     == Color::red");
-        t.is(color("green").to_int(), Color::from_id(ColorId::Green).to_int(), "'green'   == Color::green");
-        t.is(color("yellow").to_int(), Color::from_id(ColorId::Yellow).to_int(), "'yellow'  == Color::yellow");
-        t.is(color("blue").to_int(), Color::from_id(ColorId::Blue).to_int(), "'blue'    == Color::blue");
-        t.is(color("magenta").to_int(), Color::from_id(ColorId::Magenta).to_int(), "'magenta' == Color::magenta");
-        t.is(color("cyan").to_int(), Color::from_id(ColorId::Cyan).to_int(), "'cyan'    == Color::cyan");
-        t.is(color("white").to_int(), Color::from_id(ColorId::White).to_int(), "'white'   == Color::white");
+        t.is(
+            color("").to_int(),
+            Color::from_id(ColorId::Nocolor).to_int(),
+            "''        == Color::nocolor",
+        );
+        t.is(
+            color("black").to_int(),
+            Color::from_id(ColorId::Black).to_int(),
+            "'black'   == Color::black",
+        );
+        t.is(
+            color("red").to_int(),
+            Color::from_id(ColorId::Red).to_int(),
+            "'red'     == Color::red",
+        );
+        t.is(
+            color("green").to_int(),
+            Color::from_id(ColorId::Green).to_int(),
+            "'green'   == Color::green",
+        );
+        t.is(
+            color("yellow").to_int(),
+            Color::from_id(ColorId::Yellow).to_int(),
+            "'yellow'  == Color::yellow",
+        );
+        t.is(
+            color("blue").to_int(),
+            Color::from_id(ColorId::Blue).to_int(),
+            "'blue'    == Color::blue",
+        );
+        t.is(
+            color("magenta").to_int(),
+            Color::from_id(ColorId::Magenta).to_int(),
+            "'magenta' == Color::magenta",
+        );
+        t.is(
+            color("cyan").to_int(),
+            Color::from_id(ColorId::Cyan).to_int(),
+            "'cyan'    == Color::cyan",
+        );
+        t.is(
+            color("white").to_int(),
+            Color::from_id(ColorId::White).to_int(),
+            "'white'   == Color::white",
+        );
 
         // Auto upgrades.
         let mut c = color("red on color0");
-        t.is(c.to_string(), "color1 on color0", "upgrade red on color0 -> color1 on color0");
+        t.is(
+            c.to_string(),
+            "color1 on color0",
+            "upgrade red on color0 -> color1 on color0",
+        );
 
         c = color("color1 on black");
-        t.is(c.to_string(), "color1 on color0", "upgrade color1 on black -> color1 on color0");
+        t.is(
+            c.to_string(),
+            "color1 on color0",
+            "upgrade color1 on black -> color1 on color0",
+        );
 
         c = color("bold red on color0");
-        t.is(c.to_string(), "bold color1 on color0", "upgrade bold red on color0 -> bold color1 on color0");
+        t.is(
+            c.to_string(),
+            "bold color1 on color0",
+            "upgrade bold red on color0 -> bold color1 on color0",
+        );
 
         c = color("color1 on bright black");
-        t.is(c.to_string(), "color1 on color8", "upgrade color1 on bright black -> color1 on color8");
+        t.is(
+            c.to_string(),
+            "color1 on color8",
+            "upgrade color1 on bright black -> color1 on color8",
+        );
 
         // Simple blending.
         c = color("red");
         c.blend(&color("on white"));
-        t.is(c.to_string(), "red on white", "red + on white -> red on white");
+        t.is(
+            c.to_string(),
+            "red on white",
+            "red + on white -> red on white",
+        );
 
         c = color("bold underline red");
         c.blend(&color("on bright white"));
@@ -1013,46 +1095,142 @@ mod tests {
         // Blending with conflicts.
         c = color("red on white");
         c.blend(&color("on blue"));
-        t.is(c.to_string(), "red on blue", "red on white + on blue -> red on blue");
+        t.is(
+            c.to_string(),
+            "red on blue",
+            "red on white + on blue -> red on blue",
+        );
 
         c = color("red on white");
         c.blend(&color("blue on magenta"));
-        t.is(c.to_string(), "blue on magenta", "red on white + blue on magenta -> blue on magenta");
+        t.is(
+            c.to_string(),
+            "blue on magenta",
+            "red on white + blue on magenta -> blue on magenta",
+        );
 
         // Blending with upgrades.
         c = color("color1 on color0");
         c.blend(&color("blue"));
-        t.is(c.to_string(), "color4 on color0", "color1 on color0 + blue -> color4 on color0");
+        t.is(
+            c.to_string(),
+            "color4 on color0",
+            "color1 on color0 + blue -> color4 on color0",
+        );
 
         // Now the dumb show of every color and its code.
-        t.is(colorize("foo", "red"), "\x1b[31mfoo\x1b[0m", "red                -> ^[[31m");
-        t.is(colorize("foo", "bold red"), "\x1b[1;31mfoo\x1b[0m", "bold red           -> ^[[1;31m");
-        t.is(colorize("foo", "underline red"), "\x1b[4;31mfoo\x1b[0m", "underline red      -> ^[[4;31m");
-        t.is(colorize("foo", "underline bold red"), "\x1b[1;4;31mfoo\x1b[0m", "underline bold red -> ^[[1;4;31m");
+        t.is(
+            colorize("foo", "red"),
+            "\x1b[31mfoo\x1b[0m",
+            "red                -> ^[[31m",
+        );
+        t.is(
+            colorize("foo", "bold red"),
+            "\x1b[1;31mfoo\x1b[0m",
+            "bold red           -> ^[[1;31m",
+        );
+        t.is(
+            colorize("foo", "underline red"),
+            "\x1b[4;31mfoo\x1b[0m",
+            "underline red      -> ^[[4;31m",
+        );
+        t.is(
+            colorize("foo", "underline bold red"),
+            "\x1b[1;4;31mfoo\x1b[0m",
+            "underline bold red -> ^[[1;4;31m",
+        );
 
         // 16-color foregrounds.
         t.is(colorize("foo", ""), "foo", "''                 -> ''");
 
-        t.is(colorize("foo", "black"), "\x1b[30mfoo\x1b[0m", "black              -> ^[[30m");
-        t.is(colorize("foo", "red"), "\x1b[31mfoo\x1b[0m", "red                -> ^[[31m");
-        t.is(colorize("foo", "green"), "\x1b[32mfoo\x1b[0m", "green              -> ^[[32m");
-        t.is(colorize("foo", "yellow"), "\x1b[33mfoo\x1b[0m", "yellow             -> ^[[33m");
-        t.is(colorize("foo", "blue"), "\x1b[34mfoo\x1b[0m", "blue               -> ^[[34m");
-        t.is(colorize("foo", "magenta"), "\x1b[35mfoo\x1b[0m", "magenta            -> ^[[35m");
-        t.is(colorize("foo", "cyan"), "\x1b[36mfoo\x1b[0m", "cyan               -> ^[[36m");
-        t.is(colorize("foo", "white"), "\x1b[37mfoo\x1b[0m", "white              -> ^[[37m");
+        t.is(
+            colorize("foo", "black"),
+            "\x1b[30mfoo\x1b[0m",
+            "black              -> ^[[30m",
+        );
+        t.is(
+            colorize("foo", "red"),
+            "\x1b[31mfoo\x1b[0m",
+            "red                -> ^[[31m",
+        );
+        t.is(
+            colorize("foo", "green"),
+            "\x1b[32mfoo\x1b[0m",
+            "green              -> ^[[32m",
+        );
+        t.is(
+            colorize("foo", "yellow"),
+            "\x1b[33mfoo\x1b[0m",
+            "yellow             -> ^[[33m",
+        );
+        t.is(
+            colorize("foo", "blue"),
+            "\x1b[34mfoo\x1b[0m",
+            "blue               -> ^[[34m",
+        );
+        t.is(
+            colorize("foo", "magenta"),
+            "\x1b[35mfoo\x1b[0m",
+            "magenta            -> ^[[35m",
+        );
+        t.is(
+            colorize("foo", "cyan"),
+            "\x1b[36mfoo\x1b[0m",
+            "cyan               -> ^[[36m",
+        );
+        t.is(
+            colorize("foo", "white"),
+            "\x1b[37mfoo\x1b[0m",
+            "white              -> ^[[37m",
+        );
 
         // 16-color backgrounds.
-        t.is(colorize("foo", "on bright black"), "\x1b[100mfoo\x1b[0m", "on bright black    -> ^[[100m");
+        t.is(
+            colorize("foo", "on bright black"),
+            "\x1b[100mfoo\x1b[0m",
+            "on bright black    -> ^[[100m",
+        );
 
-        t.is(colorize("foo", "on black"), "\x1b[40mfoo\x1b[0m", "on black           -> ^[[40m");
-        t.is(colorize("foo", "on red"), "\x1b[41mfoo\x1b[0m", "on red             -> ^[[41m");
-        t.is(colorize("foo", "on green"), "\x1b[42mfoo\x1b[0m", "on green           -> ^[[42m");
-        t.is(colorize("foo", "on yellow"), "\x1b[43mfoo\x1b[0m", "on yellow          -> ^[[43m");
-        t.is(colorize("foo", "on blue"), "\x1b[44mfoo\x1b[0m", "on blue            -> ^[[44m");
-        t.is(colorize("foo", "on magenta"), "\x1b[45mfoo\x1b[0m", "on magenta         -> ^[[45m");
-        t.is(colorize("foo", "on cyan"), "\x1b[46mfoo\x1b[0m", "on cyan            -> ^[[46m");
-        t.is(colorize("foo", "on white"), "\x1b[47mfoo\x1b[0m", "on white           -> ^[[47m");
+        t.is(
+            colorize("foo", "on black"),
+            "\x1b[40mfoo\x1b[0m",
+            "on black           -> ^[[40m",
+        );
+        t.is(
+            colorize("foo", "on red"),
+            "\x1b[41mfoo\x1b[0m",
+            "on red             -> ^[[41m",
+        );
+        t.is(
+            colorize("foo", "on green"),
+            "\x1b[42mfoo\x1b[0m",
+            "on green           -> ^[[42m",
+        );
+        t.is(
+            colorize("foo", "on yellow"),
+            "\x1b[43mfoo\x1b[0m",
+            "on yellow          -> ^[[43m",
+        );
+        t.is(
+            colorize("foo", "on blue"),
+            "\x1b[44mfoo\x1b[0m",
+            "on blue            -> ^[[44m",
+        );
+        t.is(
+            colorize("foo", "on magenta"),
+            "\x1b[45mfoo\x1b[0m",
+            "on magenta         -> ^[[45m",
+        );
+        t.is(
+            colorize("foo", "on cyan"),
+            "\x1b[46mfoo\x1b[0m",
+            "on cyan            -> ^[[46m",
+        );
+        t.is(
+            colorize("foo", "on white"),
+            "\x1b[47mfoo\x1b[0m",
+            "on white           -> ^[[47m",
+        );
 
         // 256-color, basic colors.
         for i in 0..256 {
@@ -1078,7 +1256,8 @@ mod tests {
                     let code = 16 + (r * 36 + g * 6 + b);
                     let color = format!("rgb{r}{g}{b}");
                     let codes = format!("\x1b[38;5;{code}mfoo\x1b[0m");
-                    let description = format!("\x1b[38;5;{code}mfoo\x1b[0m: rgb{r}{g}{b} -> ^[[38;5;{code}m");
+                    let description =
+                        format!("\x1b[38;5;{code}mfoo\x1b[0m: rgb{r}{g}{b} -> ^[[38;5;{code}m");
 
                     t.is(colorize("foo", &color), codes, description);
                 }
@@ -1091,7 +1270,8 @@ mod tests {
                     let code = 16 + (r * 36 + g * 6 + b);
                     let color = format!("on rgb{r}{g}{b}");
                     let codes = format!("\x1b[48;5;{code}mfoo\x1b[0m");
-                    let description = format!("\x1b[48;5;{code}mfoo\x1b[0m: on rgb{r}{g}{b} -> ^[[48;5;{code}m");
+                    let description =
+                        format!("\x1b[48;5;{code}mfoo\x1b[0m: on rgb{r}{g}{b} -> ^[[48;5;{code}m");
 
                     t.is(colorize("foo", &color), codes, description);
                 }
@@ -1100,12 +1280,21 @@ mod tests {
 
         // 256-color, grays.
         // grey == gray.
-        t.is(colorize("foo", "grey0"), "\x1b[38;5;232mfoo\x1b[0m", "\x1b[38;5;232mfoo\x1b[0m: grey0 -> ^[[38;5;232m");
+        t.is(
+            colorize("foo", "grey0"),
+            "\x1b[38;5;232mfoo\x1b[0m",
+            "\x1b[38;5;232mfoo\x1b[0m: grey0 -> ^[[38;5;232m",
+        );
 
         for i in 0..24 {
             let color = format!("gray{i}");
             let codes = format!("\x1b[38;5;{}mfoo\x1b[0m", i + 232);
-            let description = format!("\x1b[38;5;{}mfoo\x1b[0m: gray{} -> ^[[38;5;{}m", i + 232, i, i + 232);
+            let description = format!(
+                "\x1b[38;5;{}mfoo\x1b[0m: gray{} -> ^[[38;5;{}m",
+                i + 232,
+                i,
+                i + 232
+            );
 
             t.is(colorize("foo", &color), codes, description);
         }
@@ -1113,7 +1302,12 @@ mod tests {
         for i in 0..24 {
             let color = format!("on gray{i}");
             let codes = format!("\x1b[48;5;{}mfoo\x1b[0m", i + 232);
-            let description = format!("\x1b[48;5;{}mfoo\x1b[0m: on gray{} -> ^[[48;5;{}m", i + 232, i, i + 232);
+            let description = format!(
+                "\x1b[48;5;{}mfoo\x1b[0m: on gray{} -> ^[[48;5;{}m",
+                i + 232,
+                i,
+                i + 232
+            );
 
             t.is(colorize("foo", &color), codes, description);
         }
@@ -1158,7 +1352,11 @@ mod tests {
         // std::string Color::strip (const std::string&);
         t.is(Color::strip(""), "", "Color::strip '' -> ''");
         t.is(Color::strip("foo"), "foo", "Color::strip 'foo' -> 'foo'");
-        t.is(Color::strip("f\x1b[1mo\x1b[0mo"), "foo", "Color::strip 'f<b>o</b>o' -> 'foo'");
+        t.is(
+            Color::strip("f\x1b[1mo\x1b[0mo"),
+            "foo",
+            "Color::strip 'f<b>o</b>o' -> 'foo'",
+        );
 
         // std::string Color::code () const;
         t.is(
@@ -1166,7 +1364,11 @@ mod tests {
             "\x1b[38;5;24m\x1b[48;5;11m",
             "Color::code 'rgb0123 on bright yellow' --> ^[[38;5;24m^[[48;5;11m",
         );
-        t.is(color("0x0F1E2D").code(), "\x1b[38;2;15;30;45m", "Color::code '0x0F1E2D' --> ^[[38;2;15;30;45m");
+        t.is(
+            color("0x0F1E2D").code(),
+            "\x1b[38;2;15;30;45m",
+            "Color::code '0x0F1E2D' --> ^[[38;2;15;30;45m",
+        );
 
         // std::string Color::end () const;
         t.is(color("red").end(), "\x1b[0m", "Color::end --> ^[[0m");
@@ -1183,7 +1385,10 @@ mod tests {
             t.counter,
             t.failures.join("\n")
         );
-        assert_eq!(t.counter, COLOR_T_ASSERTIONS, "number of assertions executed");
+        assert_eq!(
+            t.counter, COLOR_T_ASSERTIONS,
+            "number of assertions executed"
+        );
     }
 
     // Rust-only tests below (not part of color.t.cpp).
@@ -1198,16 +1403,31 @@ mod tests {
     #[test]
     fn attribute_only_and_inverse() {
         assert_eq!(colorize("x", "inverse"), "\x1b[7mx\x1b[0m");
-        assert_eq!(colorize("x", "bold underline inverse red on bright green"), "\x1b[1;4;7;31;102mx\x1b[0m");
-        assert_eq!(color("bold underline inverse red on bright green").code(), "\x1b[1;4;7;31;102m");
-        assert_eq!(color("bold underline inverse red on bright green").to_string(), "bold underline inverse red on bright green");
+        assert_eq!(
+            colorize("x", "bold underline inverse red on bright green"),
+            "\x1b[1;4;7;31;102mx\x1b[0m"
+        );
+        assert_eq!(
+            color("bold underline inverse red on bright green").code(),
+            "\x1b[1;4;7;31;102m"
+        );
+        assert_eq!(
+            color("bold underline inverse red on bright green").to_string(),
+            "bold underline inverse red on bright green"
+        );
         // "bright" without a background: C++ emits an empty SGR sequence.
         assert_eq!(colorize("x", "bright"), "\x1b[mx\x1b[0m");
         assert_eq!(color("bright").to_string(), "");
         // Bold is not emitted by code () in 256/24-bit mode.
         assert_eq!(color("bold underline color3").code(), "\x1b[4m\x1b[38;5;3m");
-        assert_eq!(color("inverse 0x010203 on 0x040506").code(), "\x1b[7m\x1b[38;2;1;2;3m\x1b[48;2;4;5;6m");
-        assert_eq!(color("0x0a1b2c on 0xFFFFFF").to_string(), "0x0a1b2c on 0xffffff");
+        assert_eq!(
+            color("inverse 0x010203 on 0x040506").code(),
+            "\x1b[7m\x1b[38;2;1;2;3m\x1b[48;2;4;5;6m"
+        );
+        assert_eq!(
+            color("0x0a1b2c on 0xFFFFFF").to_string(),
+            "0x0a1b2c on 0xffffff"
+        );
         assert_eq!(color("  RED   On  Blue ").to_string(), "red on blue");
         assert_eq!(color("none").to_int(), 0);
     }
@@ -1224,18 +1444,42 @@ mod tests {
 
     #[test]
     fn unrecognized() {
-        for bad in ["purple", "gray24", "gray-1", "rgb600", "rgb12", "rgb1234", "color256", "color-1", "0x1000000"] {
+        for bad in [
+            "purple",
+            "gray24",
+            "gray-1",
+            "rgb600",
+            "rgb12",
+            "rgb1234",
+            "color256",
+            "color-1",
+            "0x1000000",
+        ] {
             let err = Color::parse(bad).unwrap_err();
-            assert_eq!(err.to_string(), format!("The color '{bad}' is not recognized."));
+            assert_eq!(
+                err.to_string(),
+                format!("The color '{bad}' is not recognized.")
+            );
         }
-        assert_eq!(Color::parse("Purple").unwrap_err().to_string(), "The color 'purple' is not recognized.");
-        assert_eq!(Color::colorize_with("x", "red on mauve").unwrap_err().to_string(), "The color 'mauve' is not recognized.");
+        assert_eq!(
+            Color::parse("Purple").unwrap_err().to_string(),
+            "The color 'purple' is not recognized."
+        );
+        assert_eq!(
+            Color::colorize_with("x", "red on mauve")
+                .unwrap_err()
+                .to_string(),
+            "The color 'mauve' is not recognized."
+        );
     }
 
     #[test]
     fn value_constructor_masks() {
         assert_eq!(Color::from_value(0).value(), 0);
-        assert_eq!(Color::from_value(COLOR_HASFG | 2 | COLOR_24BIT_BG).value(), COLOR_HASFG | 2);
+        assert_eq!(
+            Color::from_value(COLOR_HASFG | 2 | COLOR_24BIT_BG).value(),
+            COLOR_HASFG | 2
+        );
         assert_eq!(
             Color::from_value(COLOR_24BIT | COLOR_HASFG | COLOR_256 | 0x123456).value(),
             COLOR_24BIT | COLOR_HASFG | 0x123456
@@ -1245,7 +1489,10 @@ mod tests {
             Color::from_ids(ColorId::Red, ColorId::Blue, true, true, true).to_string(),
             "bold underline red on bright blue"
         );
-        assert_eq!(Color::from_ids(ColorId::Nocolor, ColorId::Nocolor, true, false, false).code(), "\x1b[4m");
+        assert_eq!(
+            Color::from_ids(ColorId::Nocolor, ColorId::Nocolor, true, false, false).code(),
+            "\x1b[4m"
+        );
     }
 
     #[test]
@@ -1290,7 +1537,10 @@ mod tests {
         let c: Color = "bold red".parse().unwrap();
         assert_eq!(String::from(c), "bold red");
         assert_eq!(Color::try_from("on blue").unwrap().to_string(), "on blue");
-        assert_eq!(Color::try_from(&String::from("green")).unwrap().to_string(), "green");
+        assert_eq!(
+            Color::try_from(&String::from("green")).unwrap().to_string(),
+            "green"
+        );
         assert!("nope".parse::<Color>().is_err());
         assert_eq!(Color::from(ColorId::Red), Color::from_id(ColorId::Red));
         assert_eq!(Color::from(COLOR_HASFG | 3).to_string(), "green");

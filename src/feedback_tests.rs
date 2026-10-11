@@ -108,7 +108,14 @@ impl Fixture {
         full.extend_from_slice(list);
         full.push("count");
         let ctx = initialized(&full);
-        Fixture { ctx, _dir: dir, _mml: mml, _tz: tz, _env: env, _lock: lock }
+        Fixture {
+            ctx,
+            _dir: dir,
+            _mml: mml,
+            _tz: tz,
+            _env: env,
+            _lock: lock,
+        }
     }
 
     fn task(&mut self, uuid: &str) -> Task {
@@ -136,9 +143,18 @@ fn text(out: Vec<u8>) -> String {
 fn render_attribute_formats_date_columns() {
     let f = Fixture::new(&["rc.dateformat:Y-M-D"]);
     let (cols, cfg) = (&f.ctx.columns, &f.ctx.config);
-    assert_eq!(render_attribute(cols, cfg, "due", "1700000000", ""), "2023-11-14");
-    assert_eq!(render_attribute(cols, cfg, "due", "1700000000", "H:N:S"), "22:13:20");
-    assert_eq!(render_attribute(cols, cfg, "entry", "1700000000x", "D.M.Y"), "14.11.2023");
+    assert_eq!(
+        render_attribute(cols, cfg, "due", "1700000000", ""),
+        "2023-11-14"
+    );
+    assert_eq!(
+        render_attribute(cols, cfg, "due", "1700000000", "H:N:S"),
+        "22:13:20"
+    );
+    assert_eq!(
+        render_attribute(cols, cfg, "entry", "1700000000x", "D.M.Y"),
+        "14.11.2023"
+    );
 }
 
 #[test]
@@ -146,12 +162,21 @@ fn render_attribute_passes_other_values_through() {
     let f = Fixture::new(&[]);
     let (cols, cfg) = (&f.ctx.columns, &f.ctx.config);
     // Un-parseable dates (strtoll == 0) and empty values are unchanged.
-    assert_eq!(render_attribute(cols, cfg, "due", "tomorrow", ""), "tomorrow");
+    assert_eq!(
+        render_attribute(cols, cfg, "due", "tomorrow", ""),
+        "tomorrow"
+    );
     assert_eq!(render_attribute(cols, cfg, "due", "0", ""), "0");
     assert_eq!(render_attribute(cols, cfg, "due", "", "Y"), "");
     // Non-date and unknown columns.
-    assert_eq!(render_attribute(cols, cfg, "description", "1700000000", ""), "1700000000");
-    assert_eq!(render_attribute(cols, cfg, "nosuchcolumn", "1700000000", ""), "1700000000");
+    assert_eq!(
+        render_attribute(cols, cfg, "description", "1700000000", ""),
+        "1700000000"
+    );
+    assert_eq!(
+        render_attribute(cols, cfg, "nosuchcolumn", "1700000000", ""),
+        "1700000000"
+    );
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -318,7 +343,10 @@ fn backlog_needs_sync_setup_and_token() {
     let count = f.ctx.tdb2.num_local_changes().unwrap();
     assert!(count > 1);
     feedback_backlog(&mut f.ctx).unwrap();
-    assert_eq!(f.ctx.footnotes, [format!("There are {count} local changes.  Sync required.")]);
+    assert_eq!(
+        f.ctx.footnotes,
+        [format!("There are {count} local changes.  Sync required.")]
+    );
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -352,7 +380,10 @@ fn project_change_summaries() {
         "Project 'new' is 0% complete (0 of 0 tasks remaining)."
     );
     // No project: empty.
-    assert_eq!(on_project_change(&mut f.ctx, &project_task(""), true).unwrap(), "");
+    assert_eq!(
+        on_project_change(&mut f.ctx, &project_task(""), true).unwrap(),
+        ""
+    );
 }
 
 #[test]
@@ -374,7 +405,10 @@ fn project_change_pair() {
         on_project_change_pair(&mut f.ctx, &project_task(""), &project_task("solo")).unwrap(),
         "The project 'solo' has changed.  Project 'solo' is 0% complete (1 task remaining)."
     );
-    assert_eq!(on_project_change_pair(&mut f.ctx, &project_task(""), &project_task("")).unwrap(), "");
+    assert_eq!(
+        on_project_change_pair(&mut f.ctx, &project_task(""), &project_task("")).unwrap(),
+        ""
+    );
 }
 
 #[test]
@@ -383,10 +417,16 @@ fn expiration_message() {
     let mut task = project_task("");
     task.set("description", "gone");
     task.id = 7;
-    assert_eq!(on_expiration(&mut f.ctx, &task), "Task 7 'gone' expired and was deleted.");
+    assert_eq!(
+        on_expiration(&mut f.ctx, &task),
+        "Task 7 'gone' expired and was deleted."
+    );
     task.id = 0;
     task.set("uuid", "abcdef0123-4567");
-    assert_eq!(on_expiration(&mut f.ctx, &task), "Task abcdef01 'gone' expired and was deleted.");
+    assert_eq!(
+        on_expiration(&mut f.ctx, &task),
+        "Task abcdef01 'gone' expired and was deleted."
+    );
 
     drop(f);
     let mut f = Fixture::new(&["rc.verbose:nothing"]);

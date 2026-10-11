@@ -533,7 +533,11 @@ impl Cli2 {
 
             // Determine at which argument index does the task modification command
             // reside
-            let cmd_index = self.args.iter().position(|a| a.has_tag("CMD")).unwrap_or(self.args.len());
+            let cmd_index = self
+                .args
+                .iter()
+                .position(|a| a.has_tag("CMD"))
+                .unwrap_or(self.args.len());
 
             // Insert modifications after the command.
             self.add_args(&mods, cmd_index);
@@ -550,7 +554,12 @@ impl Cli2 {
     /// `writeable` ones; see [`Context::get_task_context`]).
     /// Disqualifiers include:
     ///   - filter contains ID or UUID
-    pub fn add_context(&mut self, ctx: &mut Context, readable: bool, writeable: bool) -> Result<()> {
+    pub fn add_context(
+        &mut self,
+        ctx: &mut Context,
+        readable: bool,
+        writeable: bool,
+    ) -> Result<()> {
         // Recursion block.
         if self.context_added {
             return Ok(());
@@ -574,7 +583,10 @@ impl Cli2 {
         // For readable contexts: Detect if UUID or ID is set, and bail out
         if readable {
             for a in &self.args {
-                if matches!(a.lextype, LexerType::uuid | LexerType::number | LexerType::set) {
+                if matches!(
+                    a.lextype,
+                    LexerType::uuid | LexerType::number | LexerType::set
+                ) {
                     ctx.debug(&format(
                         "UUID/ID argument found '{1}', not applying context.",
                         &[&a.attribute("raw")],
@@ -654,7 +666,11 @@ impl Cli2 {
     /// Takes the configuration and the Context debug sink (C++
     /// `Context::getContext ().debug`) rather than the Context, so commands
     /// can call it on `ctx.cli2` directly.
-    pub fn get_words(&self, config: &Configuration, debug_messages: &mut Vec<String>) -> Vec<String> {
+    pub fn get_words(
+        &self,
+        config: &Configuration,
+        debug_messages: &mut Vec<String>,
+    ) -> Vec<String> {
         let words: Vec<String> = self
             .args
             .iter()
@@ -678,7 +694,11 @@ impl Cli2 {
 
     /// C++ `CLI2::getMiscellaneous`: all the `MISCELLANEOUS` args.
     pub fn get_miscellaneous(&self) -> Vec<A2> {
-        self.args.iter().filter(|a| a.has_tag("MISCELLANEOUS")).cloned().collect()
+        self.args
+            .iter()
+            .filter(|a| a.has_tag("MISCELLANEOUS"))
+            .cloned()
+            .collect()
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -696,10 +716,17 @@ impl Cli2 {
 
         // Extract a list of entities for category.
         let mut options: Vec<&String> = Vec::new();
-        for e in self.entities.get(category).map(Vec::as_slice).unwrap_or(&[]) {
+        for e in self
+            .entities
+            .get(category)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+        {
             // Shortcut: if an exact match is found, success.
             if value == e {
-                self.canonical_cache.borrow_mut().insert(cache_key, value.to_string());
+                self.canonical_cache
+                    .borrow_mut()
+                    .insert(cache_key, value.to_string());
                 return Some(value.to_string());
             }
 
@@ -710,7 +737,9 @@ impl Cli2 {
         let matches = auto_complete(value, &options, minimum_match_length());
         if matches.len() == 1 {
             let canonical = matches[0].clone();
-            self.canonical_cache.borrow_mut().insert(cache_key, canonical.clone());
+            self.canonical_cache
+                .borrow_mut()
+                .insert(cache_key, canonical.clone());
             return Some(canonical);
         }
 
@@ -719,7 +748,10 @@ impl Cli2 {
 
     /// C++ `CLI2::getBinary`.
     pub fn get_binary(&self) -> String {
-        self.args.first().map(|a| a.attribute("raw")).unwrap_or_default()
+        self.args
+            .first()
+            .map(|a| a.attribute("raw"))
+            .unwrap_or_default()
     }
 
     /// C++ `CLI2::getCommand ()` (`canonical = true`).
@@ -863,7 +895,9 @@ impl Cli2 {
             let mut type_ = LexerType::word;
             let mut lex = Lexer::new(&raw);
             // Token goes to EOS, or quoted pairs automatically go to EOS.
-            if lex.token(&mut lexeme, &mut type_) && (lex.is_eos() || (quoted && type_ == LexerType::pair)) {
+            if lex.token(&mut lexeme, &mut type_)
+                && (lex.is_eos() || (quoted && type_ == LexerType::pair))
+            {
                 if !terminated && type_ == LexerType::separator {
                     terminated = true;
                 } else if terminated {
@@ -912,7 +946,12 @@ impl Cli2 {
 
                 cursor = 0;
                 let mut word = String::new();
-                if Lexer::read_word_quoted(&format!("{quote}{escaped}{quote}"), quote, &mut cursor, &mut word) {
+                if Lexer::read_word_quoted(
+                    &format!("{quote}{escaped}{quote}"),
+                    quote,
+                    &mut cursor,
+                    &mut word,
+                ) {
                     Lexer::dequote(&mut word);
                     let mut unknown = A2::new(&word, LexerType::word);
                     if Lexer::was_quoted(&raw) {
@@ -970,7 +1009,9 @@ impl Cli2 {
                     changes = true;
                 }
             } else if self.args[i].lextype == LexerType::pair {
-                if let Some(canonical) = self.canonicalize("pseudo", &self.args[i].attribute("name")) {
+                if let Some(canonical) =
+                    self.canonicalize("pseudo", &self.args[i].attribute("name"))
+                {
                     ctx.config.set(&canonical, self.args[i].attribute("value"));
                     changes = true;
 
@@ -1054,7 +1095,10 @@ impl Cli2 {
         }
 
         if counter >= SAFETY_VALVE_DEFAULT {
-            ctx.debug(&format("Nested alias limit of {1} reached.", &[&SAFETY_VALVE_DEFAULT]));
+            ctx.debug(&format(
+                "Nested alias limit of {1} reached.",
+                &[&SAFETY_VALVE_DEFAULT],
+            ));
         }
 
         if changes && debug_parser(ctx) {
@@ -1159,7 +1203,11 @@ impl Cli2 {
             //   Fi Mo --   task [Fi] <cmd> [Mo]
             //   Fi Mo Mi   Internally inconsistent
             //
-            match (c.accepts_filter(), c.accepts_modifications(), c.accepts_miscellaneous()) {
+            match (
+                c.accepts_filter(),
+                c.accepts_modifications(),
+                c.accepts_miscellaneous(),
+            ) {
                 (false, false, false) => {
                     // No commands were expected --> error.
                     return Err(TwError::Message(format(
@@ -1177,7 +1225,9 @@ impl Cli2 {
                 }
                 (false, true, true) | (true, true, true) => {
                     // Error: internally inconsistent.
-                    return Err(TwError::Message("Unknown error. Please report.".to_string()));
+                    return Err(TwError::Message(
+                        "Unknown error. Please report.".to_string(),
+                    ));
                 }
                 (true, false, false) => {
                     a.tag("FILTER");
@@ -1383,7 +1433,11 @@ impl Cli2 {
                 let raw = a.attribute("raw");
 
                 let mut op = A2::new(
-                    if raw.starts_with('+') { "_hastag_" } else { "_notag_" },
+                    if raw.starts_with('+') {
+                        "_hastag_"
+                    } else {
+                        "_notag_"
+                    },
                     LexerType::op,
                 );
                 op.tag("FILTER");
@@ -1499,7 +1553,11 @@ impl Cli2 {
                     //   date     --> yes
                     //   duration --> yes
                     let mut eval_supported = true;
-                    if ctx.columns.get(&canonical).is_some_and(|col| col.type_() == "string") {
+                    if ctx
+                        .columns
+                        .get(&canonical)
+                        .is_some_and(|col| col.type_() == "string")
+                    {
                         eval_supported = false;
                     }
 
@@ -1686,7 +1744,8 @@ impl Cli2 {
                     }
 
                     let raw = a.attribute("raw");
-                    previous_filter_arg_was_an_operator = a.lextype == LexerType::op && raw != "(" && raw != ")";
+                    previous_filter_arg_was_an_operator =
+                        a.lextype == LexerType::op && raw != "(" && raw != ")";
                 }
             }
 
@@ -1694,14 +1753,21 @@ impl Cli2 {
             // listed as a MODIFICATION.
             let command = self.get_command();
 
-            if self.id_ranges.is_empty() && filter_count == 0 && command != "add" && command != "log" {
+            if self.id_ranges.is_empty()
+                && filter_count == 0
+                && command != "add"
+                && command != "log"
+            {
                 for a in self.args.iter_mut() {
                     if a.has_tag("MODIFICATION") {
                         let raw = a.attribute("raw");
 
                         // For a number to be an ID, it must not contain any sign or floating
                         // point elements.
-                        if a.lextype == LexerType::number && !raw.contains('.') && !raw.contains('e') && !raw.contains('-')
+                        if a.lextype == LexerType::number
+                            && !raw.contains('.')
+                            && !raw.contains('e')
+                            && !raw.contains('-')
                         {
                             changes = true;
                             a.un_tag("MODIFICATION");
@@ -1781,7 +1847,8 @@ impl Cli2 {
             for a in &self.args {
                 if a.has_tag("FILTER") && a.lextype == LexerType::uuid {
                     changes = true;
-                    let mut pair = A2::new(&format!("uuid:{}", a.attribute("raw")), LexerType::pair);
+                    let mut pair =
+                        A2::new(&format!("uuid:{}", a.attribute("raw")), LexerType::pair);
                     pair.tag("FILTER");
                     pair.decompose();
                     reconstructed.push(pair);
@@ -1817,7 +1884,11 @@ impl Cli2 {
         let mut found_id = false;
         let mut reconstructed = Vec::new();
         for a in &self.args {
-            if matches!(a.lextype, LexerType::set | LexerType::number | LexerType::uuid) && a.has_tag("FILTER") {
+            if matches!(
+                a.lextype,
+                LexerType::set | LexerType::number | LexerType::uuid
+            ) && a.has_tag("FILTER")
+            {
                 if !found_id {
                     found_id = true;
                     changes = true;
@@ -1881,13 +1952,19 @@ impl Cli2 {
                             reconstructed.push(arg_id.clone());
                             reconstructed.push(op_gte.clone());
 
-                            reconstructed.push(filter_arg(if ascending { first } else { second }, LexerType::number));
+                            reconstructed.push(filter_arg(
+                                if ascending { first } else { second },
+                                LexerType::number,
+                            ));
 
                             reconstructed.push(op_and.clone());
                             reconstructed.push(arg_id.clone());
                             reconstructed.push(op_lte.clone());
 
-                            reconstructed.push(filter_arg(if ascending { second } else { first }, LexerType::number));
+                            reconstructed.push(filter_arg(
+                                if ascending { second } else { first },
+                                LexerType::number,
+                            ));
 
                             reconstructed.push(close_paren.clone());
                         }
@@ -2145,8 +2222,12 @@ impl Cli2 {
                     let c = &self.args[a];
                     let p_raw = p.attribute("raw");
                     let c_raw = c.attribute("raw");
-                    if (p.lextype != LexerType::op && c_raw == "(" && !self.is_empty_paren_expression(a, true))
-                        || (p_raw == ")" && c.lextype != LexerType::op && !self.is_empty_paren_expression(prev, false))
+                    if (p.lextype != LexerType::op
+                        && c_raw == "("
+                        && !self.is_empty_paren_expression(a, true))
+                        || (p_raw == ")"
+                            && c.lextype != LexerType::op
+                            && !self.is_empty_paren_expression(prev, false))
                         || (p_raw == ")"
                             && c_raw == "("
                             && !self.is_empty_paren_expression(a, true)
@@ -2245,7 +2326,10 @@ impl Cli2 {
                 let default_command = ctx.config.get("default.command");
                 // Deviation: C++ indexes `_original_args[0]` / `_args[0]`
                 // unconditionally; here an empty list is left alone.
-                if !default_command.is_empty() && !self.args.is_empty() && !self.original_args.is_empty() {
+                if !default_command.is_empty()
+                    && !self.args.is_empty()
+                    && !self.original_args.is_empty()
+                {
                     // Modify _args, _original_args to be:
                     //   <args0> [<def0> ...] <args1> [...]
 
@@ -2301,7 +2385,10 @@ fn lex_into(value: &str, list: &mut Vec<A2>) {
 /// the single ID `(element, element)`.
 fn push_id_range(id_ranges: &mut Vec<(String, String)>, element: &str) {
     match element.find('-') {
-        Some(hyphen) => id_ranges.push((element[..hyphen].to_string(), element[hyphen + 1..].to_string())),
+        Some(hyphen) => id_ranges.push((
+            element[..hyphen].to_string(),
+            element[hyphen + 1..].to_string(),
+        )),
         None => id_ranges.push((element.to_string(), element.to_string())),
     }
 }
@@ -2361,7 +2448,13 @@ mod tests {
         assert!(!get_data_location(&args(&["task"]), &mut data, &config));
         assert_eq!(data.data, "/from/config");
 
-        let a = args(&["task", "rc.data.location:/a", "rc.data.location=/b", "--", "rc.data.location:/c"]);
+        let a = args(&[
+            "task",
+            "rc.data.location:/a",
+            "rc.data.location=/b",
+            "--",
+            "rc.data.location:/c",
+        ]);
         assert!(get_data_location(&a, &mut data, &config));
         assert_eq!(data.data, "/b");
     }
@@ -2411,7 +2504,11 @@ mod tests {
     }
 
     fn find<'a>(ctx: &'a Context, raw: &str) -> &'a A2 {
-        ctx.cli2.args.iter().find(|a| a.attribute("raw") == raw).expect(raw)
+        ctx.cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == raw)
+            .expect(raw)
     }
 
     #[test]
@@ -2429,12 +2526,23 @@ mod tests {
 
         let pair = A2::new("pro:home", LexerType::pair);
         assert_eq!(
-            (pair.attribute("name"), pair.attribute("separator"), pair.attribute("value")),
+            (
+                pair.attribute("name"),
+                pair.attribute("separator"),
+                pair.attribute("value")
+            ),
             ("pro".to_string(), ":".to_string(), "home".to_string())
         );
 
         let sub = A2::new("/a/b/g", LexerType::substitution);
-        assert_eq!((sub.attribute("from"), sub.attribute("to"), sub.attribute("flags")), ("a".into(), "b".into(), "g".into()));
+        assert_eq!(
+            (
+                sub.attribute("from"),
+                sub.attribute("to"),
+                sub.attribute("flags")
+            ),
+            ("a".into(), "b".into(), "g".into())
+        );
         let pat = A2::new("/x/", LexerType::pattern);
         assert_eq!(pat.attribute("pattern"), "x");
 
@@ -2466,7 +2574,15 @@ mod tests {
         );
 
         let mut b = A2::new("w", LexerType::word);
-        for tag in ["BINARY", "CMD", "MODIFICATION", "MISCELLANEOUS", "RC", "CONFIG", "?"] {
+        for tag in [
+            "BINARY",
+            "CMD",
+            "MODIFICATION",
+            "MISCELLANEOUS",
+            "RC",
+            "CONFIG",
+            "?",
+        ] {
             b.tag(tag);
         }
         assert_eq!(
@@ -2486,7 +2602,11 @@ mod tests {
         let filter = Color::parse("black on rgb311").unwrap();
         assert_eq!(
             cli.dump("T"),
-            format!("\x1b[1mT\x1b[0m\n  _original_args\n    {} {}\n", gray.colorize("task"), filter.colorize("inserted"))
+            format!(
+                "\x1b[1mT\x1b[0m\n  _original_args\n    {} {}\n",
+                gray.colorize("task"),
+                filter.colorize("inserted")
+            )
         );
 
         cli.args.push(A2::new("task", LexerType::word));
@@ -2525,7 +2645,21 @@ mod tests {
     #[test]
     fn lexing_types_and_quoting() {
         let mut ctx = context();
-        parse(&mut ctx, &["task", "add", "foo bar", "don't stop", "it's", "pro:home", "+tag", "rc.x=1", "12"]).unwrap();
+        parse(
+            &mut ctx,
+            &[
+                "task",
+                "add",
+                "foo bar",
+                "don't stop",
+                "it's",
+                "pro:home",
+                "+tag",
+                "rc.x=1",
+                "12",
+            ],
+        )
+        .unwrap();
         assert_eq!(ctx.cli2.get_command(), "add");
 
         let binary = &ctx.cli2.args[0];
@@ -2560,7 +2694,13 @@ mod tests {
         for tag in ["CMD", "USESCONTEXT", "ALLOWSMODIFICATIONS"] {
             assert!(cmd.has_tag(tag), "{tag}");
         }
-        for tag in ["READONLY", "SHOWSID", "RUNSGC", "ALLOWSFILTER", "ALLOWSMISC"] {
+        for tag in [
+            "READONLY",
+            "SHOWSID",
+            "RUNSGC",
+            "ALLOWSFILTER",
+            "ALLOWSMISC",
+        ] {
             assert!(!cmd.has_tag(tag), "{tag}");
         }
 
@@ -2579,10 +2719,16 @@ mod tests {
         parse(&mut ctx, &["task", "add", "--", "+tag", "x", "pro:a", "--"]).unwrap();
         assert_eq!(ctx.cli2.get_command(), "add");
         let args = &ctx.cli2.args;
-        assert_eq!(raws(args), ["task", "add", "--", "+tag", "x", "pro:a", "--"]);
+        assert_eq!(
+            raws(args),
+            ["task", "add", "--", "+tag", "x", "pro:a", "--"]
+        );
         assert_eq!(args[2].lextype, LexerType::separator);
         assert!(args[2].has_tag("TERMINATED"));
-        assert!(!args[2].has_tag("MODIFICATION"), "the separator is not categorised");
+        assert!(
+            !args[2].has_tag("MODIFICATION"),
+            "the separator is not categorised"
+        );
         for a in &args[3..] {
             assert_eq!(a.lextype, LexerType::word, "{}", a.attribute("raw"));
             assert!(a.has_tag("TERMINATED") && a.has_tag("MODIFICATION"));
@@ -2597,12 +2743,21 @@ mod tests {
         parse(&mut ctx, &["task", "ll", "pro:a"]).unwrap();
         assert_eq!(ctx.cli2.get_command(), "count");
         // Only the ORIGINAL filter argument is parenthesized.
-        assert_eq!(raws(&ctx.cli2.args), ["task", "count", "rc.x=1", "+tag", "(", "pro:a", ")"]);
+        assert_eq!(
+            raws(&ctx.cli2.args),
+            ["task", "count", "rc.x=1", "+tag", "(", "pro:a", ")"]
+        );
         assert!(find(&ctx, "+tag").has_tag("FILTER"));
         assert!(find(&ctx, "rc.x=1").has_tag("CONFIG"));
         assert_eq!(find(&ctx, "+tag").lextype, LexerType::tag);
-        assert!(!find(&ctx, "+tag").has_tag("ORIGINAL"), "alias tokens are not ORIGINAL");
-        assert_eq!(raws(&ctx.cli2.original_args), ["task", "count", "rc.x=1", "+tag", "pro:a"]);
+        assert!(
+            !find(&ctx, "+tag").has_tag("ORIGINAL"),
+            "alias tokens are not ORIGINAL"
+        );
+        assert_eq!(
+            raws(&ctx.cli2.original_args),
+            ["task", "count", "rc.x=1", "+tag", "pro:a"]
+        );
         // 'count' uses context; none is set.
         assert_eq!(ctx.debug_messages, ["No context set"]);
 
@@ -2610,7 +2765,10 @@ mod tests {
         let mut ctx = context();
         ctx.cli2.alias("a", "a");
         parse(&mut ctx, &["task", "a", "count"]).unwrap();
-        assert_eq!(ctx.debug_messages, ["Nested alias limit of 10 reached.", "No context set"]);
+        assert_eq!(
+            ctx.debug_messages,
+            ["Nested alias limit of 10 reached.", "No context set"]
+        );
 
         // Original args after '--' are not expanded.
         let mut ctx = context();
@@ -2631,7 +2789,10 @@ mod tests {
         // Ambiguous ('con' is config/context): falls back to default.command.
         ctx.config.set("default.command", "");
         let err = parse(&mut ctx, &["task", "con"]).unwrap_err();
-        assert_eq!(err.to_string(), "You must specify a command or a task to modify.");
+        assert_eq!(
+            err.to_string(),
+            "You must specify a command or a task to modify."
+        );
 
         // Shorter than abbreviation.minimum.
         let old = minimum_match_length();
@@ -2661,7 +2822,10 @@ mod tests {
         assert_eq!(ctx.cli2.get_command(), "next");
         assert_eq!(raws(&ctx.cli2.args), ["task", "next", "limit:3", "pro:x"]);
         assert!(ctx.cli2.args[1].has_tag("DEFAULT") && ctx.cli2.args[2].has_tag("DEFAULT"));
-        assert_eq!(raws(&ctx.cli2.original_args), ["task", "next", "limit:3", "pro:x"]);
+        assert_eq!(
+            raws(&ctx.cli2.original_args),
+            ["task", "next", "limit:3", "pro:x"]
+        );
         // The pseudo attribute is applied (and, as in C++, not erased).
         assert_eq!(ctx.config.get("limit"), "3");
 
@@ -2685,16 +2849,44 @@ mod tests {
     #[test]
     fn demotion_and_canonical_names() {
         let mut ctx = context();
-        parse(&mut ctx, &["task", "add", "-tag", "+keep", "foo:bar", "due:tomorrow", "rc:x"]).unwrap();
-        assert_eq!(find(&ctx, "-tag").lextype, LexerType::word, "demoted for add");
+        parse(
+            &mut ctx,
+            &[
+                "task",
+                "add",
+                "-tag",
+                "+keep",
+                "foo:bar",
+                "due:tomorrow",
+                "rc:x",
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            find(&ctx, "-tag").lextype,
+            LexerType::word,
+            "demoted for add"
+        );
         assert_eq!(find(&ctx, "+keep").lextype, LexerType::tag);
-        assert_eq!(find(&ctx, "foo:bar").lextype, LexerType::word, "unknown name");
+        assert_eq!(
+            find(&ctx, "foo:bar").lextype,
+            LexerType::word,
+            "unknown name"
+        );
         assert_eq!(find(&ctx, "due:tomorrow").attribute("canonical"), "due");
-        assert_eq!(find(&ctx, "rc:x").attribute("canonical"), "", "rc: is left alone");
+        assert_eq!(
+            find(&ctx, "rc:x").attribute("canonical"),
+            "",
+            "rc: is left alone"
+        );
 
         let mut ctx = context();
         parse(&mut ctx, &["task", "-tag", "count"]).unwrap();
-        assert_eq!(find(&ctx, "-tag").lextype, LexerType::tag, "not demoted for count");
+        assert_eq!(
+            find(&ctx, "-tag").lextype,
+            LexerType::tag,
+            "not demoted for count"
+        );
     }
 
     #[test]
@@ -2702,25 +2894,41 @@ mod tests {
         let mut ctx = context();
         // modify: filter before the command, modifications after.
         parse(&mut ctx, &["task", "+a", "or", "+b", "modify", "pro:x"]).unwrap();
-        assert_eq!(raws(&ctx.cli2.args), ["task", "(", "+a", "or", "+b", ")", "modify", "pro:x"]);
+        assert_eq!(
+            raws(&ctx.cli2.args),
+            ["task", "(", "+a", "or", "+b", ")", "modify", "pro:x"]
+        );
         for raw in ["(", "+a", "or", "+b", ")"] {
             assert!(find(&ctx, raw).has_tag("FILTER"), "{raw}");
         }
         assert!(find(&ctx, "pro:x").has_tag("MODIFICATION"));
 
         // config: miscellaneous only; getWords returns them.
-        parse(&mut ctx, &["task", "rc:/x/rc", "config", "rc.a:1", "name", "b c", ""]).unwrap();
+        parse(
+            &mut ctx,
+            &["task", "rc:/x/rc", "config", "rc.a:1", "name", "b c", ""],
+        )
+        .unwrap();
         let mut debug = Vec::new();
-        assert_eq!(ctx.cli2.get_words(&ctx.config, &mut debug), ["name", "b c", ""]);
+        assert_eq!(
+            ctx.cli2.get_words(&ctx.config, &mut debug),
+            ["name", "b c", ""]
+        );
         assert!(debug.is_empty());
         assert_eq!(raws(&ctx.cli2.get_miscellaneous()), ["name", "b c", ""]);
 
         parse(&mut ctx, &["task", "config", "--", "rc.a=1", "--", "x"]).unwrap();
-        assert_eq!(ctx.cli2.get_words(&ctx.config, &mut debug), ["rc.a=1", "--", "x"]);
+        assert_eq!(
+            ctx.cli2.get_words(&ctx.config, &mut debug),
+            ["rc.a=1", "--", "x"]
+        );
 
         // A command that takes no arguments.
         let err = parse(&mut ctx, &["task", "version", "extra"]).unwrap_err();
-        assert_eq!(err.to_string(), "The 'version' command does not allow 'extra'.");
+        assert_eq!(
+            err.to_string(),
+            "The 'version' command does not allow 'extra'."
+        );
     }
 
     #[test]
@@ -2732,7 +2940,14 @@ mod tests {
         let mut debug = Vec::new();
         ctx.cli2.get_words(&config, &mut debug);
         let color = Color::parse("gray10 on gray4").unwrap();
-        assert_eq!(debug, [format!("CLI2::getWords {} {} ", color.colorize("a"), color.colorize("b"))]);
+        assert_eq!(
+            debug,
+            [format!(
+                "CLI2::getWords {} {} ",
+                color.colorize("a"),
+                color.colorize("b")
+            )]
+        );
     }
 
     #[test]
@@ -2772,23 +2987,38 @@ mod tests {
         // 'count' reads with context.
         parse(&mut ctx, &["task", "pro:a", "count"]).unwrap();
         assert!(ctx.cli2.context_added);
-        assert_eq!(raws(&ctx.cli2.original_args), ["task", "(", "+work", "or", "+w", ")", "pro:a", "count"]);
+        assert_eq!(
+            raws(&ctx.cli2.original_args),
+            ["task", "(", "+work", "or", "+w", ")", "pro:a", "count"]
+        );
         assert!(ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).count() >= 6);
-        assert_eq!(ctx.footnotes, ["Context 'work' set. Use 'task context none' to remove."]);
-        assert!(ctx.debug_messages.iter().any(|m| m == "Applying context 'work'"));
+        assert_eq!(
+            ctx.footnotes,
+            ["Context 'work' set. Use 'task context none' to remove."]
+        );
+        assert!(ctx
+            .debug_messages
+            .iter()
+            .any(|m| m == "Applying context 'work'"));
 
         // An ID disqualifies the read context.
         let mut ctx2 = context();
         ctx2.config = ctx.config.clone();
         parse(&mut ctx2, &["task", "1", "count"]).unwrap();
         assert!(!ctx2.cli2.context_added);
-        assert!(ctx2.debug_messages.iter().any(|m| m == "UUID/ID argument found '1', not applying context."));
+        assert!(ctx2
+            .debug_messages
+            .iter()
+            .any(|m| m == "UUID/ID argument found '1', not applying context."));
 
         // 'add' takes the write context as modifications after the command.
         let mut ctx3 = context();
         ctx3.config = ctx.config.clone();
         parse(&mut ctx3, &["task", "add", "x"]).unwrap();
-        assert_eq!(raws(&ctx3.cli2.original_args), ["task", "add", "+work", "x"]);
+        assert_eq!(
+            raws(&ctx3.cli2.original_args),
+            ["task", "add", "+work", "x"]
+        );
         assert!(find(&ctx3, "+work").has_tag("MODIFICATION"));
     }
 
@@ -2810,7 +3040,12 @@ mod tests {
     fn filter_context() -> Context {
         let mut ctx = context();
         ctx.config
-            .parse(crate::context::CONFIGURATION_DEFAULTS, 1, &[crate::context::task_rcdir()], "")
+            .parse(
+                crate::context::CONFIGURATION_DEFAULTS,
+                1,
+                &[crate::context::task_rcdir()],
+                "",
+            )
             .unwrap();
         crate::columns::column::factory_all(&mut ctx.columns, &ctx.config).unwrap();
         let names: Vec<String> = ctx.columns.keys().cloned().collect();
@@ -2838,7 +3073,12 @@ mod tests {
     }
 
     fn filter_types(ctx: &Context) -> Vec<LexerType> {
-        ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).map(|a| a.lextype).collect()
+        ctx.cli2
+            .args
+            .iter()
+            .filter(|a| a.has_tag("FILTER"))
+            .map(|a| a.lextype)
+            .collect()
     }
 
     fn words(text: &str) -> Vec<String> {
@@ -2853,11 +3093,24 @@ mod tests {
             prepared(&mut ctx, &["task", "1-3,5", "count"]),
             words("( ( ( id >= 1 and id <= 3 ) or ( id == 5 ) ) )")
         );
-        assert_eq!(ctx.cli2.id_ranges, [("1".into(), "3".into()), ("5".into(), "5".into())]);
+        assert_eq!(
+            ctx.cli2.id_ranges,
+            [("1".into(), "3".into()), ("5".into(), "5".into())]
+        );
         assert!(ctx.cli2.uuid_list.is_empty());
-        let id = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "id").unwrap();
+        let id = ctx
+            .cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == "id")
+            .unwrap();
         assert_eq!(id.lextype, LexerType::dom);
-        let five = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "5").unwrap();
+        let five = ctx
+            .cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == "5")
+            .unwrap();
         assert_eq!(five.lextype, LexerType::number);
 
         // A descending range is normalised; separate IDs: the first is
@@ -2866,15 +3119,27 @@ mod tests {
             prepared(&mut ctx, &["task", "5-3", "7", "count"]),
             words("( ( ( id >= 3 and id <= 5 ) or ( id == 7 ) ) )")
         );
-        assert_eq!(ctx.cli2.id_ranges, [("5".into(), "3".into()), ("7".into(), "7".into())]);
+        assert_eq!(
+            ctx.cli2.id_ranges,
+            [("5".into(), "3".into()), ("7".into(), "7".into())]
+        );
 
         // A number preceded by an operator other than '(' / ')' is not an ID.
-        assert_eq!(prepared(&mut ctx, &["task", "urgency", ">", "5", "count"]), words("( urgency > 5 )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "urgency", ">", "5", "count"]),
+            words("( urgency > 5 )")
+        );
         assert!(ctx.cli2.id_ranges.is_empty());
 
         // With no filter at all, integer MODIFICATION numbers/sets are IDs ...
-        assert_eq!(prepared(&mut ctx, &["task", "modify", "3"]), words("( ( id == 3 ) )"));
-        assert_eq!(prepared(&mut ctx, &["task", "modify", "2,4"]), words("( ( id == 2 ) or ( id == 4 ) )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "modify", "3"]),
+            words("( ( id == 3 ) )")
+        );
+        assert_eq!(
+            prepared(&mut ctx, &["task", "modify", "2,4"]),
+            words("( ( id == 2 ) or ( id == 4 ) )")
+        );
         // ... unless signed or floating point, or the command is add/log.
         assert!(prepared(&mut ctx, &["task", "modify", "3.5"]).is_empty());
         assert!(ctx.cli2.id_ranges.is_empty());
@@ -2884,9 +3149,17 @@ mod tests {
 
         // Sugar-free: a FILTER number becomes the pair id:<n>, then 'id = n'.
         ctx.config.set("sugar", "0");
-        assert_eq!(prepared(&mut ctx, &["task", "3", "count"]), words("( id = 3 )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "3", "count"]),
+            words("( id = 3 )")
+        );
         assert!(ctx.cli2.id_ranges.is_empty());
-        let id = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "id").unwrap();
+        let id = ctx
+            .cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == "id")
+            .unwrap();
         assert_eq!(id.attribute("canonical"), "id");
     }
 
@@ -2899,7 +3172,12 @@ mod tests {
             words(&format!("( ( ( uuid = {full} ) ) )"))
         );
         assert_eq!(ctx.cli2.uuid_list, [full]);
-        let value = ctx.cli2.args.iter().find(|a| a.attribute("raw") == full).unwrap();
+        let value = ctx
+            .cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == full)
+            .unwrap();
         assert_eq!(value.lextype, LexerType::string);
 
         // Partial UUID, combined with IDs (IDs first, then 'or', then UUIDs).
@@ -2910,11 +3188,17 @@ mod tests {
         assert_eq!(ctx.cli2.uuid_list, ["abcdef01", "abcdef02"]);
 
         // A MODIFICATION UUID is promoted when there is no FILTER UUID.
-        assert_eq!(prepared(&mut ctx, &["task", "modify", "abcdef01"]), words("( ( uuid = abcdef01 ) )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "modify", "abcdef01"]),
+            words("( ( uuid = abcdef01 ) )")
+        );
 
         // Sugar-free: uuid:<uuid>, then 'uuid = <uuid>'.
         ctx.config.set("sugar", "0");
-        assert_eq!(prepared(&mut ctx, &["task", "abcdef01", "count"]), words("( uuid = abcdef01 )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "abcdef01", "count"]),
+            words("( uuid = abcdef01 )")
+        );
         assert!(ctx.cli2.uuid_list.is_empty());
     }
 
@@ -2978,57 +3262,110 @@ mod tests {
             let raws = prepared(&mut ctx, &["task", arg, "count"]);
             assert_eq!(raws, words(&format!("( {expected} )")), "{arg}");
             let types = filter_types(&ctx);
-            assert_eq!(types[1..4], [LexerType::dom, LexerType::op, LexerType::string], "{arg}");
-            let lhs = &ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).nth(1).unwrap();
+            assert_eq!(
+                types[1..4],
+                [LexerType::dom, LexerType::op, LexerType::string],
+                "{arg}"
+            );
+            let lhs = &ctx
+                .cli2
+                .args
+                .iter()
+                .filter(|a| a.has_tag("FILTER"))
+                .nth(1)
+                .unwrap();
             assert_eq!(lhs.attribute("canonical"), "project", "{arg}");
         }
 
         // Abbreviated names keep the raw name, with the canonical name for
         // the token Eval sees.
         prepared(&mut ctx, &["task", "pro.has:x", "count"]);
-        let lhs = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "pro").unwrap();
-        assert_eq!((lhs.attribute("canonical").as_str(), lhs.get_token().as_str()), ("project", "project"));
+        let lhs = ctx
+            .cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == "pro")
+            .unwrap();
+        assert_eq!(
+            (
+                lhs.attribute("canonical").as_str(),
+                lhs.get_token().as_str()
+            ),
+            ("project", "project")
+        );
         assert_eq!(lhs.attribute("modifier"), "has");
 
         // A string attribute whose value is a DOM reference compares to it.
-        assert_eq!(prepared(&mut ctx, &["task", "project:rc.x", "count"]), words("( project = rc.x )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "project:rc.x", "count"]),
+            words("( project = rc.x )")
+        );
         assert_eq!(filter_types(&ctx)[3], LexerType::dom);
 
         // Date attributes evaluate their value: a single token keeps its type,
         // multiple tokens are parenthesized.
-        assert_eq!(prepared(&mut ctx, &["task", "due.before:eom", "count"]), words("( due < eom )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "due.before:eom", "count"]),
+            words("( due < eom )")
+        );
         assert_ne!(filter_types(&ctx)[3], LexerType::string);
         assert_eq!(
             prepared(&mut ctx, &["task", "due.after:now+1d", "count"]),
             words("( due > ( now + 1d ) )")
         );
-        assert_eq!(prepared(&mut ctx, &["task", "due.none:", "count"]), words("( due == '' )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "due.none:", "count"]),
+            words("( due == '' )")
+        );
         // Numeric and duration attributes also evaluate.
-        assert_eq!(prepared(&mut ctx, &["task", "urgency.over:2", "count"]), words("( urgency > 2 )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "urgency.over:2", "count"]),
+            words("( urgency > 2 )")
+        );
         assert_eq!(filter_types(&ctx)[3], LexerType::number);
         // recur is a string column (C++ ColumnRecur : ColumnTypeString).
-        assert_eq!(prepared(&mut ctx, &["task", "recur:1w+1d", "count"]), words("( recur = 1w+1d )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "recur:1w+1d", "count"]),
+            words("( recur = 1w+1d )")
+        );
         {
             let mut ctx = context();
             ctx.config
-                .parse(crate::context::CONFIGURATION_DEFAULTS, 1, &[crate::context::task_rcdir()], "")
+                .parse(
+                    crate::context::CONFIGURATION_DEFAULTS,
+                    1,
+                    &[crate::context::task_rcdir()],
+                    "",
+                )
                 .unwrap();
             ctx.config.set("uda.est.type", "duration");
             crate::columns::column::factory_all(&mut ctx.columns, &ctx.config).unwrap();
             ctx.cli2.entity("attribute", "est");
             assert_eq!(ctx.columns.get("est").unwrap().type_(), "duration");
-            assert_eq!(prepared(&mut ctx, &["task", "est.over:1w+1d", "count"]), words("( est > ( 1w + 1d ) )"));
-            assert_eq!(filter_types(&ctx)[3..6], [LexerType::op, LexerType::duration, LexerType::op]);
+            assert_eq!(
+                prepared(&mut ctx, &["task", "est.over:1w+1d", "count"]),
+                words("( est > ( 1w + 1d ) )")
+            );
+            assert_eq!(
+                filter_types(&ctx)[3..6],
+                [LexerType::op, LexerType::duration, LexerType::op]
+            );
         }
 
         // A name that is not an attribute is downgraded to a word.
-        assert_eq!(prepared(&mut ctx, &["task", "foo:bar", "count"]), words("( foo:bar )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "foo:bar", "count"]),
+            words("( foo:bar )")
+        );
         assert_eq!(filter_types(&ctx)[1], LexerType::word);
 
         // Unknown modifier.
         parse(&mut ctx, &["task", "project.bogus:x", "count"]).unwrap();
         let err = with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap_err();
-        assert_eq!(err.to_string(), "Error: unrecognized attribute modifier 'bogus'.");
+        assert_eq!(
+            err.to_string(),
+            "Error: unrecognized attribute modifier 'bogus'."
+        );
 
         // C++ std::out_of_range from A2 ("", Lexer::Type::tag).
         parse(&mut ctx, &["task", "due:+foo", "count"]).unwrap();
@@ -3039,8 +3376,16 @@ mod tests {
     #[test]
     fn patterns_and_plain_args() {
         let mut ctx = filter_context();
-        assert_eq!(prepared(&mut ctx, &["task", "/foo/", "count"]), words("( description ~ foo )"));
-        let rhs = ctx.cli2.args.iter().find(|a| a.attribute("raw") == "foo").unwrap();
+        assert_eq!(
+            prepared(&mut ctx, &["task", "/foo/", "count"]),
+            words("( description ~ foo )")
+        );
+        let rhs = ctx
+            .cli2
+            .args
+            .iter()
+            .find(|a| a.attribute("raw") == "foo")
+            .unwrap();
         assert_eq!(rhs.lextype, LexerType::string);
         assert!(rhs.attributes.contains_key("flags"));
 
@@ -3050,21 +3395,33 @@ mod tests {
             prepared(&mut ctx, &["task", "foo", "bar baz", "count"]),
             words("( description ~ foo and description ~ bar and description ~ baz )")
         );
-        let plain: Vec<&A2> = ctx.cli2.args.iter().filter(|a| a.has_tag("PLAIN")).collect();
+        let plain: Vec<&A2> = ctx
+            .cli2
+            .args
+            .iter()
+            .filter(|a| a.has_tag("PLAIN"))
+            .collect();
         assert_eq!(plain.len(), 9);
         assert_eq!(plain[0].attribute("canonical"), "description");
 
         // A quoted single token is a string, not a plain-arg candidate.
-        assert_eq!(prepared(&mut ctx, &["task", "foo", "'bar baz'", "count"]), [
-            "(", "description", "~", "foo", "and", "'bar baz'", ")"
-        ]);
+        assert_eq!(
+            prepared(&mut ctx, &["task", "foo", "'bar baz'", "count"]),
+            ["(", "description", "~", "foo", "and", "'bar baz'", ")"]
+        );
 
         // A word that is part of an expression is not plain.
-        assert_eq!(prepared(&mut ctx, &["task", "description", "~", "x", "count"]), words("( description ~ x )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "description", "~", "x", "count"]),
+            words("( description ~ x )")
+        );
         assert!(!ctx.cli2.args.iter().any(|a| a.has_tag("PLAIN")));
 
         // A FILTER word containing an expression is lexed into tokens.
-        assert_eq!(prepared(&mut ctx, &["task", "urgency>5", "count"]), words("( urgency > 5 )"));
+        assert_eq!(
+            prepared(&mut ctx, &["task", "urgency>5", "count"]),
+            words("( urgency > 5 )")
+        );
     }
 
     /// Restores the process-wide minimum match length on drop (declared after
@@ -3116,14 +3473,32 @@ mod tests {
             let raws = prepared(&mut ctx, &["task", arg, "count"]);
             match expected {
                 Some((canonical, infix)) => {
-                    assert_eq!(raws, words(&format!("( {infix} )")), "{arg} (minimum {minimum})");
-                    let lhs = ctx.cli2.args.iter().filter(|a| a.has_tag("FILTER")).nth(1).unwrap();
-                    assert_eq!(lhs.attribute("canonical"), canonical, "{arg} (minimum {minimum})");
+                    assert_eq!(
+                        raws,
+                        words(&format!("( {infix} )")),
+                        "{arg} (minimum {minimum})"
+                    );
+                    let lhs = ctx
+                        .cli2
+                        .args
+                        .iter()
+                        .filter(|a| a.has_tag("FILTER"))
+                        .nth(1)
+                        .unwrap();
+                    assert_eq!(
+                        lhs.attribute("canonical"),
+                        canonical,
+                        "{arg} (minimum {minimum})"
+                    );
                     assert_eq!(lhs.lextype, LexerType::dom, "{arg} (minimum {minimum})");
                 }
                 None => {
                     assert_eq!(raws, ["(", arg, ")"], "{arg} (minimum {minimum})");
-                    assert_eq!(filter_types(&ctx)[1], LexerType::word, "{arg} (minimum {minimum})");
+                    assert_eq!(
+                        filter_types(&ctx)[1],
+                        LexerType::word,
+                        "{arg} (minimum {minimum})"
+                    );
                 }
             }
         }
@@ -3170,8 +3545,13 @@ mod tests {
                 .map(|a| a.attribute("raw"))
                 .collect();
             assert_eq!(mods, expected, "{list:?}");
-            let terminated: Vec<String> =
-                ctx.cli2.args.iter().filter(|a| a.has_tag("TERMINATED")).map(|a| a.attribute("raw")).collect();
+            let terminated: Vec<String> = ctx
+                .cli2
+                .args
+                .iter()
+                .filter(|a| a.has_tag("TERMINATED"))
+                .map(|a| a.attribute("raw"))
+                .collect();
             // As in C++ lexArguments, the '--' separator itself is TERMINATED too.
             let expected_terminated: &[&str] = if list.len() == 5 { &list[3..] } else { &[] };
             assert_eq!(terminated, expected_terminated, "{list:?}");
@@ -3188,7 +3568,10 @@ mod tests {
         );
         // ) <non-op>  and  <non-op> (
         assert_eq!(
-            prepared(&mut ctx, &["task", "(", "+a", ")", "+b", "(", "+c", ")", "count"]),
+            prepared(
+                &mut ctx,
+                &["task", "(", "+a", ")", "+b", "(", "+c", ")", "count"]
+            ),
             words("( ( tags _hastag_ a ) and tags _hastag_ b and ( tags _hastag_ c ) )")
         );
         // Explicit operators get no junction.
@@ -3260,7 +3643,20 @@ mod tests {
     fn prepare_filter_debug_dumps() {
         let mut ctx = filter_context();
         ctx.config.set("debug.parser", "2");
-        parse(&mut ctx, &["task", "1-3", "+home", "project:x", "due.before:eom", "/foo/", "bar", "count"]).unwrap();
+        parse(
+            &mut ctx,
+            &[
+                "task",
+                "1-3",
+                "+home",
+                "project:x",
+                "due.before:eom",
+                "/foo/",
+                "bar",
+                "count",
+            ],
+        )
+        .unwrap();
         ctx.debug_messages.clear();
         with_cli2(&mut ctx, |cli2, ctx| cli2.prepare_filter(ctx)).unwrap();
         let titles: Vec<&str> = ctx
@@ -3282,10 +3678,17 @@ mod tests {
             ]
         );
         // lexExpression output for each attribute.
-        let i = ctx.debug_messages.iter().position(|m| m == "CLI2::lexExpression project:x").unwrap();
+        let i = ctx
+            .debug_messages
+            .iter()
+            .position(|m| m == "CLI2::lexExpression project:x")
+            .unwrap();
         assert!(ctx.debug_messages[i + 1].starts_with("  "));
         assert_eq!(ctx.debug_messages[i + 2], " ");
-        assert!(ctx.debug_messages.iter().any(|m| m == "CLI2::lexExpression due:eom"));
+        assert!(ctx
+            .debug_messages
+            .iter()
+            .any(|m| m == "CLI2::lexExpression due:eom"));
         assert_eq!(
             filter_raws(&ctx),
             words(

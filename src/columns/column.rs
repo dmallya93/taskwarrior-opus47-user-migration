@@ -84,7 +84,9 @@ use crate::columns::col_start::ColumnStart;
 use crate::columns::col_status::ColumnStatus;
 use crate::columns::col_tags::ColumnTags;
 use crate::columns::col_template::ColumnTemplate;
-use crate::columns::col_uda::{ColumnUDADate, ColumnUDADuration, ColumnUDANumeric, ColumnUDAString, ColumnUDAUUID};
+use crate::columns::col_uda::{
+    ColumnUDADate, ColumnUDADuration, ColumnUDANumeric, ColumnUDAString, ColumnUDAUUID,
+};
 use crate::columns::col_until::ColumnUntil;
 use crate::columns::col_urgency::ColumnUrgency;
 use crate::columns::col_uuid::ColumnUUID;
@@ -95,7 +97,9 @@ use crate::error::{Result, TwError};
 use crate::eval::Eval;
 use crate::shared::color::{Color, ColorId};
 use crate::shared::configuration::Configuration;
-use crate::shared::format::{format, format_double, left_justify, right_justify, right_justify_int};
+use crate::shared::format::{
+    format, format_double, left_justify, right_justify, right_justify_int,
+};
 use crate::shared::shared::split;
 use crate::task::Task;
 use crate::variant::Variant;
@@ -166,7 +170,10 @@ impl ColumnBase {
     /// `default` nor one of `_styles`.
     pub fn set_style(&mut self, style: &str) -> Result<()> {
         if style != "default" && !self.styles.iter().any(|s| s == style) {
-            return Err(TwError::Message(format("Unrecognized column format '{1}.{2}'", &[&self.name, &style])));
+            return Err(TwError::Message(format(
+                "Unrecognized column format '{1}.{2}'",
+                &[&self.name, &style],
+            )));
         }
 
         self.style = style.to_string();
@@ -310,7 +317,13 @@ impl RenderEnv for Context {
 /// labelled `label`: nothing unless `verbose ("label")` and the label is
 /// non-empty; then the left-justified label, underlined when colour and
 /// `fontunderline` are on, otherwise followed by a dashed line.
-pub fn render_header_label(label: &str, lines: &mut Vec<String>, width: usize, color: &Color, env: &mut dyn RenderEnv) {
+pub fn render_header_label(
+    label: &str,
+    lines: &mut Vec<String>,
+    width: usize,
+    color: &Color,
+    env: &mut dyn RenderEnv,
+) {
     if env.verbose("label") && !label.is_empty() {
         // Create a basic label.
         let header = label;
@@ -320,7 +333,13 @@ pub fn render_header_label(label: &str, lines: &mut Vec<String>, width: usize, c
 
         // Now underline the header, or add a dashed line.
         if env.color() && env.config().get_boolean("fontunderline") {
-            c.blend(&Color::from_ids(ColorId::Nocolor, ColorId::Nocolor, true, false, false));
+            c.blend(&Color::from_ids(
+                ColorId::Nocolor,
+                ColorId::Nocolor,
+                true,
+                false,
+                false,
+            ));
             lines.push(c.colorize(&left_justify(header, width as i32)));
         } else {
             lines.push(c.colorize(&left_justify(header, width as i32)));
@@ -460,7 +479,13 @@ pub trait Column {
 
     /// C++ `virtual void renderHeader (std::vector<std::string>&, int,
     /// Color&)`: [`render_header_label`] with this column's label.
-    fn render_header(&self, lines: &mut Vec<String>, width: usize, color: &Color, env: &mut dyn RenderEnv) {
+    fn render_header(
+        &self,
+        lines: &mut Vec<String>,
+        width: usize,
+        color: &Color,
+        env: &mut dyn RenderEnv,
+    ) {
         render_header_label(self.label(), lines, width, color, env);
     }
 
@@ -557,11 +582,19 @@ pub fn factory(name: &str, report: &str, config: &Configuration) -> Result<Box<d
         _ if config.has(&format!("uda.{column_name}.type")) => match uda(column_name, config)? {
             Some(c) => c,
             None => {
-                return Err(TwError::Message(format("Unrecognized column name '{1}'.", &[&column_name])));
+                return Err(TwError::Message(format(
+                    "Unrecognized column name '{1}'.",
+                    &[&column_name],
+                )));
             }
         },
 
-        _ => return Err(TwError::Message(format("Unrecognized column name '{1}'.", &[&column_name]))),
+        _ => {
+            return Err(TwError::Message(format(
+                "Unrecognized column name '{1}'.",
+                &[&column_name],
+            )))
+        }
     };
 
     c.set_report(report);
@@ -726,7 +759,9 @@ pub(crate) struct FakeModifyEnv {
 impl ModifyEnv for FakeModifyEnv {
     fn evaluate_dom_expression(&mut self, value: &str) -> Result<Variant> {
         let dom = &self.dom;
-        let mut resolver = crate::eval::FnResolver::new(|name: &str| crate::eval::dom_source(name, |n| dom.get(n).cloned()));
+        let mut resolver = crate::eval::FnResolver::new(|name: &str| {
+            crate::eval::dom_source(name, |n| dom.get(n).cloned())
+        });
         crate::eval::Eval::new().evaluate_infix_expression(value, &mut resolver)
     }
 
@@ -739,7 +774,11 @@ impl ModifyEnv for FakeModifyEnv {
     }
 
     fn get_task(&mut self, uuid: &str) -> Result<Option<Task>> {
-        Ok(self.tasks.iter().find(|t| t.get_ref("uuid").starts_with(uuid)).cloned())
+        Ok(self
+            .tasks
+            .iter()
+            .find(|t| t.get_ref("uuid").starts_with(uuid))
+            .cloned())
     }
 
     fn add_dependency(&mut self, _task: &mut Task, uuid: &str) -> Result<()> {
@@ -787,7 +826,11 @@ impl FakeRenderEnv {
         for (key, value) in pairs {
             config.set(key, *value);
         }
-        FakeRenderEnv { config, verbose: true, ..FakeRenderEnv::default() }
+        FakeRenderEnv {
+            config,
+            verbose: true,
+            ..FakeRenderEnv::default()
+        }
     }
 }
 
@@ -812,7 +855,12 @@ impl RenderEnv for FakeRenderEnv {
 
     fn dependency_tasks(&mut self, task: &Task) -> Result<Vec<Task>> {
         let uuids = task.get_dependency_uuids();
-        Ok(self.tasks.iter().filter(|t| uuids.iter().any(|u| u == t.get_ref("uuid"))).cloned().collect())
+        Ok(self
+            .tasks
+            .iter()
+            .filter(|t| uuids.iter().any(|u| u == t.get_ref("uuid")))
+            .cloned()
+            .collect())
     }
 }
 
@@ -875,41 +923,149 @@ mod tests {
         let all = registry(&Configuration::new());
         // name, type, style, label, modifiable, styles
         let expected: &[BuiltinRow] = &[
-            ("depends", "string", "list", "Depends", true, &["list", "count", "indicator"]),
+            (
+                "depends",
+                "string",
+                "list",
+                "Depends",
+                true,
+                &["list", "count", "indicator"],
+            ),
             (
                 "description",
                 "string",
                 "combined",
                 "Description",
                 true,
-                &["combined", "desc", "oneline", "truncated", "count", "truncated_count"],
+                &[
+                    "combined",
+                    "desc",
+                    "oneline",
+                    "truncated",
+                    "count",
+                    "truncated_count",
+                ],
             ),
             ("due", "date", "formatted", "Due", true, DATE_STYLES),
             ("end", "date", "formatted", "Completed", true, DATE_STYLES),
             ("entry", "date", "formatted", "Added", true, DATE_STYLES),
             ("id", "numeric", "number", "ID", false, &["number"]),
-            ("imask", "numeric", "number", "Mask Index", false, &["number"]),
-            ("last", "numeric", "number", "Last instance", false, &["number"]),
+            (
+                "imask",
+                "numeric",
+                "number",
+                "Mask Index",
+                false,
+                &["number"],
+            ),
+            (
+                "last",
+                "numeric",
+                "number",
+                "Last instance",
+                false,
+                &["number"],
+            ),
             ("mask", "string", "default", "Mask", false, &["default"]),
-            ("modified", "date", "formatted", "Modified", true, DATE_STYLES),
-            ("parent", "string", "long", "Parent task", false, &["long", "short"]),
-            ("project", "string", "full", "Project", true, &["full", "parent", "indented"]),
-            ("recur", "string", "duration", "Recur", true, &["duration", "indicator"]),
-            ("rtype", "string", "default", "Recurrence type", false, &["default", "indicator"]),
-            ("scheduled", "date", "formatted", "Scheduled", true, DATE_STYLES),
+            (
+                "modified",
+                "date",
+                "formatted",
+                "Modified",
+                true,
+                DATE_STYLES,
+            ),
+            (
+                "parent",
+                "string",
+                "long",
+                "Parent task",
+                false,
+                &["long", "short"],
+            ),
+            (
+                "project",
+                "string",
+                "full",
+                "Project",
+                true,
+                &["full", "parent", "indented"],
+            ),
+            (
+                "recur",
+                "string",
+                "duration",
+                "Recur",
+                true,
+                &["duration", "indicator"],
+            ),
+            (
+                "rtype",
+                "string",
+                "default",
+                "Recurrence type",
+                false,
+                &["default", "indicator"],
+            ),
+            (
+                "scheduled",
+                "date",
+                "formatted",
+                "Scheduled",
+                true,
+                DATE_STYLES,
+            ),
             (
                 "start",
                 "date",
                 "formatted",
                 "Started",
                 true,
-                &["formatted", "julian", "epoch", "iso", "age", "relative", "remaining", "countdown", "active"],
+                &[
+                    "formatted",
+                    "julian",
+                    "epoch",
+                    "iso",
+                    "age",
+                    "relative",
+                    "remaining",
+                    "countdown",
+                    "active",
+                ],
             ),
-            ("status", "string", "long", "Status", true, &["long", "short"]),
-            ("tags", "string", "list", "Tags", true, &["list", "indicator", "count"]),
-            ("template", "string", "long", "Template task", false, &["long", "short"]),
+            (
+                "status",
+                "string",
+                "long",
+                "Status",
+                true,
+                &["long", "short"],
+            ),
+            (
+                "tags",
+                "string",
+                "list",
+                "Tags",
+                true,
+                &["list", "indicator", "count"],
+            ),
+            (
+                "template",
+                "string",
+                "long",
+                "Template task",
+                false,
+                &["long", "short"],
+            ),
             ("until", "date", "formatted", "Until", true, DATE_STYLES),
-            ("urgency", "numeric", "real", "Urgency", false, &["real", "integer"]),
+            (
+                "urgency",
+                "numeric",
+                "real",
+                "Urgency",
+                false,
+                &["real", "integer"],
+            ),
             ("uuid", "string", "long", "UUID", false, &["long", "short"]),
             ("wait", "date", "formatted", "Wait", true, DATE_STYLES),
         ];
@@ -929,9 +1085,25 @@ mod tests {
     }
 
     /// name, type, style, label, modifiable, styles.
-    type BuiltinRow = (&'static str, &'static str, &'static str, &'static str, bool, &'static [&'static str]);
+    type BuiltinRow = (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        bool,
+        &'static [&'static str],
+    );
 
-    const DATE_STYLES: &[&str] = &["formatted", "julian", "epoch", "iso", "age", "relative", "remaining", "countdown"];
+    const DATE_STYLES: &[&str] = &[
+        "formatted",
+        "julian",
+        "epoch",
+        "iso",
+        "age",
+        "relative",
+        "remaining",
+        "countdown",
+    ];
 
     #[test]
     fn constructor_examples() {
@@ -943,13 +1115,22 @@ mod tests {
             ("dateformat", "Y-M-D"),
         ]);
         let all = registry(&config);
-        assert_eq!(all["tags"].examples(), strings(&["home @chore next", "+", "[2]"]));
+        assert_eq!(
+            all["tags"].examples(),
+            strings(&["home @chore next", "+", "[2]"])
+        );
         assert_eq!(all["depends"].examples(), strings(&["1 2 10", "[3]", "D"]));
         assert_eq!(all["recur"].examples(), strings(&["weekly", "R"]));
         assert_eq!(all["start"].examples()[8], "*");
-        assert_eq!(all["project"].examples(), strings(&["home.garden", "home", "  home.garden"]));
+        assert_eq!(
+            all["project"].examples(),
+            strings(&["home.garden", "home", "  home.garden"])
+        );
         assert_eq!(all["urgency"].examples(), strings(&["4.6", "4"]));
-        assert_eq!(all["uuid"].examples(), strings(&["f30cb9c3-3fc0-483f-bfb2-3bf134f00694", "f30cb9c3"]));
+        assert_eq!(
+            all["uuid"].examples(),
+            strings(&["f30cb9c3-3fc0-483f-bfb2-3bf134f00694", "f30cb9c3"])
+        );
 
         let due = all["due"].examples();
         let now = Datetime::from_epoch(localtime::time_now() - 125);
@@ -962,14 +1143,21 @@ mod tests {
         let description = all["description"].examples();
         assert_eq!(description[1], "Move your clothes down on to the lower peg");
         assert_eq!(description[3], "Move your clothes do...");
-        assert_eq!(description[4], "Move your clothes down on to the lower peg [4]");
+        assert_eq!(
+            description[4],
+            "Move your clothes down on to the lower peg [4]"
+        );
         assert_eq!(description[5], "Move your clothes do... [4]");
         assert!(description[0].starts_with("Move your clothes down on to the lower peg\n  "));
     }
 
     #[test]
     fn factory_single_column_styles_and_labels() {
-        let config = config(&[("tag.indicator", "+"), ("dependency.indicator", "D"), ("recurrence.indicator", "RR")]);
+        let config = config(&[
+            ("tag.indicator", "+"),
+            ("dependency.indicator", "D"),
+            ("recurrence.indicator", "RR"),
+        ]);
         let cases = [
             // Without a format the style is "default", as in C++.
             ("due", "default", "Due"),
@@ -996,11 +1184,26 @@ mod tests {
         }
 
         // The C++ `name.style` decomposition splits at the first dot only.
-        assert_eq!(err(factory("bogus", "", &config)), "Unrecognized column name 'bogus'.");
-        assert_eq!(err(factory("bogus.list", "", &config)), "Unrecognized column name 'bogus'.");
-        assert_eq!(err(factory("due.bogus", "", &config)), "Unrecognized column format 'due.bogus'");
-        assert_eq!(err(factory("due.age.x", "", &config)), "Unrecognized column format 'due.age.x'");
-        assert_eq!(err(factory("id.real", "", &config)), "Unrecognized column format 'id.real'");
+        assert_eq!(
+            err(factory("bogus", "", &config)),
+            "Unrecognized column name 'bogus'."
+        );
+        assert_eq!(
+            err(factory("bogus.list", "", &config)),
+            "Unrecognized column name 'bogus'."
+        );
+        assert_eq!(
+            err(factory("due.bogus", "", &config)),
+            "Unrecognized column format 'due.bogus'"
+        );
+        assert_eq!(
+            err(factory("due.age.x", "", &config)),
+            "Unrecognized column format 'due.age.x'"
+        );
+        assert_eq!(
+            err(factory("id.real", "", &config)),
+            "Unrecognized column format 'id.real'"
+        );
     }
 
     #[test]
@@ -1017,9 +1220,15 @@ mod tests {
         assert_eq!(c.style(), "indicator");
         assert_eq!(c.label(), "Size");
         assert!(c.is_uda());
-        assert_eq!(err(factory("size.long", "", &config)), "Unrecognized column format 'size.long'");
+        assert_eq!(
+            err(factory("size.long", "", &config)),
+            "Unrecognized column format 'size.long'"
+        );
         // Deviation: C++ dereferences the null column.
-        assert_eq!(err(factory("blank", "", &config)), "Unrecognized column name 'blank'.");
+        assert_eq!(
+            err(factory("blank", "", &config)),
+            "Unrecognized column name 'blank'."
+        );
         assert_eq!(
             err(factory("odd", "", &config)),
             "User defined attributes may only be of type 'string', 'uuid', 'date', 'duration' or 'numeric'."
@@ -1042,7 +1251,10 @@ mod tests {
         ]);
         let mut all = ColumnRegistry::new();
         uda_all(&mut all, &config).unwrap();
-        assert_eq!(all.keys().cloned().collect::<Vec<_>>(), strings(&["d", "du", "n", "s", "u"]));
+        assert_eq!(
+            all.keys().cloned().collect::<Vec<_>>(),
+            strings(&["d", "du", "n", "s", "u"])
+        );
         // name, type, style, styles
         let expected: &[(&str, &str, &str, &[&str])] = &[
             ("s", "string", "default", &["default", "indicator"]),
@@ -1060,7 +1272,10 @@ mod tests {
             assert!(c.is_uda() && c.modifiable());
         }
         assert_eq!(all["n"].label(), "Num");
-        assert_eq!(all["u"].examples(), strings(&["f30cb9c3-3fc0-483f-bfb2-3bf134f00694", "f30cb9c3"]));
+        assert_eq!(
+            all["u"].examples(),
+            strings(&["f30cb9c3-3fc0-483f-bfb2-3bf134f00694", "f30cb9c3"])
+        );
 
         // validate: exact match against the values (an empty value is
         // allowed by the trailing comma), anything without values.
@@ -1080,7 +1295,10 @@ mod tests {
     fn uda_name_collisions_and_odd_keys() {
         let mut all = registry(&Configuration::new());
         assert_eq!(
-            err(uda_all(&mut all, &config(&[("uda.project.type", "string")]))),
+            err(uda_all(
+                &mut all,
+                &config(&[("uda.project.type", "string")])
+            )),
             "The UDA named 'project' is the same as a core attribute, and is not permitted."
         );
         let mut all = ColumnRegistry::new();
@@ -1091,14 +1309,28 @@ mod tests {
 
         // Keys without a second dot name no UDA; `uda..type` names "".
         let mut all = ColumnRegistry::new();
-        uda_all(&mut all, &config(&[("uda.x", "1"), ("uda..type", "numeric")])).unwrap();
+        uda_all(
+            &mut all,
+            &config(&[("uda.x", "1"), ("uda..type", "numeric")]),
+        )
+        .unwrap();
         assert_eq!(all.keys().cloned().collect::<Vec<_>>(), vec![String::new()]);
     }
 
     #[test]
     fn validate_builtins() {
         let all = registry(&Configuration::new());
-        for name in ["project", "description", "due", "scheduled", "id", "urgency", "uuid", "tags", "depends"] {
+        for name in [
+            "project",
+            "description",
+            "due",
+            "scheduled",
+            "id",
+            "urgency",
+            "uuid",
+            "tags",
+            "depends",
+        ] {
             assert!(all[name].validate("x"), "{name}");
             assert!(!all[name].validate(""), "{name}");
         }
@@ -1121,8 +1353,10 @@ mod tests {
 
         // A lone DOM reference is evaluated, then validated.
         let mut env = FakeEnv::default();
-        env.dom.insert("rc.foo".to_string(), Variant::from_string("bar"));
-        env.dom.insert("rc.empty".to_string(), Variant::from_string(""));
+        env.dom
+            .insert("rc.foo".to_string(), Variant::from_string("bar"));
+        env.dom
+            .insert("rc.empty".to_string(), Variant::from_string(""));
         let t = modify(&*all["description"], "rc.foo", &mut env).unwrap();
         assert_eq!(t.get("description"), "bar");
         assert_eq!(env.debug, vec![label("description <-- 'bar' <-- 'rc.foo'")]);
@@ -1137,8 +1371,14 @@ mod tests {
         // UDA values are enforced through the virtual validate.
         let config = config(&[("uda.prio.type", "string"), ("uda.prio.values", "H,M,L")]);
         let all = registry(&config);
-        assert_eq!(modify(&*all["prio"], "H", &mut env).unwrap().get("prio"), "H");
-        assert_eq!(err(modify(&*all["prio"], "X", &mut env)), "The 'prio' attribute does not allow a value of 'X'.");
+        assert_eq!(
+            modify(&*all["prio"], "H", &mut env).unwrap().get("prio"),
+            "H"
+        );
+        assert_eq!(
+            err(modify(&*all["prio"], "X", &mut env)),
+            "The 'prio' attribute does not allow a value of 'X'."
+        );
     }
 
     #[test]
@@ -1146,7 +1386,10 @@ mod tests {
         let all = registry(&config(&[("uda.ref.type", "uuid")]));
         let mut env = FakeEnv::default();
         let uuid = "f30cb9c3-3fc0-483f-bfb2-3bf134f00694";
-        assert_eq!(modify(&*all["ref"], uuid, &mut env).unwrap().get("ref"), uuid);
+        assert_eq!(
+            modify(&*all["ref"], uuid, &mut env).unwrap().get("ref"),
+            uuid
+        );
         assert_eq!(
             err(modify(&*all["ref"], "f30cb9c", &mut env)),
             "The 'ref' attribute does not allow a value of 'f30cb9c'."
@@ -1161,7 +1404,12 @@ mod tests {
         let epoch = Datetime::from_string("2030-01-01", "").unwrap().to_epoch();
         assert_eq!(t.get("due"), epoch.to_string());
         let iso = Datetime::from_epoch(epoch).to_iso_local_extended();
-        assert_eq!(env.debug, vec![label(&format!("due <-- '{epoch}' <-- '{iso}' <-- '2030-01-01'"))]);
+        assert_eq!(
+            env.debug,
+            vec![label(&format!(
+                "due <-- '{epoch}' <-- '{iso}' <-- '2030-01-01'"
+            ))]
+        );
 
         // A duration is relative to now; the debug line shows its seconds.
         let mut env = FakeEnv::default();
@@ -1170,14 +1418,25 @@ mod tests {
         let after = localtime::time_now();
         let scheduled = t.get_date("scheduled");
         assert!(scheduled >= before + 2 * 86400 && scheduled <= after + 2 * 86400);
-        assert_eq!(env.debug, vec![label("scheduled <-- '172800' <-- 'P2D' <-- '2d'")]);
+        assert_eq!(
+            env.debug,
+            vec![label("scheduled <-- '172800' <-- 'P2D' <-- '2d'")]
+        );
 
         // Outside [EPOCH_MIN_VALUE, EPOCH_MAX_VALUE).
-        assert_eq!(err(modify(&*all["due"], "1975-01-01", &mut env)), "'1975-01-01' is not a valid date.");
+        assert_eq!(
+            err(modify(&*all["due"], "1975-01-01", &mut env)),
+            "'1975-01-01' is not a valid date."
+        );
 
         // UDA dates share the implementation.
         let all = registry(&config(&[("uda.when.type", "date")]));
-        assert_eq!(modify(&*all["when"], "2030-01-01", &mut env).unwrap().get("when"), epoch.to_string());
+        assert_eq!(
+            modify(&*all["when"], "2030-01-01", &mut env)
+                .unwrap()
+                .get("when"),
+            epoch.to_string()
+        );
     }
 
     #[test]
@@ -1193,9 +1452,15 @@ mod tests {
         assert_eq!(modify(col, "2d", &mut env).unwrap().get("size"), "172800");
 
         let mut env = FakeEnv::default();
-        assert_eq!(err(modify(col, "abc", &mut env)), "The value 'abc' is not a valid numeric value.");
+        assert_eq!(
+            err(modify(col, "abc", &mut env)),
+            "The value 'abc' is not a valid numeric value."
+        );
         assert_eq!(env.debug, vec![label("size <-- 'abc' <-- 'abc'")]);
-        assert_eq!(err(modify(col, "true", &mut env)), "Unexpected variant type: '0'");
+        assert_eq!(
+            err(modify(col, "true", &mut env)),
+            "Unexpected variant type: '0'"
+        );
     }
 
     #[test]
@@ -1205,24 +1470,39 @@ mod tests {
         let mut env = FakeEnv::default();
         assert_eq!(modify(col, "2d", &mut env).unwrap().get("est"), "P2D");
         assert_eq!(env.debug, vec![label("est <-- P2D <-- '2d'")]);
-        assert_eq!(err(modify(col, "abc", &mut env)), "The duration value 'abc' is not supported.");
-        assert_eq!(err(modify(col, "5", &mut env)), "The duration value '5' is not supported.");
+        assert_eq!(
+            err(modify(col, "abc", &mut env)),
+            "The duration value 'abc' is not supported."
+        );
+        assert_eq!(
+            err(modify(col, "5", &mut env)),
+            "The duration value '5' is not supported."
+        );
     }
 
     #[test]
     fn modify_recur() {
         let all = registry(&Configuration::new());
         let mut env = FakeEnv::default();
-        assert_eq!(modify(&*all["recur"], "weekly", &mut env).unwrap().get("recur"), "weekly");
+        assert_eq!(
+            modify(&*all["recur"], "weekly", &mut env)
+                .unwrap()
+                .get("recur"),
+            "weekly"
+        );
         assert_eq!(env.debug, vec![label("recur <-- 'weekly'")]);
-        assert_eq!(err(modify(&*all["recur"], "often", &mut env)), "The duration value 'often' is not supported.");
+        assert_eq!(
+            err(modify(&*all["recur"], "often", &mut env)),
+            "The duration value 'often' is not supported."
+        );
     }
 
     #[test]
     fn modify_project() {
         let all = registry(&Configuration::new());
         let mut env = FakeEnv::default();
-        env.dom.insert("rc.p".to_string(), Variant::from_string("work"));
+        env.dom
+            .insert("rc.p".to_string(), Variant::from_string("work"));
         let t = modify(&*all["project"], "home.garden", &mut env).unwrap();
         assert_eq!(t.get("project"), "home.garden");
         let t = modify(&*all["project"], "rc.p", &mut env).unwrap();
@@ -1232,7 +1512,11 @@ mod tests {
         assert!(t.has("project") && t.get("project").is_empty());
         assert_eq!(
             env.debug,
-            vec![label("project <-- 'home.garden'"), label("project <-- 'work' <-- 'rc.p'"), label("project <-- ''")]
+            vec![
+                label("project <-- 'home.garden'"),
+                label("project <-- 'work' <-- 'rc.p'"),
+                label("project <-- ''")
+            ]
         );
     }
 
@@ -1245,9 +1529,13 @@ mod tests {
         all["tags"].modify(&mut task, "a,next", &mut env).unwrap();
         assert_eq!(task.get_tags(), strings(&["a", "next"]));
         assert_eq!(env.feedback, strings(&["a", "next"]));
-        assert_eq!(env.debug, vec![label("tags <-- 'a'"), label("tags <-- 'next'")]);
+        assert_eq!(
+            env.debug,
+            vec![label("tags <-- 'a'"), label("tags <-- 'next'")]
+        );
 
-        env.dom.insert("rc.t".to_string(), Variant::from_string("x,y"));
+        env.dom
+            .insert("rc.t".to_string(), Variant::from_string("x,y"));
         all["tags"].modify(&mut task, "rc.t", &mut env).unwrap();
         assert_eq!(task.get_tags(), strings(&["x", "y"]));
     }
@@ -1263,15 +1551,20 @@ mod tests {
         env.tasks.push(other);
 
         let mut task = Task::new();
-        col.modify(&mut task, &format!("{full},abcdef01,1-3,5,-7"), &mut env).unwrap();
-        assert_eq!(env.added, strings(&[full, "abcdef01-0000-0000-0000-000000000000"]));
+        col.modify(&mut task, &format!("{full},abcdef01,1-3,5,-7"), &mut env)
+            .unwrap();
+        assert_eq!(
+            env.added,
+            strings(&[full, "abcdef01-0000-0000-0000-000000000000"])
+        );
         assert_eq!(env.added_ids, vec![1, 2, 3, 5]);
         assert_eq!(env.removed_ids, vec![7]);
         assert!(env.debug.is_empty());
 
         // Removing a full UUID goes straight to Task::removeDependency.
         task.set(&Task::dep2attr(full), "x");
-        col.modify(&mut task, &format!("-{full}"), &mut env).unwrap();
+        col.modify(&mut task, &format!("-{full}"), &mut env)
+            .unwrap();
         assert!(!task.has(&Task::dep2attr(full)));
         assert_eq!(
             err(col.modify(&mut task, &format!("-{full}"), &mut env)),
@@ -1282,17 +1575,32 @@ mod tests {
             err(col.modify(&mut task, "12345678", &mut env)),
             "Dependency could not be set - task with UUID '12345678' does not exist."
         );
-        assert_eq!(err(col.modify(&mut task, "abc", &mut env)), "Invalid dependency value: 'abc'");
-        assert_eq!(err(col.modify(&mut task, "abcdef012", &mut env)), "Invalid dependency value: 'abcdef012'");
-        assert_eq!(err(col.modify(&mut task, "1,,2", &mut env)), "Invalid dependency value: ''");
+        assert_eq!(
+            err(col.modify(&mut task, "abc", &mut env)),
+            "Invalid dependency value: 'abc'"
+        );
+        assert_eq!(
+            err(col.modify(&mut task, "abcdef012", &mut env)),
+            "Invalid dependency value: 'abcdef012'"
+        );
+        assert_eq!(
+            err(col.modify(&mut task, "1,,2", &mut env)),
+            "Invalid dependency value: ''"
+        );
     }
 
     #[test]
     fn non_modifiable_columns() {
         let all = registry(&Configuration::new());
-        let fixed: Vec<&str> =
-            all.iter().filter(|(_, c)| !c.modifiable()).map(|(name, _)| name.as_str()).collect();
-        assert_eq!(fixed, vec!["id", "imask", "last", "mask", "parent", "rtype", "template", "urgency", "uuid"]);
+        let fixed: Vec<&str> = all
+            .iter()
+            .filter(|(_, c)| !c.modifiable())
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(
+            fixed,
+            vec!["id", "imask", "last", "mask", "parent", "rtype", "template", "urgency", "uuid"]
+        );
     }
 
     #[test]
@@ -1311,7 +1619,17 @@ mod tests {
         render_string_right(&mut lines, 4, &plain, "\u{e9}t\u{e9}");
         assert_eq!(
             lines,
-            strings(&["  42", "-123", "   4.6", "  12.3", "  0.12", "ab   ", "   ab", "abcd", " \u{e9}t\u{e9}"])
+            strings(&[
+                "  42",
+                "-123",
+                "   4.6",
+                "  12.3",
+                "  0.12",
+                "ab   ",
+                "   ab",
+                "abcd",
+                " \u{e9}t\u{e9}"
+            ])
         );
 
         let red = Color::parse("red").unwrap();
@@ -1393,10 +1711,16 @@ mod tests {
         d.base.name = "est".to_string();
         let columns: [&dyn Column; 3] = [&s, &n, &d];
         for c in columns {
-            assert_eq!(c.measure(&mut task, &mut env).unwrap(), (0, 0), "{}", c.name());
+            assert_eq!(
+                c.measure(&mut task, &mut env).unwrap(),
+                (0, 0),
+                "{}",
+                c.name()
+            );
             assert_eq!(c.measure_str("hello", &mut env), (0, 0));
             let mut lines = Vec::new();
-            c.render(&mut lines, &mut task, 10, &plain, &mut env).unwrap();
+            c.render(&mut lines, &mut task, 10, &plain, &mut env)
+                .unwrap();
             c.render_str(&mut lines, "hello", 10, &plain, &mut env);
             assert!(lines.is_empty(), "{}", c.name());
         }
@@ -1431,7 +1755,9 @@ mod tests {
     #[test]
     fn base_validate_and_modify_defaults() {
         // C++ `Column::validate` returns false; `Column::modify` is a no-op.
-        let c = BareColumn { base: ColumnBase::new() };
+        let c = BareColumn {
+            base: ColumnBase::new(),
+        };
         assert!(!c.validate("x") && !c.validate(""));
         let mut env = FakeEnv::default();
         let t = modify(&c, "x", &mut env).unwrap();
@@ -1489,14 +1815,31 @@ mod tests {
         }
 
         // ColumnTypeDate: one example per style from "now - 125 s".
-        for name in ["due", "end", "entry", "modified", "scheduled", "start", "until", "wait"] {
+        for name in [
+            "due",
+            "end",
+            "entry",
+            "modified",
+            "scheduled",
+            "start",
+            "until",
+            "wait",
+        ] {
             let examples = all[name].examples();
-            assert_eq!(examples.len(), if name == "start" { 9 } else { 8 }, "{name}");
+            assert_eq!(
+                examples.len(),
+                if name == "start" { 9 } else { 8 },
+                "{name}"
+            );
             let epoch: i64 = examples[2].parse().unwrap();
             assert!(epoch >= before && epoch <= after, "{name}");
             let then = Datetime::from_epoch(epoch);
             assert_eq!(examples[0], then.to_string("Y-M-D H:N:S"), "{name}");
-            assert_eq!(examples[1], format_double(then.to_julian(), 13, 12), "{name}");
+            assert_eq!(
+                examples[1],
+                format_double(then.to_julian(), 13, 12),
+                "{name}"
+            );
             assert_eq!(examples[3], then.to_iso(), "{name}");
             assert_eq!(examples[5], format!("-{}", examples[4]), "{name}");
             assert_eq!(examples[6], "", "{name}");
@@ -1518,15 +1861,27 @@ mod tests {
         ];
         for (pairs, format_) in [
             (vec![("dateformat", "Y-M-D")], "Y-M-D"),
-            (vec![("dateformat", "Y-M-D"), ("dateformat.annotation", "D/M")], "D/M"),
+            (
+                vec![("dateformat", "Y-M-D"), ("dateformat.annotation", "D/M")],
+                "D/M",
+            ),
         ] {
             let all = registry(&config(&pairs));
             let examples = all["description"].examples();
             let t = Datetime::new().to_string(format_);
             let oneline: Vec<String> = annotations.iter().map(|a| format!("{t} {a}")).collect();
-            assert_eq!(examples[2], format!("{d} {}", oneline.join(" ")), "{format_}");
-            let combined: Vec<String> = annotations.iter().map(|a| format!("\n  {t} {a}")).collect();
-            assert_eq!(examples[0], format!("{d}{}", combined.join("")), "{format_}");
+            assert_eq!(
+                examples[2],
+                format!("{d} {}", oneline.join(" ")),
+                "{format_}"
+            );
+            let combined: Vec<String> =
+                annotations.iter().map(|a| format!("\n  {t} {a}")).collect();
+            assert_eq!(
+                examples[0],
+                format!("{d}{}", combined.join("")),
+                "{format_}"
+            );
         }
     }
 
@@ -1588,7 +1943,10 @@ mod tests {
             assert_eq!(c.type_(), *type_, "{name}");
             assert_eq!(c.label(), *label, "{name}");
             assert_eq!(c.examples().len(), *examples, "{name}");
-            assert!(c.is_uda() && c.modifiable() && !c.is_fixed_width(), "{name}");
+            assert!(
+                c.is_uda() && c.modifiable() && !c.is_fixed_width(),
+                "{name}"
+            );
         }
         assert!(all["d"].validate("1700000000") && !all["d"].validate("1"));
         assert!(all["du"].validate("P2D") && !all["du"].validate("P3D") && !all["du"].validate(""));
@@ -1606,11 +1964,26 @@ mod tests {
             assert_eq!((c.style(), c.label()), (style, label), "{name}");
             assert!(c.is_uda(), "{name}");
         }
-        assert_eq!(err(factory("n.real", "", &config)), "Unrecognized column format 'n.real'");
-        assert_eq!(err(factory("d.formatted", "", &config)), "Unrecognized column format 'd.formatted'");
-        assert_eq!(err(factory("u.indicator", "", &config)), "Unrecognized column format 'u.indicator'");
-        assert_eq!(err(factory("", "", &config)), "Unrecognized column name ''.");
-        assert_eq!(err(factory(".list", "", &config)), "Unrecognized column name ''.");
+        assert_eq!(
+            err(factory("n.real", "", &config)),
+            "Unrecognized column format 'n.real'"
+        );
+        assert_eq!(
+            err(factory("d.formatted", "", &config)),
+            "Unrecognized column format 'd.formatted'"
+        );
+        assert_eq!(
+            err(factory("u.indicator", "", &config)),
+            "Unrecognized column format 'u.indicator'"
+        );
+        assert_eq!(
+            err(factory("", "", &config)),
+            "Unrecognized column name ''."
+        );
+        assert_eq!(
+            err(factory(".list", "", &config)),
+            "Unrecognized column name ''."
+        );
     }
 
     #[test]
@@ -1625,13 +1998,22 @@ mod tests {
         for core in ["due", "description", "id", "urgency", "uuid", "wait"] {
             let mut all = ColumnRegistry::new();
             assert_eq!(
-                err(factory_all(&mut all, &config(&[(&format!("uda.{core}.type"), "string")]))),
-                format!("The UDA named '{core}' is the same as a core attribute, and is not permitted.")
+                err(factory_all(
+                    &mut all,
+                    &config(&[(&format!("uda.{core}.type"), "string")])
+                )),
+                format!(
+                    "The UDA named '{core}' is the same as a core attribute, and is not permitted."
+                )
             );
         }
         // A UDA without a type is not registered.
         let mut all = ColumnRegistry::new();
-        factory_all(&mut all, &config(&[("uda.lbl.label", "L"), ("uda.lbl.values", "a")])).unwrap();
+        factory_all(
+            &mut all,
+            &config(&[("uda.lbl.label", "L"), ("uda.lbl.values", "a")]),
+        )
+        .unwrap();
         assert!(!all.contains_key("lbl"));
     }
 }

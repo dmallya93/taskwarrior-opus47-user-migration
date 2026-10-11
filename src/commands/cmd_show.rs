@@ -119,11 +119,21 @@ mod tests {
     #[test]
     fn show_raw_sorted() {
         let mut context = Context::new();
-        for (key, value) in [("zeta", "last"), ("alpha", "1"), ("Beta", ""), ("a.b", "x=y")] {
+        for (key, value) in [
+            ("zeta", "last"),
+            ("alpha", "1"),
+            ("Beta", ""),
+            ("a.b", "x=y"),
+        ] {
             context.config.set(key, value);
         }
         let mut output = String::new();
-        assert_eq!(CmdShowRaw::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdShowRaw::new()
+                .execute(&mut context, &mut output)
+                .unwrap(),
+            0
+        );
         assert_eq!(output, "Beta=\na.b=x=y\nalpha=1\nzeta=last\n");
     }
 
@@ -132,7 +142,9 @@ mod tests {
         let mut context = Context::new();
         context.config = crate::shared::configuration::Configuration::new();
         let mut output = String::from("stale");
-        CmdShowRaw::new().execute(&mut context, &mut output).unwrap();
+        CmdShowRaw::new()
+            .execute(&mut context, &mut output)
+            .unwrap();
         assert_eq!(output, "");
     }
 }

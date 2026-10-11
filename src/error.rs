@@ -50,7 +50,10 @@ impl fmt::Display for TwError {
 /// so all of the contexts are joined with `: `.
 fn write_taskchampion_error(f: &mut fmt::Formatter<'_>, err: &taskchampion::Error) -> fmt::Result {
     if let taskchampion::Error::Other(err) = err {
-        let entire_msg = err.chain().skip(1).fold(err.to_string(), |a, b| format!("{a}: {b}"));
+        let entire_msg = err
+            .chain()
+            .skip(1)
+            .fold(err.to_string(), |a, b| format!("{a}: {b}"));
         write!(f, "{entire_msg}")
     } else {
         write!(f, "{err}")
@@ -62,7 +65,10 @@ impl std::error::Error for TwError {
         match self {
             TwError::Io(err) => Some(err),
             TwError::TaskChampion(err) => Some(err),
-            TwError::Message(_) | TwError::Status(_) | TwError::Runtime(_) | TwError::NotImplemented(_) => None,
+            TwError::Message(_)
+            | TwError::Status(_)
+            | TwError::Runtime(_)
+            | TwError::NotImplemented(_) => None,
         }
     }
 }

@@ -40,9 +40,13 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use taskchampion::storage::AccessMode;
-use taskchampion::{Operation as TcOperation, Operations, Replica, SqliteStorage, Status as TcStatus, TaskData, Uuid, WorkingSet};
+use taskchampion::{
+    Operation as TcOperation, Operations, Replica, SqliteStorage, Status as TcStatus, TaskData,
+    Uuid, WorkingSet,
+};
 
 use crate::context::Context;
+use crate::hooks::Hooks;
 use crate::shared::format::format;
 use crate::shared::fs::Path;
 use crate::shared::shared::close_enough;
@@ -93,7 +97,10 @@ fn status_from_string(s: &str) -> Result<TcStatus> {
         "completed" => Ok(TcStatus::Completed),
         "deleted" => Ok(TcStatus::Deleted),
         "recurring" => Ok(TcStatus::Recurring),
-        _ => Err(TwError::Message(format("Unknown task status value '{1}'.", &[&s]))),
+        _ => Err(TwError::Message(format(
+            "Unknown task status value '{1}'.",
+            &[&s],
+        ))),
     }
 }
 
@@ -195,13 +202,27 @@ impl Tdb2 {
     /// # Errors
     /// The taskchampion error (e.g. `unable to open database file: ...` when
     /// the directory is missing and `create_if_missing` is false).
-    pub fn open_replica(&mut self, location: &Path, create_if_missing: bool, read_write: bool) -> Result<()> {
+    pub fn open_replica(
+        &mut self,
+        location: &Path,
+        create_if_missing: bool,
+        read_write: bool,
+    ) -> Result<()> {
         self.open_replica_at(&location.data, create_if_missing, read_write)
     }
 
     /// [`open_replica`](Self::open_replica) on a plain directory name.
-    pub fn open_replica_at(&mut self, location: &str, create_if_missing: bool, read_write: bool) -> Result<()> {
-        let access_mode = if read_write { AccessMode::ReadWrite } else { AccessMode::ReadOnly };
+    pub fn open_replica_at(
+        &mut self,
+        location: &str,
+        create_if_missing: bool,
+        read_write: bool,
+    ) -> Result<()> {
+        let access_mode = if read_write {
+            AccessMode::ReadWrite
+        } else {
+            AccessMode::ReadOnly
+        };
         let dir = PathBuf::from(location);
         let storage = rt().block_on(SqliteStorage::new(dir, access_mode, create_if_missing))?;
         self.replica = Some(Replica::new(storage));
@@ -223,7 +244,9 @@ impl Tdb2 {
     /// asserts).
     pub fn replica(&mut self) -> Result<&mut TcReplica> {
         // One of the open_replica_ methods must be called before this one.
-        self.replica.as_mut().ok_or_else(|| TwError::Message("replica not open".to_string()))
+        self.replica
+            .as_mut()
+            .ok_or_else(|| TwError::Message("replica not open".to_string()))
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -583,7 +606,10 @@ impl Tdb2 {
             }
             self.completed_tasks = Some(result);
         }
-        Ok(self.completed_tasks.as_deref().expect("completed tasks loaded"))
+        Ok(self
+            .completed_tasks
+            .as_deref()
+            .expect("completed tasks loaded"))
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -600,7 +626,10 @@ impl Tdb2 {
             self.dependency_graph = Some(build_dependency_graph(tasks, index));
         }
 
-        Ok(self.dependency_graph.as_ref().expect("dependency graph built"))
+        Ok(self
+            .dependency_graph
+            .as_ref()
+            .expect("dependency graph built"))
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -832,8 +861,15 @@ impl Tdb2 {
 
     /// Build the server from `config` and sync the replica with it (the
     /// shared body of the bridge's `sync_to_*`).
-    fn sync_with(&mut self, config: taskchampion::ServerConfig, avoid_snapshots: bool) -> Result<()> {
-        let replica = self.replica.as_mut().ok_or_else(|| TwError::Message("replica not open".to_string()))?;
+    fn sync_with(
+        &mut self,
+        config: taskchampion::ServerConfig,
+        avoid_snapshots: bool,
+    ) -> Result<()> {
+        let replica = self
+            .replica
+            .as_mut()
+            .ok_or_else(|| TwError::Message("replica not open".to_string()))?;
         rt().block_on(async {
             let mut server = config.into_server().await?;
             replica.sync(&mut server, avoid_snapshots).await
@@ -975,10 +1011,18 @@ impl Tdb2 {
         let config = taskchampion::ServerConfig::Git {
             local_path: local_path.into(),
             branch: branch.to_string(),
-            remote: if remote.is_empty() { None } else { Some(remote.to_string()) },
+            remote: if remote.is_empty() {
+                None
+            } else {
+                Some(remote.to_string())
+            },
             local_only,
             encryption_secret: encryption_secret.as_bytes().to_vec(),
-            git_path: if git_path.is_empty() { None } else { Some(git_path.into()) },
+            git_path: if git_path.is_empty() {
+                None
+            } else {
+                Some(git_path.into())
+            },
         };
         self.sync_with(config, avoid_snapshots)
     }
@@ -996,7 +1040,7 @@ pub fn add(ctx: &mut Context, task: &mut Task) -> Result<()> {
     let tcuuid = uuid_from_string(task.get_ref("uuid"))?;
 
     // run hooks for this new task
-    ctx.hooks.on_add(task)?;
+    Hooks::on_add(ctx, task)?;
 
     ctx.tdb2.commit_add(task, tcuuid, ops)
 }
@@ -1016,10 +1060,11 @@ pub fn modify(ctx: &mut Context, task: &mut Task) -> Result<()> {
     // invoke the hook and allow it to modify the task before updating
     let original = ctx.tdb2.get_by_uuid(&uuid)?;
     let found_original = original.is_some();
-    let original = original.unwrap_or_default();
-    ctx.hooks.on_modify(&original, task)?;
+    let mut original = original.unwrap_or_default();
+    Hooks::on_modify(ctx, &mut original, task)?;
 
-    ctx.tdb2.commit_modify(task, &uuid, &original, found_original, ops)
+    ctx.tdb2
+        .commit_modify(task, &uuid, &original, found_original, ops)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1076,7 +1121,11 @@ fn build_dependency_graph(tasks: &[Task], uuid_index: &HashMap<String, usize>) -
                 continue;
             };
 
-            graph.dependencies.entry(uuid.clone()).or_default().push(index);
+            graph
+                .dependencies
+                .entry(uuid.clone())
+                .or_default()
+                .push(index);
             graph.dependents.entry(dep).or_default().push(i);
         }
     }
@@ -1095,7 +1144,8 @@ mod tests {
 
     fn open(dir: &TempDir) -> Tdb2 {
         let mut tdb2 = Tdb2::new();
-        tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
         tdb2
     }
 
@@ -1112,8 +1162,14 @@ mod tests {
     fn replica_not_open() {
         let mut tdb2 = Tdb2::new();
         assert!(!tdb2.is_open());
-        assert_eq!(tdb2.latest_id().unwrap_err().to_string(), "replica not open");
-        assert_eq!(tdb2.pending_tasks().unwrap_err().to_string(), "replica not open");
+        assert_eq!(
+            tdb2.latest_id().unwrap_err().to_string(),
+            "replica not open"
+        );
+        assert_eq!(
+            tdb2.pending_tasks().unwrap_err().to_string(),
+            "replica not open"
+        );
     }
 
     #[test]
@@ -1121,7 +1177,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let data = dir.path().join("data");
         let mut tdb2 = Tdb2::new();
-        tdb2.open_replica_at(data.to_str().unwrap(), true, true).unwrap();
+        tdb2.open_replica_at(data.to_str().unwrap(), true, true)
+            .unwrap();
         assert!(data.join("taskchampion.sqlite3").exists());
         assert_eq!(tdb2.latest_id().unwrap(), 0);
     }
@@ -1131,7 +1188,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let data = dir.path().join("missing");
         let mut tdb2 = Tdb2::new();
-        let err = tdb2.open_replica_at(data.to_str().unwrap(), false, true).unwrap_err();
+        let err = tdb2
+            .open_replica_at(data.to_str().unwrap(), false, true)
+            .unwrap_err();
         let text = err.to_string();
         assert!(text.contains("unable to open database file"), "{text}");
         assert!(text.contains("Error code 14"), "{text}");
@@ -1164,7 +1223,10 @@ mod tests {
         assert_eq!(tdb2.id(U3).unwrap(), 0);
         assert!(tdb2.has(U1).unwrap());
         assert!(!tdb2.has(U3).unwrap());
-        assert_eq!(tdb2.id("bogus").unwrap_err().to_string(), "bogus is not a valid UUID");
+        assert_eq!(
+            tdb2.id("bogus").unwrap_err().to_string(),
+            "bogus is not a valid UUID"
+        );
 
         let pending = tdb2.pending_tasks().unwrap();
         assert_eq!(pending.len(), 2);
@@ -1248,7 +1310,10 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut tdb2 = open(&dir);
         let mut t = task(U1, "ghost", "pending");
-        assert_eq!(tdb2.modify_task(&mut t).unwrap_err().to_string(), "task no longer exists");
+        assert_eq!(
+            tdb2.modify_task(&mut t).unwrap_err().to_string(),
+            "task no longer exists"
+        );
     }
 
     #[test]
@@ -1281,8 +1346,12 @@ mod tests {
 
         let undo = tdb2.get_undo_operations().unwrap();
         assert!(matches!(undo.first(), Some(TcOperation::UndoPoint)));
-        let ops = tdb2.get_task_operations(uuid_from_string(U1).unwrap()).unwrap();
-        assert!(ops.iter().any(|op| matches!(op, TcOperation::Create { .. })));
+        let ops = tdb2
+            .get_task_operations(uuid_from_string(U1).unwrap())
+            .unwrap();
+        assert!(ops
+            .iter()
+            .any(|op| matches!(op, TcOperation::Create { .. })));
 
         // A new invocation adds a fresh undo point.
         drop(tdb2);
@@ -1366,7 +1435,10 @@ mod tests {
         let mut d = task("ffffffff-0000-0000-0000-000000000001", "gone", "deleted");
         tdb2.add_task(&mut d).unwrap();
 
-        assert_eq!(tdb2.get_by_uuid("a1b2c3d4").unwrap().unwrap().get("uuid"), u);
+        assert_eq!(
+            tdb2.get_by_uuid("a1b2c3d4").unwrap().unwrap().get("uuid"),
+            u
+        );
         assert_eq!(tdb2.get_by_uuid("A1B2C3").unwrap().unwrap().get("uuid"), u);
         // Not pending: found by scanning all tasks.
         let got = tdb2.get_by_uuid("ffffffff").unwrap().unwrap();
@@ -1384,7 +1456,8 @@ mod tests {
             tdb2.add_task(&mut t).unwrap();
         }
         let mut tdb2 = Tdb2::new();
-        tdb2.open_replica_at(dir.path().to_str().unwrap(), true, false).unwrap();
+        tdb2.open_replica_at(dir.path().to_str().unwrap(), true, false)
+            .unwrap();
         assert_eq!(tdb2.pending_tasks().unwrap().len(), 1);
         let mut t = task(U2, "two", "pending");
         assert!(tdb2.add_task(&mut t).is_err());
@@ -1431,22 +1504,34 @@ mod tests {
         let mut tdb2 = open(&dir);
         let mut t = task(U1, "synced", "pending");
         tdb2.add_task(&mut t).unwrap();
-        tdb2.sync_to_local(server.path().to_str().unwrap(), false).unwrap();
+        tdb2.sync_to_local(server.path().to_str().unwrap(), false)
+            .unwrap();
         assert_eq!(tdb2.num_local_changes().unwrap(), 0);
 
         let other = TempDir::new().unwrap();
         let mut tdb2b = open(&other);
-        tdb2b.sync_to_local(server.path().to_str().unwrap(), false).unwrap();
+        tdb2b
+            .sync_to_local(server.path().to_str().unwrap(), false)
+            .unwrap();
         assert!(tdb2b.has(U1).unwrap());
     }
 
     #[test]
     fn status_from_string_values() {
         assert_eq!(status_from_string("pending").unwrap(), TcStatus::Pending);
-        assert_eq!(status_from_string("completed").unwrap(), TcStatus::Completed);
+        assert_eq!(
+            status_from_string("completed").unwrap(),
+            TcStatus::Completed
+        );
         assert_eq!(status_from_string("deleted").unwrap(), TcStatus::Deleted);
-        assert_eq!(status_from_string("recurring").unwrap(), TcStatus::Recurring);
-        assert_eq!(status_from_string("x").unwrap_err().to_string(), "Unknown task status value 'x'.");
+        assert_eq!(
+            status_from_string("recurring").unwrap(),
+            TcStatus::Recurring
+        );
+        assert_eq!(
+            status_from_string("x").unwrap_err().to_string(),
+            "Unknown task status value 'x'."
+        );
     }
 }
 

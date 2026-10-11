@@ -58,7 +58,11 @@ pub struct Filter {
 
 impl Default for Filter {
     fn default() -> Self {
-        Filter { _start_count: 0, _end_count: 0, _safety: true }
+        Filter {
+            _start_count: 0,
+            _end_count: 0,
+            _safety: true,
+        }
     }
 }
 
@@ -97,10 +101,16 @@ fn compile(ctx: &mut Context, precompiled: &[Token]) -> Result<Eval> {
 
 /// The C++ per-task loop body: with `task` as the current task, evaluate the
 /// compiled filter and keep the task if the result is true.
-fn evaluate_into(ctx: &mut Context, eval: &Eval, tasks: &[Task], output: &mut Vec<Task>) -> Result<()> {
+fn evaluate_into(
+    ctx: &mut Context,
+    eval: &Eval,
+    tasks: &[Task],
+    output: &mut Vec<Task>,
+) -> Result<()> {
     for task in tasks {
         // Set up context for any DOM references.
-        let var = eval.evaluate_compiled_expression(&mut ContextResolver::with_task(ctx, Some(task)))?;
+        let var =
+            eval.evaluate_compiled_expression(&mut ContextResolver::with_task(ctx, Some(task)))?;
         if var.get_bool() {
             output.push(task.clone());
         }
@@ -123,7 +133,12 @@ impl Filter {
     /// As in C++, with a filter the matching tasks are *appended* to
     /// `output`; without one, `output` is replaced by a copy of `input`.
     /// No [`safety`](Self::safety) check is made here.
-    pub fn subset_of(&mut self, ctx: &mut Context, input: &[Task], output: &mut Vec<Task>) -> Result<()> {
+    pub fn subset_of(
+        &mut self,
+        ctx: &mut Context,
+        input: &[Task],
+        output: &mut Vec<Task>,
+    ) -> Result<()> {
         let timer = Timer::new();
         self._start_count = input.len() as i32;
 
@@ -195,7 +210,11 @@ impl Filter {
         }
 
         self._end_count = output.len() as i32;
-        let which = if shortcut { "pending only" } else { "all tasks" };
+        let which = if shortcut {
+            "pending only"
+        } else {
+            "all tasks"
+        };
         ctx.debug(&format(
             "Filtered {1} tasks --> {2} tasks [{3}]",
             &[&self._start_count, &self._end_count, &which],
@@ -345,7 +364,9 @@ impl Filter {
                 }
 
                 // Sound the alarm.
-                return Err(TwError::Message("Command prevented from running.".to_string()));
+                return Err(TwError::Message(
+                    "Command prevented from running.".to_string(),
+                ));
             }
         }
 

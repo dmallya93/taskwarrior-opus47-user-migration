@@ -37,14 +37,18 @@ pub(super) struct UnitTest {
 
 impl UnitTest {
     pub(super) fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        }
     }
 
     /// C++ `UnitTest::ok`.
     pub(super) fn ok(&mut self, expression: bool, name: &str) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -65,7 +69,12 @@ impl UnitTest {
     }
 
     /// C++ `UnitTest::is` (exact comparison overloads).
-    pub(super) fn is<A: PartialEq<E> + Debug, E: Debug>(&mut self, actual: A, expected: E, name: &str) {
+    pub(super) fn is<A: PartialEq<E> + Debug, E: Debug>(
+        &mut self,
+        actual: A,
+        expected: E,
+        name: &str,
+    ) {
         self.counter += 1;
         if actual != expected {
             self.failures.push(format!(
@@ -206,7 +215,10 @@ fn constructors() {
 
     for t in [Type::Boolean, Type::Integer, Type::Real, Type::String] {
         let e = Variant::from_time(1, t).unwrap_err();
-        assert_eq!(e.to_string(), "Cannot instantiate this type with a time_t value.");
+        assert_eq!(
+            e.to_string(),
+            "Cannot instantiate this type with a time_t value."
+        );
     }
 
     assert_eq!(Variant::from(true).type_(), Type::Boolean);
@@ -234,9 +246,22 @@ fn display() {
     assert_eq!(Variant::from_real(0.5).to_string(), "0.5");
     assert_eq!(Variant::from_real(2.0).to_string(), "2");
     assert_eq!(Variant::from_string("\"quoted\"").to_string(), "\"quoted\"");
-    assert_eq!(Variant::from_time(1234567890, Type::Date).unwrap().to_string(), "2009-02-13T23:31:30");
-    assert_eq!(Variant::from_time(12345, Type::Duration).unwrap().to_string(), "PT3H25M45S");
-    assert_eq!(Variant::from_time(0, Type::Duration).unwrap().to_string(), "PT0S");
+    assert_eq!(
+        Variant::from_time(1234567890, Type::Date)
+            .unwrap()
+            .to_string(),
+        "2009-02-13T23:31:30"
+    );
+    assert_eq!(
+        Variant::from_time(12345, Type::Duration)
+            .unwrap()
+            .to_string(),
+        "PT3H25M45S"
+    );
+    assert_eq!(
+        Variant::from_time(0, Type::Duration).unwrap().to_string(),
+        "PT0S"
+    );
 }
 
 #[test]
@@ -265,7 +290,10 @@ fn sqrt() {
     assert_eq!(v.get_real(), 1.5);
 
     let mut v = Variant::from_real(-1.0);
-    assert_eq!(v.sqrt().unwrap_err().to_string(), "Cannot take the square root of a negative number.");
+    assert_eq!(
+        v.sqrt().unwrap_err().to_string(),
+        "Cannot take the square root of a negative number."
+    );
 }
 
 #[test]
@@ -273,21 +301,40 @@ fn cast_string_details() {
     let _u = Upstream::setup(Some("UTC"));
 
     // Boolean: empty, "0" and "0.0" are false; quotes are removed first.
-    for (text, expected) in [("", false), ("0", false), ("0.0", false), ("'0'", false), ("00", true), ("x", true)] {
+    for (text, expected) in [
+        ("", false),
+        ("0", false),
+        ("0.0", false),
+        ("'0'", false),
+        ("00", true),
+        ("x", true),
+    ] {
         let mut v = Variant::from_string(text);
         v.cast(Type::Boolean).unwrap();
         assert_eq!(v.get_bool(), expected, "{text:?}");
     }
 
     // Integer: strtol, base 16 only for a literal "0x" prefix.
-    for (text, expected) in [(" 12abc", 12), ("-7", -7), ("0x1F", 31), ("0X1F", 0), ("abc", 0), ("99999999999999999999", i64::MAX)] {
+    for (text, expected) in [
+        (" 12abc", 12),
+        ("-7", -7),
+        ("0x1F", 31),
+        ("0X1F", 0),
+        ("abc", 0),
+        ("99999999999999999999", i64::MAX),
+    ] {
         let mut v = Variant::from_string(text);
         v.cast(Type::Integer).unwrap();
         assert_eq!(v.get_integer(), expected, "{text:?}");
     }
 
     // Real: strtod.
-    for (text, expected) in [("1e3", 1000.0), ("  -2.5x", -2.5), ("0x10", 16.0), ("foo", 0.0)] {
+    for (text, expected) in [
+        ("1e3", 1000.0),
+        ("  -2.5x", -2.5),
+        ("0x10", 16.0),
+        ("foo", 0.0),
+    ] {
         let mut v = Variant::from_string(text);
         v.cast(Type::Real).unwrap();
         assert_eq!(v.get_real(), expected, "{text:?}");
@@ -324,7 +371,10 @@ fn cast_string_details() {
 
     let mut v = Variant::from_string("'not a date'");
     let e = v.cast(Type::Date).unwrap_err();
-    assert_eq!(e.to_string(), "'not a date' is not a valid date in the 'D.M.Y' format.");
+    assert_eq!(
+        e.to_string(),
+        "'not a date' is not a valid date in the 'D.M.Y' format."
+    );
     assert_eq!(v.type_(), Type::String);
     assert_eq!(v.get_string(), "not a date");
 }
@@ -365,7 +415,10 @@ fn operators_custom_order() {
     let saved = Task::custom_order();
 
     let mut order = BTreeMap::new();
-    order.insert("priority".to_string(), vec!["H".to_string(), "M".to_string(), "L".to_string()]);
+    order.insert(
+        "priority".to_string(),
+        vec!["H".to_string(), "M".to_string(), "L".to_string()],
+    );
     Task::set_custom_order(order);
 
     let mut h = Variant::from_string("H");
@@ -401,26 +454,46 @@ fn operators_string_rules() {
     let _u = Upstream::setup(Some("UTC"));
 
     // Trivial strings never order, but equal strings short-circuit first.
-    assert!(!Variant::from_string("").op_lt(&Variant::from_string("a")).unwrap());
-    assert!(!Variant::from_string("a").op_gt(&Variant::from_string("")).unwrap());
-    assert!(!Variant::from_string("").op_lte(&Variant::from_string("a")).unwrap());
-    assert!(Variant::from_string("").op_lte(&Variant::from_string("")).unwrap());
-    assert!(Variant::from_string("").op_gte(&Variant::from_string("")).unwrap());
+    assert!(!Variant::from_string("")
+        .op_lt(&Variant::from_string("a"))
+        .unwrap());
+    assert!(!Variant::from_string("a")
+        .op_gt(&Variant::from_string(""))
+        .unwrap());
+    assert!(!Variant::from_string("")
+        .op_lte(&Variant::from_string("a"))
+        .unwrap());
+    assert!(Variant::from_string("")
+        .op_lte(&Variant::from_string(""))
+        .unwrap());
+    assert!(Variant::from_string("")
+        .op_gte(&Variant::from_string(""))
+        .unwrap());
 
     // std::string comparison is byte-wise; quotes are removed first.
-    assert!(Variant::from_string("B").op_lt(&Variant::from_string("a")).unwrap());
-    assert!(Variant::from_string("z").op_lt(&Variant::from_string("\u{e9}")).unwrap());
-    assert!(Variant::from_string("'abc'").op_eq(&Variant::from_string("abc")).unwrap());
+    assert!(Variant::from_string("B")
+        .op_lt(&Variant::from_string("a"))
+        .unwrap());
+    assert!(Variant::from_string("z")
+        .op_lt(&Variant::from_string("\u{e9}"))
+        .unwrap());
+    assert!(Variant::from_string("'abc'")
+        .op_eq(&Variant::from_string("abc"))
+        .unwrap());
 
     // Status is always compared caseless (left source only).
     let mut status = Variant::from_string("Pending");
     status.set_source("status");
     assert!(status.op_eq(&Variant::from_string("pending")).unwrap());
     assert!(!status.op_ne(&Variant::from_string("PENDING")).unwrap());
-    assert!(!Variant::from_string("Pending").op_eq(&Variant::from_string("pending")).unwrap());
+    assert!(!Variant::from_string("Pending")
+        .op_eq(&Variant::from_string("pending"))
+        .unwrap());
 
     // String == duration and duration == * have no trivial shortcut.
-    assert!(Variant::from_string("").op_eq(&Variant::from_time(0, Type::Duration).unwrap()).unwrap());
+    assert!(Variant::from_string("")
+        .op_eq(&Variant::from_time(0, Type::Duration).unwrap())
+        .unwrap());
     // Date == trivial is false, even for equal values.
     let zero = Variant::from_time(0, Type::Date).unwrap();
     assert!(!zero.op_eq(&zero).unwrap());
@@ -480,7 +553,10 @@ fn arithmetic_details() {
 
     // Exact error texts.
     assert_eq!(err(b.op_exp(&i)), "Cannot exponentiate Booleans");
-    assert_eq!(err(i.op_exp(&r)), "Cannot exponentiate to a non-integer power");
+    assert_eq!(
+        err(i.op_exp(&r)),
+        "Cannot exponentiate to a non-integer power"
+    );
     assert_eq!(err(r.op_exp(&s)), "Cannot exponentiate strings");
     assert_eq!(err(i.op_exp(&date)), "Cannot exponentiate dates");
     assert_eq!(err(dur.op_exp(&i)), "Cannot exponentiate durations");
@@ -492,14 +568,35 @@ fn arithmetic_details() {
 
     // Integer power goes through (int) pow (...): truncation, negative
     // exponents, and INT_MIN for an out-of-range result.
-    assert_eq!(Variant::from_int(2).op_exp(&Variant::from_int(-1)).unwrap().get_integer(), 0);
-    assert_eq!(Variant::from_int(-3).op_exp(&Variant::from_int(3)).unwrap().get_integer(), -27);
-    assert_eq!(Variant::from_int(10).op_exp(&Variant::from_int(10)).unwrap().get_integer(), i64::from(i32::MIN));
+    assert_eq!(
+        Variant::from_int(2)
+            .op_exp(&Variant::from_int(-1))
+            .unwrap()
+            .get_integer(),
+        0
+    );
+    assert_eq!(
+        Variant::from_int(-3)
+            .op_exp(&Variant::from_int(3))
+            .unwrap()
+            .get_integer(),
+        -27
+    );
+    assert_eq!(
+        Variant::from_int(10)
+            .op_exp(&Variant::from_int(10))
+            .unwrap()
+            .get_integer(),
+        i64::from(i32::MIN)
+    );
 
     // Signed overflow wraps.
     let mut max = Variant::from_string("9223372036854775807");
     max.cast(Type::Integer).unwrap();
-    assert_eq!(max.op_add(&Variant::from_int(1)).unwrap().get_integer(), i64::MIN);
+    assert_eq!(
+        max.op_add(&Variant::from_int(1)).unwrap().get_integer(),
+        i64::MIN
+    );
 
     // Real + date: (unsigned)(int) _real widened to time_t.
     let v = Variant::from_real(-1.5).op_add(&date).unwrap();
@@ -512,13 +609,33 @@ fn arithmetic_details() {
     // Duration + date and date - date.
     let v = dur.op_add(&date).unwrap();
     assert_eq!((v.type_(), v.get_date()), (Type::Date, 110));
-    let v = date.op_sub(&Variant::from_time(40, Type::Date).unwrap()).unwrap();
+    let v = date
+        .op_sub(&Variant::from_time(40, Type::Date).unwrap())
+        .unwrap();
     assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 60));
 
     // += dequotes the right operand only; -= dequotes neither.
-    assert_eq!(Variant::from_string("'a'").op_add(&Variant::from_string("'b'")).unwrap().get_string(), "'a'b");
-    assert_eq!(Variant::from_string("'a'").op_sub(&Variant::from_string("'b'")).unwrap().get_string(), "'a'-'b'");
-    assert_eq!(Variant::from_int(1).op_add(&Variant::from_string("\"z\"")).unwrap().get_string(), "1z");
+    assert_eq!(
+        Variant::from_string("'a'")
+            .op_add(&Variant::from_string("'b'"))
+            .unwrap()
+            .get_string(),
+        "'a'b"
+    );
+    assert_eq!(
+        Variant::from_string("'a'")
+            .op_sub(&Variant::from_string("'b'"))
+            .unwrap()
+            .get_string(),
+        "'a'-'b'"
+    );
+    assert_eq!(
+        Variant::from_int(1)
+            .op_add(&Variant::from_string("\"z\""))
+            .unwrap()
+            .get_string(),
+        "1z"
+    );
 
     // Compound forms modify in place; the source is kept.
     let mut v = Variant::from_int(5);
@@ -557,11 +674,17 @@ fn multiplicative_details() {
     assert_eq!(err(s.op_mul(&dur)), "Cannot multiply strings by durations");
     assert_eq!(err(dur.op_mul(&s)), "Cannot multiply durations by strings");
     assert_eq!(err(dur.op_mul(&date)), "Cannot multiply durations by dates");
-    assert_eq!(err(dur.op_mul(&dur)), "Cannot multiply durations by durations");
+    assert_eq!(
+        err(dur.op_mul(&dur)),
+        "Cannot multiply durations by durations"
+    );
 
     // Exact error texts of operator/=.
     assert_eq!(err(b.op_div(&i)), "Cannot divide Boolean values");
-    assert_eq!(err(i.op_div(&b)), "Cannot divide integers by Boolean values");
+    assert_eq!(
+        err(i.op_div(&b)),
+        "Cannot divide integers by Boolean values"
+    );
     assert_eq!(err(i.op_div(&zero)), "Cannot divide by zero");
     assert_eq!(err(i.op_div(&rzero)), "Cannot divide by zero");
     assert_eq!(err(i.op_div(&dzero)), "Cannot divide by zero");
@@ -569,7 +692,10 @@ fn multiplicative_details() {
     assert_eq!(err(r.op_div(&rzero)), "Cannot divide by zero");
     assert_eq!(err(r.op_div(&dzero)), "Cannot divide by zero");
     assert_eq!(err(dur.op_div(&zero)), "Cannot divide by zero");
-    assert_eq!(err(dur.op_div(&Variant::from_real(-0.0))), "Cannot divide by zero");
+    assert_eq!(
+        err(dur.op_div(&Variant::from_real(-0.0))),
+        "Cannot divide by zero"
+    );
     assert_eq!(err(i.op_div(&s)), "Cannot divide integer by string");
     assert_eq!(err(i.op_div(&date)), "Cannot divide integer by date values");
     assert_eq!(err(r.op_div(&b)), "Cannot divide real by Boolean");
@@ -590,7 +716,10 @@ fn multiplicative_details() {
     assert_eq!(err(r.op_mod(&rzero)), "Cannot modulo zero");
     assert_eq!(err(i.op_mod(&s)), "Cannot modulo integer by string");
     assert_eq!(err(i.op_mod(&date)), "Cannot modulo integer by date values");
-    assert_eq!(err(i.op_mod(&dur)), "Cannot modulo integer by duration values");
+    assert_eq!(
+        err(i.op_mod(&dur)),
+        "Cannot modulo integer by duration values"
+    );
     assert_eq!(err(r.op_mod(&b)), "Cannot modulo real by Boolean");
     assert_eq!(err(r.op_mod(&s)), "Cannot modulo real numbers by strings");
     assert_eq!(err(r.op_mod(&date)), "Cannot modulo real numbers by dates");
@@ -600,15 +729,32 @@ fn multiplicative_details() {
     assert_eq!(err(dur.op_mod(&i)), "Cannot modulo duration values");
 
     // String repetition; *= dequotes the right operand only.
-    assert_eq!(Variant::from_int(3).op_mul(&Variant::from_string("'ab'")).unwrap().get_string(), "ababab");
-    assert_eq!(Variant::from_string("'ab'").op_mul(&Variant::from_int(2)).unwrap().get_string(), "'ab''ab'");
+    assert_eq!(
+        Variant::from_int(3)
+            .op_mul(&Variant::from_string("'ab'"))
+            .unwrap()
+            .get_string(),
+        "ababab"
+    );
+    assert_eq!(
+        Variant::from_string("'ab'")
+            .op_mul(&Variant::from_int(2))
+            .unwrap()
+            .get_string(),
+        "'ab''ab'"
+    );
     let v = Variant::from_int(0).op_mul(&s).unwrap();
     assert_eq!((v.type_(), v.get_string()), (Type::String, ""));
     assert_eq!(Variant::from_int(-2).op_mul(&s).unwrap().get_string(), "");
     assert_eq!(s.op_mul(&Variant::from_int(1)).unwrap().get_string(), "x");
     assert_eq!(s.op_mul(&zero).unwrap().get_string(), "x");
     assert_eq!(f.op_mul(&s).unwrap().get_string(), "");
-    assert_eq!(b.op_mul(&Variant::from_string("\"y\"")).unwrap().get_string(), "y");
+    assert_eq!(
+        b.op_mul(&Variant::from_string("\"y\""))
+            .unwrap()
+            .get_string(),
+        "y"
+    );
     assert_eq!(s.op_mul(&f).unwrap().get_string(), "");
     assert_eq!(s.op_mul(&b).unwrap().get_string(), "x");
     // (int) _integer truncates: 2^32 + 2 repeats twice.
@@ -618,14 +764,38 @@ fn multiplicative_details() {
 
     // (time_t)(unsigned)(int) of real products / quotients.
     let v = Variant::from_real(-1.5).op_mul(&dur).unwrap();
-    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 4_294_967_295 - 14));
-    assert_eq!(dur.op_mul(&Variant::from_real(-0.5)).unwrap().get_duration(), 4_294_967_295 - 4);
-    assert_eq!(dur.op_mul(&Variant::from_real(1e10)).unwrap().get_duration(), 2_147_483_648);
-    assert_eq!(dur.op_div(&Variant::from_real(-2.0)).unwrap().get_duration(), 4_294_967_291);
+    assert_eq!(
+        (v.type_(), v.get_duration()),
+        (Type::Duration, 4_294_967_295 - 14)
+    );
+    assert_eq!(
+        dur.op_mul(&Variant::from_real(-0.5))
+            .unwrap()
+            .get_duration(),
+        4_294_967_295 - 4
+    );
+    assert_eq!(
+        dur.op_mul(&Variant::from_real(1e10))
+            .unwrap()
+            .get_duration(),
+        2_147_483_648
+    );
+    assert_eq!(
+        dur.op_div(&Variant::from_real(-2.0))
+            .unwrap()
+            .get_duration(),
+        4_294_967_291
+    );
     let v = Variant::from_real(-20.0).op_div(&dur).unwrap();
-    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 4_294_967_294));
+    assert_eq!(
+        (v.type_(), v.get_duration()),
+        (Type::Duration, 4_294_967_294)
+    );
     let v = Variant::from_int(-25).op_div(&dur).unwrap();
-    assert_eq!((v.type_(), v.get_duration()), (Type::Duration, 4_294_967_294));
+    assert_eq!(
+        (v.type_(), v.get_duration()),
+        (Type::Duration, 4_294_967_294)
+    );
 
     // Integer division truncates toward zero; duration / duration is real
     // with no zero check.
@@ -638,7 +808,10 @@ fn multiplicative_details() {
 
     // Remainders: integer % keeps the dividend's sign, reals use fmod.
     assert_eq!(Variant::from_int(-7).op_mod(&i).unwrap().get_integer(), -1);
-    assert_eq!(Variant::from_real(-7.5).op_mod(&i).unwrap().get_real(), -1.5);
+    assert_eq!(
+        Variant::from_real(-7.5).op_mod(&i).unwrap().get_real(),
+        -1.5
+    );
     let v = Variant::from_int(7).op_mod(&r).unwrap();
     assert_eq!((v.type_(), v.get_real()), (Type::Real, 1.0));
 

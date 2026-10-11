@@ -44,7 +44,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs03.get_bool(), false, "untrue ~ 'foo' --> false");
 
     let vs04 = Variant::from_bool(vs0.op_match(&v4, &task)?);
-    t.is(vs04.type_(), Type::Boolean, "untrue ~ 1234567890 --> boolean");
+    t.is(
+        vs04.type_(),
+        Type::Boolean,
+        "untrue ~ 1234567890 --> boolean",
+    );
     t.is(vs04.get_bool(), false, "untrue ~ 1234567890 --> false");
 
     let vs05 = Variant::from_bool(vs0.op_match(&v5, &task)?);
@@ -92,7 +96,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs23.get_bool(), false, "3.14159 ~ 'foo' --> false");
 
     let vs24 = Variant::from_bool(vs2.op_match(&v4, &task)?);
-    t.is(vs24.type_(), Type::Boolean, "3.14159 ~ 1234567890 --> boolean");
+    t.is(
+        vs24.type_(),
+        Type::Boolean,
+        "3.14159 ~ 1234567890 --> boolean",
+    );
     t.is(vs24.get_bool(), false, "3.14159 ~ 1234567890 --> false");
 
     let vs25 = Variant::from_bool(vs2.op_match(&v5, &task)?);
@@ -116,7 +124,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(vs33.get_bool(), true, "foolish ~ 'foo' --> true");
 
     let vs34 = Variant::from_bool(vs3.op_match(&v4, &task)?);
-    t.is(vs34.type_(), Type::Boolean, "foolish ~ 1234567890 --> boolean");
+    t.is(
+        vs34.type_(),
+        Type::Boolean,
+        "foolish ~ 1234567890 --> boolean",
+    );
     t.is(vs34.get_bool(), false, "foolish ~ 1234567890 --> false");
 
     let vs35 = Variant::from_bool(vs3.op_match(&v5, &task)?);
@@ -238,7 +250,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v43.get_bool(), false, "1234567890 ~ 'foo' --> false");
 
     let v44 = Variant::from_bool(v4.op_match(&v4, &task)?);
-    t.is(v44.type_(), Type::Boolean, "1234567890 ~ 1234567890 --> boolean");
+    t.is(
+        v44.type_(),
+        Type::Boolean,
+        "1234567890 ~ 1234567890 --> boolean",
+    );
     t.is(v44.get_bool(), true, "1234567890 ~ 1234567890 --> true");
 
     let v45 = Variant::from_bool(v4.op_match(&v5, &task)?);
@@ -332,33 +348,69 @@ fn annotations_and_tags() {
         Variant::set_search_case_sensitive(true);
 
         // The annotations are searched only for a "description" left operand.
-        assert!(description("plain").op_match(&s("first"), &task).unwrap(), "regex={regex}");
-        assert!(description("plain").op_match(&s("NOTE"), &task).unwrap(), "regex={regex}");
-        assert!(!description("plain").op_match(&s("absent"), &task).unwrap(), "regex={regex}");
-        assert!(description("plain").op_nomatch(&s("absent"), &task).unwrap(), "regex={regex}");
-        assert!(!s("plain").op_match(&s("first"), &task).unwrap(), "regex={regex}");
-        assert!(s("plain").op_nomatch(&s("first"), &task).unwrap(), "regex={regex}");
+        assert!(
+            description("plain").op_match(&s("first"), &task).unwrap(),
+            "regex={regex}"
+        );
+        assert!(
+            description("plain").op_match(&s("NOTE"), &task).unwrap(),
+            "regex={regex}"
+        );
+        assert!(
+            !description("plain").op_match(&s("absent"), &task).unwrap(),
+            "regex={regex}"
+        );
+        assert!(
+            description("plain")
+                .op_nomatch(&s("absent"), &task)
+                .unwrap(),
+            "regex={regex}"
+        );
+        assert!(
+            !s("plain").op_match(&s("first"), &task).unwrap(),
+            "regex={regex}"
+        );
+        assert!(
+            s("plain").op_nomatch(&s("first"), &task).unwrap(),
+            "regex={regex}"
+        );
         let mut project = Variant::from_string("plain");
         project.set_source("project");
-        assert!(!project.op_match(&s("first"), &task).unwrap(), "regex={regex}");
+        assert!(
+            !project.op_match(&s("first"), &task).unwrap(),
+            "regex={regex}"
+        );
 
         // Case sensitivity applies to the annotations too.
-        assert!(!description("plain").op_match(&s("second"), &task).unwrap(), "regex={regex}");
+        assert!(
+            !description("plain").op_match(&s("second"), &task).unwrap(),
+            "regex={regex}"
+        );
         Variant::set_search_case_sensitive(false);
-        assert!(description("plain").op_match(&s("second"), &task).unwrap(), "regex={regex}");
-        assert!(description("PLAIN").op_match(&s("'plain'"), &task).unwrap(), "regex={regex}");
+        assert!(
+            description("plain").op_match(&s("second"), &task).unwrap(),
+            "regex={regex}"
+        );
+        assert!(
+            description("PLAIN").op_match(&s("'plain'"), &task).unwrap(),
+            "regex={regex}"
+        );
     }
 
     // Regex syntax applies to the annotations with searchUsingRegex only.
     Variant::set_search_case_sensitive(true);
     Variant::set_search_using_regex(true);
-    assert!(description("plain").op_match(&s("^Second.*here$"), &task).unwrap());
+    assert!(description("plain")
+        .op_match(&s("^Second.*here$"), &task)
+        .unwrap());
     Variant::set_search_using_regex(false);
     assert!(!description("plain").op_match(&s("f.rst"), &task).unwrap());
 
     // The placeholder Task has no annotations.
     Variant::set_search_using_regex(true);
-    assert!(!description("plain").op_match(&s("first"), &Task::default()).unwrap());
+    assert!(!description("plain")
+        .op_match(&s("first"), &Task::default())
+        .unwrap());
 
     // hastag / notag: the right operand is cast to string and dequoted.
     let v = Variant::default();
@@ -369,7 +421,9 @@ fn annotations_and_tags() {
     assert!(v.op_notag(&s("work"), &task).unwrap());
     assert!(!v.op_hastag(&Variant::from_int(1), &task).unwrap());
     assert!(MockTask::new(&[], &["42"]).has_tag("42").unwrap());
-    assert!(v.op_hastag(&Variant::from_int(42), &MockTask::new(&[], &["42"])).unwrap());
+    assert!(v
+        .op_hastag(&Variant::from_int(42), &MockTask::new(&[], &["42"]))
+        .unwrap());
     assert!(!v.op_hastag(&s("home"), &Task::default()).unwrap());
     assert!(v.op_notag(&s("home"), &Task::default()).unwrap());
 }
@@ -440,15 +494,23 @@ fn invalid_regex_is_a_runtime_error() {
     let task = MockTask::new(&["note"], &[]);
 
     for pattern in ["(", "'('", "[z-a]"] {
-        let err = description("x").op_match(&Variant::from_string(pattern), &task).unwrap_err();
+        let err = description("x")
+            .op_match(&Variant::from_string(pattern), &task)
+            .unwrap_err();
         assert!(matches!(err, TwError::Runtime(_)), "{pattern}: {err:?}");
-        let err = Variant::from_int(1).op_nomatch(&Variant::from_string(pattern), &task).unwrap_err();
+        let err = Variant::from_int(1)
+            .op_nomatch(&Variant::from_string(pattern), &task)
+            .unwrap_err();
         assert!(matches!(err, TwError::Runtime(_)), "{pattern}: {err:?}");
     }
-    let err = description("x").op_match(&Variant::from_string("("), &task).unwrap_err();
+    let err = description("x")
+        .op_match(&Variant::from_string("("), &task)
+        .unwrap_err();
     assert_eq!(err.to_string(), "Parenthesis is not closed.");
 
     // Without regex search the same pattern is a plain substring.
     Variant::set_search_using_regex(false);
-    assert!(Variant::from_string("a(b").op_match(&Variant::from_string("("), &task).unwrap());
+    assert!(Variant::from_string("a(b")
+        .op_match(&Variant::from_string("("), &task)
+        .unwrap());
 }

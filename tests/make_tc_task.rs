@@ -7,7 +7,10 @@ use std::process::Command;
 use taskwarrior::tdb2::Tdb2;
 
 fn make_tc_task(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_make_tc_task")).args(args).output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_make_tc_task"))
+        .args(args)
+        .output()
+        .unwrap()
 }
 
 #[test]
@@ -15,7 +18,10 @@ fn no_arguments_prints_usage() {
     let output = make_tc_task(&[]);
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
-    assert_eq!(String::from_utf8_lossy(&output.stderr), "USAGE: make_tc_task DATADIR KEY=VALUE ..\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "USAGE: make_tc_task DATADIR KEY=VALUE ..\n"
+    );
 }
 
 #[test]
@@ -23,7 +29,10 @@ fn argument_without_equals_prints_usage() {
     let dir = tempfile::tempdir().unwrap();
     let output = make_tc_task(&[dir.path().to_str().unwrap(), "description"]);
     assert_eq!(output.status.code(), Some(1));
-    assert_eq!(String::from_utf8_lossy(&output.stderr), "USAGE: make_tc_task DATADIR KEY=VALUE ..\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "USAGE: make_tc_task DATADIR KEY=VALUE ..\n"
+    );
 }
 
 #[test]
@@ -45,7 +54,10 @@ fn writes_task_properties_verbatim() {
 
     let mut tdb2 = Tdb2::new();
     tdb2.open_replica_at(datadir, false, false).unwrap();
-    let task = tdb2.get_by_uuid(&uuid).unwrap().expect("task written to the replica");
+    let task = tdb2
+        .get_by_uuid(&uuid)
+        .unwrap()
+        .expect("task written to the replica");
     assert_eq!(task.get("description"), "hello world");
     assert_eq!(task.get("status"), "pending");
     assert_eq!(task.get("entry"), "1700000000");

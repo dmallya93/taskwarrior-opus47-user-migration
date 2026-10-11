@@ -53,7 +53,9 @@ use std::collections::BTreeMap;
 
 use crate::shared::datetime::Datetime;
 use crate::shared::duration::Duration;
-use crate::shared::unicode::{unicode_hex_digit, unicode_latin_alpha, unicode_latin_digit, unicode_whitespace};
+use crate::shared::unicode::{
+    unicode_hex_digit, unicode_latin_alpha, unicode_latin_digit, unicode_whitespace,
+};
 use crate::shared::utf8::{utf8_character, utf8_next_char};
 
 /// C++ file-static `uuid_pattern`.
@@ -233,7 +235,11 @@ impl Lexer {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Lexer (const std::string&)`.
     pub fn new(text: &str) -> Self {
-        Lexer { _text: text.to_string(), _cursor: 0, _eos: text.len() }
+        Lexer {
+            _text: text.to_string(),
+            _cursor: 0,
+            _eos: text.len(),
+        }
     }
 
     /// C++ `_text[i]`.
@@ -428,7 +434,11 @@ impl Lexer {
         }
 
         // FILTER operators that don't need to be surrounded by whitespace.
-        if left == b'(' as i32 || left == b')' as i32 || right == b'(' as i32 || right == b')' as i32 {
+        if left == b'(' as i32
+            || left == b')' as i32
+            || right == b'(' as i32
+            || right == b')' as i32
+        {
             return true;
         }
 
@@ -508,7 +518,10 @@ impl Lexer {
 
     /// C++ `Lexer::hexToInt (int, int, int, int)`.
     pub fn hex_to_int4(c0: i32, c1: i32, c2: i32, c3: i32) -> i32 {
-        (Self::hex_to_int(c0) << 12) + (Self::hex_to_int(c1) << 8) + (Self::hex_to_int(c2) << 4) + Self::hex_to_int(c3)
+        (Self::hex_to_int(c0) << 12)
+            + (Self::hex_to_int(c1) << 8)
+            + (Self::hex_to_int(c2) << 4)
+            + Self::hex_to_int(c3)
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -535,7 +548,10 @@ impl Lexer {
     /// ```
     pub fn common_length_at(left: &str, mut l: usize, right: &str, mut r: usize) -> usize {
         let (lb, rb) = (left.as_bytes(), right.as_bytes());
-        while ch(lb, l) == ch(rb, r) && utf8_next_char(left, &mut l) != 0 && utf8_next_char(right, &mut r) != 0 {}
+        while ch(lb, l) == ch(rb, r)
+            && utf8_next_char(left, &mut l) != 0
+            && utf8_next_char(right, &mut r) != 0
+        {}
 
         l
     }
@@ -683,7 +699,11 @@ impl Lexer {
         // Try an ISO date parse.
         let mut iso_i: usize = 0;
         let mut iso = Datetime::new();
-        if iso.parse(&substr_from(&self._text, self._cursor), &mut iso_i, &Self::date_format()) {
+        if iso.parse(
+            &substr_from(&self._text, self._cursor),
+            &mut iso_i,
+            &Self::date_format(),
+        ) {
             *type_ = Type::date;
             *token = substr(&self._text, self._cursor, iso_i);
             self._cursor += iso_i;
@@ -750,7 +770,9 @@ impl Lexer {
         }
 
         let next = self.at(marker + i);
-        if i >= UUID_MIN_LENGTH && (!end_boundary || next == 0 || ws(next) || Self::is_single_char_operator(next)) {
+        if i >= UUID_MIN_LENGTH
+            && (!end_boundary || next == 0 || ws(next) || Self::is_single_char_operator(next))
+        {
             *token = substr(&self._text, self._cursor, i);
             *type_ = Type::uuid;
             self._cursor += i;
@@ -766,7 +788,10 @@ impl Lexer {
     pub fn is_hex_number(&mut self, token: &mut String, type_: &mut Type) -> bool {
         let mut marker = self._cursor;
 
-        if self._eos.wrapping_sub(marker) >= 3 && self.at(marker) == b'0' as i32 && self.at(marker + 1) == b'x' as i32 {
+        if self._eos.wrapping_sub(marker) >= 3
+            && self.at(marker) == b'0' as i32
+            && self.at(marker + 1) == b'x' as i32
+        {
             marker += 2;
 
             while unicode_hex_digit(self.at(marker) as u32) {
@@ -845,7 +870,10 @@ impl Lexer {
             // Lookahead: !<unicodeWhitespace> | !<isSingleCharOperator>
             // If there is an immediately consecutive character, that is not an
             // operator, fail.
-            if self._eos > marker && !ws(self.at(marker)) && !Self::is_single_char_operator(self.at(marker)) {
+            if self._eos > marker
+                && !ws(self.at(marker))
+                && !Self::is_single_char_operator(self.at(marker))
+            {
                 return false;
             }
 
@@ -921,7 +949,10 @@ impl Lexer {
                 marker += 1;
             }
 
-            if self.at(marker) == b':' as i32 && self.at(marker + 1) == b'/' as i32 && self.at(marker + 2) == b'/' as i32 {
+            if self.at(marker) == b':' as i32
+                && self.at(marker + 1) == b'/' as i32
+                && self.at(marker + 2) == b'/' as i32
+            {
                 marker += 3;
 
                 while marker < self._eos && !ws(self.at(marker)) {
@@ -1048,7 +1079,9 @@ impl Lexer {
         if self.at(marker) == b'+' as i32 || self.at(marker) == b'-' as i32 {
             marker += 1;
 
-            if Self::is_identifier_start(self.at(marker)) && Self::read_word(&self._text, &mut marker, token) {
+            if Self::is_identifier_start(self.at(marker))
+                && Self::read_word(&self._text, &mut marker, token)
+            {
                 *token = substr(&self._text, self._cursor, marker.wrapping_sub(self._cursor));
                 *type_ = Type::tag;
                 self._cursor = marker;
@@ -1144,7 +1177,8 @@ impl Lexer {
 
     /// `_eos - marker >= literal.length () && _text.substr (marker, n) == literal`.
     fn has_literal_at(&self, marker: usize, literal: &str) -> bool {
-        self._eos.wrapping_sub(marker) >= literal.len() && substr(&self._text, marker, literal.len()) == literal
+        self._eos.wrapping_sub(marker) >= literal.len()
+            && substr(&self._text, marker, literal.len()) == literal
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -1167,7 +1201,12 @@ impl Lexer {
         }
 
         if self._eos.wrapping_sub(marker) >= 3
-            && Self::is_triple_char_operator(self.at(marker), self.at(marker + 1), self.at(marker + 2), self.at(marker + 3))
+            && Self::is_triple_char_operator(
+                self.at(marker),
+                self.at(marker + 1),
+                self.at(marker + 2),
+                self.at(marker + 3),
+            )
         {
             marker += 3;
             *type_ = Type::op;
@@ -1175,7 +1214,11 @@ impl Lexer {
             self._cursor = marker;
             true
         } else if self._eos.wrapping_sub(marker) >= 2
-            && Self::is_double_char_operator(self.at(marker), self.at(marker + 1), self.at(marker + 2))
+            && Self::is_double_char_operator(
+                self.at(marker),
+                self.at(marker + 1),
+                self.at(marker + 2),
+            )
         {
             marker += 2;
             *type_ = Type::op;
@@ -1244,7 +1287,9 @@ impl Lexer {
         // rc. ...
         let mut partial_token = String::new();
         let mut partial_type = Type::word;
-        if self.is_literal("rc.", false, false) && self.is_word(&mut partial_token, &mut partial_type) {
+        if self.is_literal("rc.", false, false)
+            && self.is_word(&mut partial_token, &mut partial_type)
+        {
             // Configuration names may contain dashes, as in 'context.my-ctx',
             // so keep consuming as long as a dash is followed by more of the
             // name.
@@ -1330,11 +1375,14 @@ impl Lexer {
 
                 // if attribute type is 'date', then it has sub-elements.
                 // (C++ `attributes[attribute]` inserts a missing key.)
-                let is_date_attribute =
-                    ATTRIBUTES.with(|a| a.borrow_mut().entry(attribute).or_default().as_str() == "date");
+                let is_date_attribute = ATTRIBUTES
+                    .with(|a| a.borrow_mut().entry(attribute).or_default().as_str() == "date");
                 if is_date_attribute
                     && self.is_one_of(
-                        &["year", "month", "day", "week", "weekday", "julian", "hour", "minute", "second"],
+                        &[
+                            "year", "month", "day", "week", "weekday", "julian", "hour", "minute",
+                            "second",
+                        ],
                         false,
                         true,
                     )
@@ -1375,7 +1423,10 @@ impl Lexer {
                         || (self.is_literal("entry", false, false)
                             && self.is_literal(".", false, false)
                             && self.is_one_of(
-                                &["year", "month", "day", "week", "weekday", "julian", "hour", "minute", "second"],
+                                &[
+                                    "year", "month", "day", "week", "weekday", "julian", "hour",
+                                    "minute", "second",
+                                ],
                                 false,
                                 true,
                             ))
@@ -1422,7 +1473,10 @@ impl Lexer {
     pub fn is_word(&mut self, token: &mut String, type_: &mut Type) -> bool {
         let mut marker = self._cursor;
 
-        while self.at(marker) != 0 && !ws(self.at(marker)) && !Self::is_single_char_operator(self.at(marker)) {
+        while self.at(marker) != 0
+            && !ws(self.at(marker))
+            && !Self::is_single_char_operator(self.at(marker))
+        {
             utf8_next_char(&self._text, &mut marker);
         }
 
@@ -1438,7 +1492,12 @@ impl Lexer {
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Lexer::isLiteral`.
-    pub fn is_literal(&mut self, literal: &str, allow_abbreviations: bool, end_boundary: bool) -> bool {
+    pub fn is_literal(
+        &mut self,
+        literal: &str,
+        allow_abbreviations: bool,
+        end_boundary: bool,
+    ) -> bool {
         let common = Self::common_length_at(literal, 0, &self._text, self._cursor);
 
         // Without abbreviations, common must equal literal length.
@@ -1463,7 +1522,12 @@ impl Lexer {
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Lexer::isOneOf (const std::vector<std::string>&, bool, bool)`.
-    pub fn is_one_of<S: AsRef<str>>(&mut self, options: &[S], allow_abbreviations: bool, end_boundary: bool) -> bool {
+    pub fn is_one_of<S: AsRef<str>>(
+        &mut self,
+        options: &[S],
+        allow_abbreviations: bool,
+        end_boundary: bool,
+    ) -> bool {
         for item in options {
             if self.is_literal(item.as_ref(), allow_abbreviations, end_boundary) {
                 return true;
@@ -1550,7 +1614,12 @@ impl Lexer {
     ///   'one two'
     /// ```
     /// Result includes the quotes.
-    pub fn read_word_quoted(text: &str, quotes: &str, cursor: &mut usize, word: &mut String) -> bool {
+    pub fn read_word_quoted(
+        text: &str,
+        quotes: &str,
+        cursor: &mut usize,
+        word: &mut String,
+    ) -> bool {
         let bytes = text.as_bytes();
         if !find_char(quotes, ch(bytes, *cursor)) {
             return false;
@@ -1691,21 +1760,23 @@ impl Lexer {
         // seen, taking into consideration the overlapping : characters.
         let mut sep: Option<usize> = None;
         let mut sep_end: usize = 0;
-        if let Some(d) = sep_defer.filter(|&d| le_npos(d, sep_eval) && le_npos(d, sep_colon) && le_npos(d, sep_equal)) {
+        if let Some(d) = sep_defer
+            .filter(|&d| le_npos(d, sep_eval) && le_npos(d, sep_colon) && le_npos(d, sep_equal))
+        {
             sep = Some(d);
             sep_end = d + 2;
-        } else if let Some(e) =
-            sep_eval.filter(|&e| le_npos(e, sep_defer) && le_npos(e, sep_colon) && le_npos(e, sep_equal))
+        } else if let Some(e) = sep_eval
+            .filter(|&e| le_npos(e, sep_defer) && le_npos(e, sep_colon) && le_npos(e, sep_equal))
         {
             sep = Some(e);
             sep_end = e + 2;
-        } else if let Some(c) =
-            sep_colon.filter(|&c| le_npos(c, sep_defer) && le_npos(c, sep_eval) && le_npos(c, sep_equal))
+        } else if let Some(c) = sep_colon
+            .filter(|&c| le_npos(c, sep_defer) && le_npos(c, sep_eval) && le_npos(c, sep_equal))
         {
             sep = Some(c);
             sep_end = c + 1;
-        } else if let Some(q) =
-            sep_equal.filter(|&q| le_npos(q, sep_defer) && le_npos(q, sep_eval) && le_npos(q, sep_colon))
+        } else if let Some(q) = sep_equal
+            .filter(|&q| le_npos(q, sep_defer) && le_npos(q, sep_eval) && le_npos(q, sep_colon))
         {
             sep = Some(q);
             sep_end = q + 1;
@@ -1741,10 +1812,17 @@ impl Lexer {
     /// C++ `Lexer::decomposeSubstitution`.
     ///
     /// `/ <from> / <to> / [<flags>]`
-    pub fn decompose_substitution(text: &str, from: &mut String, to: &mut String, flags: &mut String) -> bool {
+    pub fn decompose_substitution(
+        text: &str,
+        from: &mut String,
+        to: &mut String,
+        flags: &mut String,
+    ) -> bool {
         let mut parsed_from = String::new();
         let mut cursor: usize = 0;
-        if Self::read_word_quoted(text, "/", &mut cursor, &mut parsed_from) && !parsed_from.is_empty() {
+        if Self::read_word_quoted(text, "/", &mut cursor, &mut parsed_from)
+            && !parsed_from.is_empty()
+        {
             cursor -= 1;
             let mut parsed_to = String::new();
             if Self::read_word_quoted(text, "/", &mut cursor, &mut parsed_to) {
@@ -1823,7 +1901,10 @@ mod tests {
         Lexer::set_minimum_match_length(3);
 
         Lexer::insert_attribute("due", "date");
-        assert_eq!(Lexer::with_attributes(|a| a.get("due").cloned()), Some("date".to_string()));
+        assert_eq!(
+            Lexer::with_attributes(|a| a.get("due").cloned()),
+            Some("date".to_string())
+        );
         Lexer::set_attributes(BTreeMap::new());
         assert!(Lexer::attributes().is_empty());
     }
@@ -1831,7 +1912,10 @@ mod tests {
     #[test]
     fn empty_and_whitespace() {
         assert!(tokens("").is_empty(), "'' --> no tokens");
-        assert!(tokens("       \t ").is_empty(), "'       \\t ' --> no tokens");
+        assert!(
+            tokens("       \t ").is_empty(),
+            "'       \\t ' --> no tokens"
+        );
     }
 
     #[test]
@@ -1916,7 +2000,10 @@ mod tests {
         assert_eq!(Lexer::hex_to_int('a' as i32), 10);
         assert_eq!(Lexer::hex_to_int('F' as i32), 15);
         assert_eq!(Lexer::hex_to_int2('f' as i32, 'f' as i32), 255);
-        assert_eq!(Lexer::hex_to_int4('2' as i32, '0' as i32, 'a' as i32, 'c' as i32), 0x20ac);
+        assert_eq!(
+            Lexer::hex_to_int4('2' as i32, '0' as i32, 'a' as i32, 'c' as i32),
+            0x20ac
+        );
 
         assert!(Lexer::is_all_digits("0123"));
         assert!(!Lexer::is_all_digits(""));
@@ -1932,8 +2019,12 @@ mod tests {
         assert!(Lexer::is_boundary('r' as i32, ' ' as i32));
         assert!(!Lexer::is_boundary('r' as i32, 'x' as i32));
         assert!(Lexer::is_double_char_operator('o' as i32, 'r' as i32, 0));
-        assert!(!Lexer::is_double_char_operator('o' as i32, 'r' as i32, 'g' as i32));
-        assert!(Lexer::is_triple_char_operator('a' as i32, 'n' as i32, 'd' as i32, 0));
+        assert!(!Lexer::is_double_char_operator(
+            'o' as i32, 'r' as i32, 'g' as i32
+        ));
+        assert!(Lexer::is_triple_char_operator(
+            'a' as i32, 'n' as i32, 'd' as i32, 0
+        ));
         assert!(Lexer::is_hard_boundary('a' as i32, '(' as i32));
     }
 
@@ -1949,15 +2040,30 @@ mod tests {
     fn read_word_variants() {
         let mut cursor = 0;
         let mut word = String::new();
-        assert!(Lexer::read_word_quoted("'one two' three", "'\"", &mut cursor, &mut word));
+        assert!(Lexer::read_word_quoted(
+            "'one two' three",
+            "'\"",
+            &mut cursor,
+            &mut word
+        ));
         assert_eq!(word, "'one two'");
         assert_eq!(cursor, 9);
 
         cursor = 0;
-        assert!(!Lexer::read_word_quoted("'unterminated", "'\"", &mut cursor, &mut word));
+        assert!(!Lexer::read_word_quoted(
+            "'unterminated",
+            "'\"",
+            &mut cursor,
+            &mut word
+        ));
 
         cursor = 0;
-        assert!(Lexer::read_word_quoted("\"a\\\"b\"", "'\"", &mut cursor, &mut word));
+        assert!(Lexer::read_word_quoted(
+            "\"a\\\"b\"",
+            "'\"",
+            &mut cursor,
+            &mut word
+        ));
         assert_eq!(word, "\"a\"b\"");
 
         cursor = 0;
@@ -1980,20 +2086,82 @@ mod tests {
 
     #[test]
     fn decompositions() {
-        let (mut name, mut modifier, mut sep, mut value) = (String::new(), String::new(), String::new(), String::new());
-        assert!(Lexer::decompose_pair("name.mod:=value", &mut name, &mut modifier, &mut sep, &mut value));
-        assert_eq!((name.as_str(), modifier.as_str(), sep.as_str(), value.as_str()), ("name", "mod", ":=", "value"));
-        assert!(Lexer::decompose_pair("rc.x::y", &mut name, &mut modifier, &mut sep, &mut value));
-        assert_eq!((name.as_str(), modifier.as_str(), sep.as_str(), value.as_str()), ("rc", "x", "::", "y"));
-        assert!(Lexer::decompose_pair("name=", &mut name, &mut modifier, &mut sep, &mut value));
-        assert_eq!((name.as_str(), modifier.as_str(), sep.as_str(), value.as_str()), ("name", "", "=", ""));
-        assert!(!Lexer::decompose_pair(":value", &mut name, &mut modifier, &mut sep, &mut value));
-        assert!(!Lexer::decompose_pair("novalue", &mut name, &mut modifier, &mut sep, &mut value));
+        let (mut name, mut modifier, mut sep, mut value) =
+            (String::new(), String::new(), String::new(), String::new());
+        assert!(Lexer::decompose_pair(
+            "name.mod:=value",
+            &mut name,
+            &mut modifier,
+            &mut sep,
+            &mut value
+        ));
+        assert_eq!(
+            (
+                name.as_str(),
+                modifier.as_str(),
+                sep.as_str(),
+                value.as_str()
+            ),
+            ("name", "mod", ":=", "value")
+        );
+        assert!(Lexer::decompose_pair(
+            "rc.x::y",
+            &mut name,
+            &mut modifier,
+            &mut sep,
+            &mut value
+        ));
+        assert_eq!(
+            (
+                name.as_str(),
+                modifier.as_str(),
+                sep.as_str(),
+                value.as_str()
+            ),
+            ("rc", "x", "::", "y")
+        );
+        assert!(Lexer::decompose_pair(
+            "name=",
+            &mut name,
+            &mut modifier,
+            &mut sep,
+            &mut value
+        ));
+        assert_eq!(
+            (
+                name.as_str(),
+                modifier.as_str(),
+                sep.as_str(),
+                value.as_str()
+            ),
+            ("name", "", "=", "")
+        );
+        assert!(!Lexer::decompose_pair(
+            ":value",
+            &mut name,
+            &mut modifier,
+            &mut sep,
+            &mut value
+        ));
+        assert!(!Lexer::decompose_pair(
+            "novalue",
+            &mut name,
+            &mut modifier,
+            &mut sep,
+            &mut value
+        ));
 
         let (mut from, mut to, mut flags) = (String::new(), String::new(), String::new());
-        assert!(Lexer::decompose_substitution("/a/b/g", &mut from, &mut to, &mut flags));
-        assert_eq!((from.as_str(), to.as_str(), flags.as_str()), ("a", "b", "g"));
-        assert!(!Lexer::decompose_substitution("/a/b/c/", &mut from, &mut to, &mut flags));
+        assert!(Lexer::decompose_substitution(
+            "/a/b/g", &mut from, &mut to, &mut flags
+        ));
+        assert_eq!(
+            (from.as_str(), to.as_str(), flags.as_str()),
+            ("a", "b", "g")
+        );
+        assert!(!Lexer::decompose_substitution(
+            "/a/b/c/", &mut from, &mut to, &mut flags
+        ));
 
         let mut pattern = String::new();
         assert!(Lexer::decompose_pattern("/foo/", &mut pattern, &mut flags));
@@ -2011,14 +2179,26 @@ mod tests {
         assert_eq!(single("1,2"), ("1,2".to_string(), Type::set));
         assert_eq!(single("1-2,4,6-8"), ("1-2,4,6-8".to_string(), Type::set));
         assert_eq!(single("0x2f"), ("0x2f".to_string(), Type::hex));
-        assert_eq!(single("http://example.com"), ("http://example.com".to_string(), Type::url));
-        assert_eq!(single("/long/path/to/file.txt"), ("/long/path/to/file.txt".to_string(), Type::path));
-        assert_eq!(single("/from/to/g"), ("/from/to/g".to_string(), Type::substitution));
+        assert_eq!(
+            single("http://example.com"),
+            ("http://example.com".to_string(), Type::url)
+        );
+        assert_eq!(
+            single("/long/path/to/file.txt"),
+            ("/long/path/to/file.txt".to_string(), Type::path)
+        );
+        assert_eq!(
+            single("/from/to/g"),
+            ("/from/to/g".to_string(), Type::substitution)
+        );
         assert_eq!(single("/foo/"), ("/foo/".to_string(), Type::pattern));
         assert_eq!(single("_hastag_"), ("_hastag_".to_string(), Type::op));
         assert_eq!(single("<="), ("<=".to_string(), Type::op));
         assert_eq!(single("rc.foo"), ("rc.foo".to_string(), Type::dom));
-        assert_eq!(single("rc.context.my-ctx"), ("rc.context.my-ctx".to_string(), Type::dom));
+        assert_eq!(
+            single("rc.context.my-ctx"),
+            ("rc.context.my-ctx".to_string(), Type::dom)
+        );
         assert_eq!(single("system.os"), ("system.os".to_string(), Type::dom));
         assert_eq!(single("foo.bar"), ("foo.bar".to_string(), Type::identifier));
         assert!(Lexer::is_dom_str("rc.foo"));
@@ -2043,7 +2223,10 @@ mod tests {
             assert_eq!((token.as_str(), *type_), (*etoken, *etype));
         }
 
-        assert_eq!(Lexer::split("  one   two "), vec!["one".to_string(), "two".to_string()]);
+        assert_eq!(
+            Lexer::split("  one   two "),
+            vec!["one".to_string(), "two".to_string()]
+        );
     }
 
     #[test]
@@ -2074,10 +2257,19 @@ mod tests {
         Lexer::insert_attribute("description", "string");
 
         assert_eq!(single("due"), ("due".to_string(), Type::dom));
-        assert_eq!(single("123.description"), ("123.description".to_string(), Type::dom));
+        assert_eq!(
+            single("123.description"),
+            ("123.description".to_string(), Type::dom)
+        );
         assert_eq!(single("due.year"), ("due.year".to_string(), Type::dom));
-        assert_eq!(single("123.tags.PENDING"), ("123.tags.PENDING".to_string(), Type::dom));
-        assert_eq!(single("123.annotations.1.entry"), ("123.annotations.1.entry".to_string(), Type::dom));
+        assert_eq!(
+            single("123.tags.PENDING"),
+            ("123.tags.PENDING".to_string(), Type::dom)
+        );
+        assert_eq!(
+            single("123.annotations.1.entry"),
+            ("123.annotations.1.entry".to_string(), Type::dom)
+        );
     }
 }
 

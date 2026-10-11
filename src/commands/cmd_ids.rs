@@ -121,7 +121,11 @@ impl Command for CmdIDs {
         let filtered = filtered_tasks(context)?;
 
         // Find number of matching tasks.
-        let mut ids: Vec<i32> = filtered.iter().filter(|t| t.id != 0).map(|t| t.id).collect();
+        let mut ids: Vec<i32> = filtered
+            .iter()
+            .filter(|t| t.id != 0)
+            .map(|t| t.id)
+            .collect();
 
         ids.sort();
         *output = Self::compress_ids(&ids) + "\n";
@@ -451,6 +455,9 @@ mod tests {
         assert_eq!(CmdIDs::compress_ids(&[1, 2]), "1-2");
         assert_eq!(CmdIDs::compress_ids(&[1, 2, 3, 5]), "1-3 5");
         assert_eq!(CmdIDs::compress_ids(&[1, 3, 5]), "1 3 5");
-        assert_eq!(CmdIDs::compress_ids(&[1, 3, 4, 5, 7, 8, 10]), "1 3-5 7-8 10");
+        assert_eq!(
+            CmdIDs::compress_ids(&[1, 3, 4, 5, 7, 8, 10]),
+            "1 3-5 7-8 10"
+        );
     }
 }

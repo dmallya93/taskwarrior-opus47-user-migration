@@ -51,7 +51,9 @@ fn initialized(list: &[&str]) -> Context {
     let mut ctx = Context::new();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let rc = ctx.initialize_with(&args(list), &mut out, &mut err).unwrap();
+    let rc = ctx
+        .initialize_with(&args(list), &mut out, &mut err)
+        .unwrap();
     assert_eq!(rc, 0, "{}", String::from_utf8_lossy(&err));
     ctx
 }
@@ -86,7 +88,13 @@ impl Fixture {
         let mut full = vec!["task"];
         full.extend_from_slice(list);
         let ctx = initialized(&full);
-        Fixture { ctx, _dir: dir, _mml: mml, _env: env, _lock: lock }
+        Fixture {
+            ctx,
+            _dir: dir,
+            _mml: mml,
+            _env: env,
+            _lock: lock,
+        }
     }
 
     /// `Filter::subset (output)`, returning the sorted descriptions.
@@ -97,7 +105,12 @@ impl Fixture {
     }
 
     fn debug_with(&self, prefix: &str) -> Vec<String> {
-        self.ctx.debug_messages.iter().filter(|m| m.starts_with(prefix)).cloned().collect()
+        self.ctx
+            .debug_messages
+            .iter()
+            .filter(|m| m.starts_with(prefix))
+            .cloned()
+            .collect()
     }
 }
 
@@ -128,11 +141,17 @@ fn no_filter_returns_all_tasks() {
     let mut filter = Filter::new();
     let mut output = vec![];
     filter.subset(&mut f.ctx, &mut output).unwrap();
-    assert_eq!(descriptions(&output), sorted(&["one", "two", "five", "three", "four"]));
+    assert_eq!(
+        descriptions(&output),
+        sorted(&["one", "two", "five", "three", "four"])
+    );
     // C++ never sets _startCount on the no-filter path.
     assert_eq!((filter._start_count, filter._end_count), (0, 5));
     assert!(!filter.has_filter(&f.ctx));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 0 tasks --> 5 tasks [all tasks]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 0 tasks --> 5 tasks [all tasks]"]
+    );
     assert!(f.ctx.time_filter_us >= 0);
 }
 
@@ -140,7 +159,10 @@ fn no_filter_returns_all_tasks() {
 fn attribute_filter_scans_completed_tasks() {
     let mut f = Fixture::new(&["project:home", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "three"]));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 2 tasks [all tasks]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 5 tasks --> 2 tasks [all tasks]"]
+    );
 }
 
 #[test]
@@ -157,7 +179,10 @@ fn tag_filters() {
 fn virtual_tags_see_the_context() {
     let mut f = Fixture::new(&["+COMPLETED", "count"]);
     assert_eq!(f.subset(), ["three"]);
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 1 tasks [all tasks]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 5 tasks --> 1 tasks [all tasks]"]
+    );
 
     drop(f);
     let mut f = Fixture::new(&["+DELETED", "count"]);
@@ -167,7 +192,10 @@ fn virtual_tags_see_the_context() {
     drop(f);
     let mut f = Fixture::new(&["+PENDING", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "two"]));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 2 tasks [pending only]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 3 tasks --> 2 tasks [pending only]"]
+    );
 
     drop(f);
     let mut f = Fixture::new(&["+WAITING", "count"]);
@@ -184,7 +212,10 @@ fn id_filters_are_pending_only() {
     let mut f = Fixture::new(&["1", "count"]);
     assert_eq!(f.subset(), ["one"]);
     assert!(Filter::new().pending_only(&f.ctx));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 1 tasks [pending only]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 3 tasks --> 1 tasks [pending only]"]
+    );
 
     drop(f);
     let mut f = Fixture::new(&["1-2", "count"]);
@@ -196,7 +227,10 @@ fn uuid_filters_scan_all_tasks() {
     let mut f = Fixture::new(&[UUID_DONE, "count"]);
     assert_eq!(f.subset(), ["three"]);
     assert!(!Filter::new().pending_only(&f.ctx));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 1 tasks [all tasks]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 5 tasks --> 1 tasks [all tasks]"]
+    );
 
     drop(f);
     let mut f = Fixture::new(&[UUID_ONE, "count"]);
@@ -213,7 +247,10 @@ fn or_filters_scan_all_tasks() {
     drop(f);
     let mut f = Fixture::new(&["1", "or", "project:home", "count"]);
     assert_eq!(f.subset(), sorted(&["one", "three"]));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 2 tasks [all tasks]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 5 tasks --> 2 tasks [all tasks]"]
+    );
 
     drop(f);
     let mut f = Fixture::new(&["status:pending", "xor", "project:home", "count"]);
@@ -227,7 +264,10 @@ fn status_filters() {
     // 'five' has a future wait date, so its status is 'waiting'.
     assert_eq!(f.subset(), sorted(&["one", "two"]));
     assert!(Filter::new().pending_only(&f.ctx));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 2 tasks [pending only]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 3 tasks --> 2 tasks [pending only]"]
+    );
 
     drop(f);
     let mut f = Fixture::new(&["status:completed", "count"]);
@@ -236,7 +276,10 @@ fn status_filters() {
 
     drop(f);
     let mut f = Fixture::new(&["status:waiting", "count"]);
-    assert!(!Filter::new().pending_only(&f.ctx), "still one undesugared pair before prepareFilter");
+    assert!(
+        !Filter::new().pending_only(&f.ctx),
+        "still one undesugared pair before prepareFilter"
+    );
     assert_eq!(f.subset(), ["five"]);
     assert!(Filter::new().pending_only(&f.ctx));
 
@@ -261,16 +304,25 @@ fn pending_only_rules() {
     // +ACTIVE comes from the original arguments.
     drop(f);
     let mut f = Fixture::new(&["+ACTIVE", "count"]);
-    assert!(Filter::new().pending_only(&f.ctx), "read from _original_args");
+    assert!(
+        Filter::new().pending_only(&f.ctx),
+        "read from _original_args"
+    );
     assert_eq!(f.subset(), Vec::<String>::new());
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 3 tasks --> 0 tasks [pending only]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 3 tasks --> 0 tasks [pending only]"]
+    );
 
     // When GC is off, there are no shortcuts.
     drop(f);
     let mut f = Fixture::new(&["rc.gc=0", "1", "count"]);
     assert_eq!(f.subset(), ["one"]);
     assert!(!Filter::new().pending_only(&f.ctx));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 1 tasks [all tasks]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 5 tasks --> 1 tasks [all tasks]"]
+    );
 }
 
 #[test]
@@ -287,7 +339,10 @@ fn subset_of_input_list() {
     expected.sort();
     assert_eq!(descriptions(&output), expected);
     assert_eq!((filter._start_count, filter._end_count), (5, 3));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 5 tasks --> 3 tasks [list subset]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 5 tasks --> 3 tasks [list subset]"]
+    );
 }
 
 #[test]
@@ -297,9 +352,14 @@ fn subset_of_without_filter_copies_input() {
     let mut filter = Filter::new();
     let mut output = vec![input[0].clone(), input[1].clone()];
     // No safety check on the list overload, even for a write command.
-    filter.subset_of(&mut f.ctx, &input[1..3], &mut output).unwrap();
+    filter
+        .subset_of(&mut f.ctx, &input[1..3], &mut output)
+        .unwrap();
     assert_eq!(descriptions(&output), descriptions(&input[1..3]));
-    assert_eq!(f.debug_with("Filtered "), ["Filtered 2 tasks --> 2 tasks [list subset]"]);
+    assert_eq!(
+        f.debug_with("Filtered "),
+        ["Filtered 2 tasks --> 2 tasks [list subset]"]
+    );
 }
 
 #[test]
@@ -352,7 +412,11 @@ fn eval_debug_output_with_debug_parser_3() {
     assert_eq!(f.debug_with(&format!("{prefix}Postfix")).len(), 1);
     // As in C++, eval.debug (false) only comes after the loops, so every
     // per-task evaluation (5 tasks) logs as well.
-    assert!(f.debug_with("Eval identifier source 'project'").len() >= 5, "{:?}", f.ctx.debug_messages);
+    assert!(
+        f.debug_with("Eval identifier source 'project'").len() >= 5,
+        "{:?}",
+        f.ctx.debug_messages
+    );
 
     drop(f);
     let mut f = Fixture::new(&["rc.debug.parser=2", "project:home", "count"]);
@@ -371,7 +435,9 @@ fn errors_propagate() {
     drop(f);
     let mut f = Fixture::new(&["(", "project:home", "count"]);
     let input = f.ctx.tdb2.all_tasks().unwrap();
-    assert!(Filter::new().subset_of(&mut f.ctx, &input, &mut output).is_err());
+    assert!(Filter::new()
+        .subset_of(&mut f.ctx, &input, &mut output)
+        .is_err());
 }
 
 #[test]

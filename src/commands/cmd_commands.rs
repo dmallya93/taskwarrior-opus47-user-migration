@@ -115,7 +115,8 @@ impl CmdZshCommands {
             meta: CommandMeta {
                 keyword: "_zshcommands".into(),
                 usage: "task          _zshcommands".into(),
-                description: "Generates a list of all commands, for zsh autocompletion purposes".into(),
+                description: "Generates a list of all commands, for zsh autocompletion purposes"
+                    .into(),
                 read_only: true,
                 displays_id: false,
                 needs_gc: false,

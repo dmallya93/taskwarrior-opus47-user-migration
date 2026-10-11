@@ -82,13 +82,17 @@ impl Command for CmdExport {
     fn execute(&self, context: &mut Context, output: &mut String) -> Result<i32> {
         let rc = 0;
 
-        let words = context.cli2.get_words(&context.config, &mut context.debug_messages);
+        let words = context
+            .cli2
+            .get_words(&context.config, &mut context.debug_messages);
         let mut selected_report = String::new();
 
         if words.len() == 1 {
             // Find the report matching the prompt
             for command in context.commands.values() {
-                if command.category() == Category::Report && close_enough(command.keyword(), &words[0], 0) {
+                if command.category() == Category::Report
+                    && close_enough(command.keyword(), &words[0], 0)
+                {
                     selected_report = command.keyword().to_string();
                     break;
                 }
@@ -102,8 +106,12 @@ impl Command for CmdExport {
             }
         }
 
-        let mut report_sort = context.config.get(&format!("report.{selected_report}.sort"));
-        let report_filter = context.config.get(&format!("report.{selected_report}.filter"));
+        let mut report_sort = context
+            .config
+            .get(&format!("report.{selected_report}.sort"));
+        let report_filter = context
+            .config
+            .get(&format!("report.{selected_report}.filter"));
 
         let mut sort_order = split(&report_sort, ',');
         if !sort_order.is_empty() && sort_order[0] != "none" {

@@ -99,7 +99,9 @@ impl Command for CmdVersion {
         ));
         out.push_str(&os_name());
         out.push('\n');
-        out.push_str(&format!("Copyright (C) 2006 - {year} T. Babej, P. Beckingham, F. Hernandez.\n"));
+        out.push_str(&format!(
+            "Copyright (C) 2006 - {year} T. Babej, P. Beckingham, F. Hernandez.\n"
+        ));
         out.push('\n');
         out.push_str(&disclaimer.render());
         out.push('\n');
@@ -175,15 +177,21 @@ mod tests {
     use super::*;
     use crate::context::set_stdout_tty_override;
 
-    const DISCLAIMER: &str = "Taskwarrior may be copied only under the terms of the MIT license, which may be\n\
+    const DISCLAIMER: &str =
+        "Taskwarrior may be copied only under the terms of the MIT license, which may be\n\
                               found in the Taskwarrior source kit.\n";
-    const LINK: &str = "Documentation for Taskwarrior can be found using 'man task', 'man taskrc', 'man\n\
+    const LINK: &str =
+        "Documentation for Taskwarrior can be found using 'man task', 'man taskrc', 'man\n\
                         task-color', 'man task-sync' or at https://taskwarrior.org\n";
 
     fn context(settings: &[(&str, &str)]) -> Context {
         set_stdout_tty_override(Some(false));
         let mut context = Context::new();
-        for (key, value) in [("defaultwidth", "80"), ("detection", "off"), ("color", "on")] {
+        for (key, value) in [
+            ("defaultwidth", "80"),
+            ("detection", "off"),
+            ("color", "on"),
+        ] {
             context.config.set(key, value);
         }
         for (key, value) in settings {
@@ -234,7 +242,10 @@ mod tests {
             "\nTaskwarrior may be copied only under the\nterms of the MIT license, which may be\n\
              found in the Taskwarrior source kit.\n\n"
         ));
-        assert!(output.ends_with("\nhttps://taskwarrior.org\n\n"), "{output}");
+        assert!(
+            output.ends_with("\nhttps://taskwarrior.org\n\n"),
+            "{output}"
+        );
     }
 
     #[test]
@@ -256,7 +267,12 @@ mod tests {
 
         let mut context = Context::new();
         let mut output = String::new();
-        assert_eq!(CmdCompletionVersion::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdCompletionVersion::new()
+                .execute(&mut context, &mut output)
+                .unwrap(),
+            0
+        );
         assert_eq!(output, completion_version(COMMIT));
     }
 }

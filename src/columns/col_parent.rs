@@ -5,7 +5,9 @@
 //! `ColumnTypeString`.
 
 use crate::columns::col_type_string::ColumnTypeString;
-use crate::columns::column::{column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::task::Task;
@@ -133,13 +135,31 @@ mod tests {
     fn long_style() {
         let mut env = FakeRenderEnv::with_config(&[]);
         let none = Color::new();
-        assert_eq!(run("parent", &mut with("parent", UUID), 36, &none, &mut env), ((36, 36), vec![UUID.to_string()]));
         assert_eq!(
-            run("parent.long", &mut with("parent", UUID), 38, &none, &mut env),
+            run("parent", &mut with("parent", UUID), 36, &none, &mut env),
+            ((36, 36), vec![UUID.to_string()])
+        );
+        assert_eq!(
+            run(
+                "parent.long",
+                &mut with("parent", UUID),
+                38,
+                &none,
+                &mut env
+            ),
             ((36, 36), vec![format!("{UUID}  ")])
         );
         // The width is fixed, whatever the value.
-        assert_eq!(run("parent.long", &mut with("parent", "abc"), 5, &none, &mut env), ((36, 36), vec!["abc  ".to_string()]));
+        assert_eq!(
+            run(
+                "parent.long",
+                &mut with("parent", "abc"),
+                5,
+                &none,
+                &mut env
+            ),
+            ((36, 36), vec!["abc  ".to_string()])
+        );
         let red = Color::parse("red").unwrap();
         assert_eq!(
             run("parent", &mut with("parent", UUID), 36, &red, &mut env).1,
@@ -152,21 +172,51 @@ mod tests {
         let mut env = FakeRenderEnv::with_config(&[]);
         let none = Color::new();
         assert_eq!(
-            run("parent.short", &mut with("parent", UUID), 8, &none, &mut env),
+            run(
+                "parent.short",
+                &mut with("parent", UUID),
+                8,
+                &none,
+                &mut env
+            ),
             ((8, 8), vec!["f30cb9c3".to_string()])
         );
         assert_eq!(
-            run("parent.short", &mut with("parent", UUID), 10, &none, &mut env),
+            run(
+                "parent.short",
+                &mut with("parent", UUID),
+                10,
+                &none,
+                &mut env
+            ),
             ((8, 8), vec!["f30cb9c3  ".to_string()])
         );
-        assert_eq!(run("parent.short", &mut with("parent", "abc"), 8, &none, &mut env), ((8, 8), vec!["abc     ".to_string()]));
+        assert_eq!(
+            run(
+                "parent.short",
+                &mut with("parent", "abc"),
+                8,
+                &none,
+                &mut env
+            ),
+            ((8, 8), vec!["abc     ".to_string()])
+        );
     }
 
     #[test]
     fn no_value() {
         let mut env = FakeRenderEnv::with_config(&[]);
         for style in ["long", "short"] {
-            assert_eq!(run(&format!("parent.{style}"), &mut Task::new(), 8, &Color::new(), &mut env), ((0, 0), vec![]));
+            assert_eq!(
+                run(
+                    &format!("parent.{style}"),
+                    &mut Task::new(),
+                    8,
+                    &Color::new(),
+                    &mut env
+                ),
+                ((0, 0), vec![])
+            );
         }
     }
 

@@ -630,7 +630,10 @@ mod tests {
         // void set (const std::string&, const int);
         // int getInteger (const std::string&);
         c1.set("integer", 1);
-        assert!(c1.get_integer("integer") == 1, "Configuration 'integer' --> 1");
+        assert!(
+            c1.get_integer("integer") == 1,
+            "Configuration 'integer' --> 1"
+        );
 
         // void set (const std::string&, const double);
         // double getReal (const std::string&);
@@ -643,11 +646,26 @@ mod tests {
         c1.set("boolean3", "y");
         c1.set("boolean4", "yes");
         c1.set("boolean5", "on");
-        assert!(c1.get_boolean("boolean1"), "Configuration 'boolean1' --> true");
-        assert!(c1.get_boolean("boolean2"), "Configuration 'boolean2' --> true");
-        assert!(c1.get_boolean("boolean3"), "Configuration 'boolean3' --> true");
-        assert!(c1.get_boolean("boolean4"), "Configuration 'boolean4' --> true");
-        assert!(c1.get_boolean("boolean5"), "Configuration 'boolean5' --> true");
+        assert!(
+            c1.get_boolean("boolean1"),
+            "Configuration 'boolean1' --> true"
+        );
+        assert!(
+            c1.get_boolean("boolean2"),
+            "Configuration 'boolean2' --> true"
+        );
+        assert!(
+            c1.get_boolean("boolean3"),
+            "Configuration 'boolean3' --> true"
+        );
+        assert!(
+            c1.get_boolean("boolean4"),
+            "Configuration 'boolean4' --> true"
+        );
+        assert!(
+            c1.get_boolean("boolean5"),
+            "Configuration 'boolean5' --> true"
+        );
 
         // void parse (const std::string&, int nest = 1, const std::vector <std::string>& search_paths = {});
         let mut c2 = Configuration::new();
@@ -664,10 +682,19 @@ mod tests {
             "",
         )
         .expect("parse");
-        assert!(c2.get_integer("integer") == 1, "Configuration 'integer' --> 1");
-        assert!(c2.get_boolean("boolean"), "Configuration 'boolean' --> true");
+        assert!(
+            c2.get_integer("integer") == 1,
+            "Configuration 'integer' --> 1"
+        );
+        assert!(
+            c2.get_boolean("boolean"),
+            "Configuration 'boolean' --> true"
+        );
         assert!(c2.get_real("real") == 3.14, "Configuration 'real' --> 3.14");
-        assert!(c2.get("string") == "hello", "Configuration 'string' --> 'hello'");
+        assert!(
+            c2.get("string") == "hello",
+            "Configuration 'string' --> 'hello'"
+        );
         assert_eq!(c2.get("foo"), "bar", "Configuration 'foo' --> 'bar'");
 
         // std::vector <std::string> all () const;
@@ -675,7 +702,10 @@ mod tests {
             c2.all().len() == 5,
             "Configuration::all --> 'integer', 'boolean', 'real', 'string', 'foo'"
         );
-        assert!(c2.len() == 5, "Configuration::size --> 'integer', 'boolean', 'real', 'string', 'foo'");
+        assert!(
+            c2.len() == 5,
+            "Configuration::size --> 'integer', 'boolean', 'real', 'string', 'foo'"
+        );
 
         // void setIfBlank (const std::string& key, const std::string& value)
         let mut c3 = Configuration::new();
@@ -684,9 +714,21 @@ mod tests {
         c3.set_if_blank("foo", "1plus");
         c3.set_if_blank("bar", "2plus");
         c3.set_if_blank("baz", "3plus");
-        assert_eq!(c3.get("foo"), "1", "Configuration::setIfBlank doesn't change non-blank values.");
-        assert_eq!(c3.get("bar"), "2plus", "Configuration::setIfBlank changes blank values.");
-        assert_eq!(c3.get("baz"), "3plus", "Configuration::setIfBlank sets missing values.");
+        assert_eq!(
+            c3.get("foo"),
+            "1",
+            "Configuration::setIfBlank doesn't change non-blank values."
+        );
+        assert_eq!(
+            c3.get("bar"),
+            "2plus",
+            "Configuration::setIfBlank changes blank values."
+        );
+        assert_eq!(
+            c3.get("baz"),
+            "3plus",
+            "Configuration::setIfBlank sets missing values."
+        );
 
         // void load (const std::string&, int nest = 1, const std::vector <std::string>& search_paths = {});
         // The fixture tree of libshared test/config/, recreated in a temporary
@@ -706,7 +748,11 @@ mod tests {
         std::env::set_var("TW_CONFIGURATION_T_FOO", "2.conf");
         let mut c4 = Configuration::new();
         c4.load(&one, 1, &[nest]).expect("load");
-        assert_eq!(c4.get("hello"), "world", "Configuration::load with search paths");
+        assert_eq!(
+            c4.get("hello"),
+            "world",
+            "Configuration::load with search paths"
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -727,7 +773,8 @@ mod tests {
         c.parse("", 1, NO_SEARCH_PATHS, "").expect("parse");
         assert!(!c.dirty(), "empty input is a shortcut and leaves the flag");
 
-        c.parse("# only a comment\n", 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse("# only a comment\n", 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert!(c.dirty(), "any non-empty input marks dirty");
 
         let mut c = Configuration::new();
@@ -756,7 +803,10 @@ mod tests {
         c.set_if_blank("missing", "");
         assert!(c.contains_key("missing"));
         assert_eq!(c.get("missing"), "");
-        assert!(c.dirty(), "the value was blank, so the C++ assignment branch runs");
+        assert!(
+            c.dirty(),
+            "the value was blank, so the C++ assignment branch runs"
+        );
     }
 
     #[test]
@@ -785,10 +835,15 @@ mod tests {
         let missing = dir.path().join("nope").to_str().expect("utf-8").to_string();
 
         let mut c = Configuration::new();
-        c.load(&missing, 1, NO_SEARCH_PATHS).expect("missing file is not an error");
+        c.load(&missing, 1, NO_SEARCH_PATHS)
+            .expect("missing file is not an error");
         assert!(c.is_empty());
         assert!(!c.dirty());
-        assert_eq!(c.file(), missing, "original file is remembered even if missing");
+        assert_eq!(
+            c.file(),
+            missing,
+            "original file is remembered even if missing"
+        );
 
         let empty = write(dir.path(), "empty", "");
         let mut c = Configuration::new();
@@ -851,14 +906,16 @@ mod tests {
     #[test]
     fn parse_later_values_override_earlier() {
         let mut c = Configuration::new();
-        c.parse("a=1\na=2\n", 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse("a=1\na=2\n", 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert_eq!(c.get("a"), "2");
     }
 
     #[test]
     fn parse_crlf_lines() {
         let mut c = Configuration::new();
-        c.parse("a=1\r\nb=2\r\n", 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse("a=1\r\nb=2\r\n", 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert_eq!(c.get("a"), "1");
         assert_eq!(c.get("b"), "2");
     }
@@ -876,10 +933,18 @@ mod tests {
     #[test]
     fn parse_malformed_lines() {
         let mut c = Configuration::new();
-        let err = message(c.parse("ok=1\n  just some words # comment\n", 1, NO_SEARCH_PATHS, ""));
+        let err = message(c.parse(
+            "ok=1\n  just some words # comment\n",
+            1,
+            NO_SEARCH_PATHS,
+            "",
+        ));
         assert_eq!(err, "Malformed entry 'just some words' in config file.");
         assert_eq!(c.get("ok"), "1", "lines before the error were applied");
-        assert!(!c.dirty(), "the error is raised before the dirty flag is set");
+        assert!(
+            !c.dirty(),
+            "the error is raised before the dirty flag is set"
+        );
     }
 
     #[test]
@@ -913,10 +978,18 @@ mod tests {
         assert_eq!(c.get("b"), "A\u{e9}");
         assert_eq!(c.get("c"), "\"q\"");
         assert_eq!(c.get("d"), "back\\slash");
-        assert_eq!(c.get("e"), "/\u{8}\u{c}\n\r", "decoded after trimming, so nothing trims them");
+        assert_eq!(
+            c.get("e"),
+            "/\u{8}\u{c}\n\r",
+            "decoded after trimming, so nothing trims them"
+        );
         assert_eq!(c.get("f"), "\\q", "unknown escapes are kept");
         assert_eq!(c.get("g"), "end\\", "trailing backslash is kept");
-        assert_eq!(c.get("h"), "", "short \\u escape is code point 0, which is empty");
+        assert_eq!(
+            c.get("h"),
+            "",
+            "short \\u escape is code point 0, which is empty"
+        );
     }
 
     #[test]
@@ -925,8 +998,16 @@ mod tests {
         assert_eq!(json::decode("plain"), "plain");
         assert_eq!(json::decode("\\n\\t"), "\n\t");
         assert_eq!(json::decode("\\u20acX"), "\u{20ac}X");
-        assert_eq!(json::decode("\\uU+0041"), "A41", "the U+ form of utf8_codepoint, but only 4 bytes are skipped");
-        assert_eq!(json::decode("a\\\0b"), "a\\b", "embedded NUL after a backslash is dropped");
+        assert_eq!(
+            json::decode("\\uU+0041"),
+            "A41",
+            "the U+ form of utf8_codepoint, but only 4 bytes are skipped"
+        );
+        assert_eq!(
+            json::decode("a\\\0b"),
+            "a\\b",
+            "embedded NUL after a backslash is dropped"
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -952,8 +1033,16 @@ mod tests {
         assert_eq!(c.get_integer("none"), 0);
         assert_eq!(c.get_integer("real"), 3);
         assert_eq!(c.get_integer("missing"), 0);
-        assert_eq!(c.get_integer("big"), 99_999_999_999_i64 as i32, "narrowed to int");
-        assert_eq!(c.get_integer("huge"), i64::MAX as i32, "saturates, then narrows");
+        assert_eq!(
+            c.get_integer("big"),
+            99_999_999_999_i64 as i32,
+            "narrowed to int"
+        );
+        assert_eq!(
+            c.get_integer("huge"),
+            i64::MAX as i32,
+            "saturates, then narrows"
+        );
     }
 
     #[test]
@@ -975,11 +1064,17 @@ mod tests {
     #[test]
     fn get_boolean_accepted_values() {
         let mut c = Configuration::new();
-        for (i, value) in ["true", "1", "y", "yes", "on", "TRUE", "Yes", "ON", "Y"].iter().enumerate() {
+        for (i, value) in ["true", "1", "y", "yes", "on", "TRUE", "Yes", "ON", "Y"]
+            .iter()
+            .enumerate()
+        {
             c.set(&format!("t{i}"), *value);
             assert!(c.get_boolean(&format!("t{i}")), "{value} is true");
         }
-        for (i, value) in ["false", "0", "no", "off", "2", "yes ", "t", "", "enabled"].iter().enumerate() {
+        for (i, value) in ["false", "0", "no", "off", "2", "yes ", "t", "", "enabled"]
+            .iter()
+            .enumerate()
+        {
             c.set(&format!("f{i}"), *value);
             assert!(!c.get_boolean(&format!("f{i}")), "{value:?} is false");
         }
@@ -1003,7 +1098,11 @@ mod tests {
         assert_eq!(c.get("real"), "3.14");
         assert_eq!(c.get("whole"), "2");
         assert_eq!(c.get("long"), "1234567.9");
-        assert_eq!(c.get("tiny_half"), "1", "format (0.5, 1, 8) rounds to an integer");
+        assert_eq!(
+            c.get("tiny_half"),
+            "1",
+            "format (0.5, 1, 8) rounds to an integer"
+        );
         assert_eq!(c.get("tiny_quarter"), "0");
         assert_eq!(c.get("big"), "1e+20");
         assert_eq!(c.get("string"), "s");
@@ -1058,7 +1157,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let inc = write(dir.path(), "theme", "color.x=red\n");
         let mut c = Configuration::new();
-        c.parse(&format!("include {inc}\nafter=1\n"), 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse(&format!("include {inc}\nafter=1\n"), 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert_eq!(c.get("color.x"), "red");
         assert_eq!(c.get("after"), "1");
         assert_eq!(c.file(), "", "an include does not become the original file");
@@ -1067,7 +1167,12 @@ mod tests {
     #[test]
     fn include_absolute_missing_is_not_searched() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let missing = dir.path().join("missing.theme").to_str().expect("utf-8").to_string();
+        let missing = dir
+            .path()
+            .join("missing.theme")
+            .to_str()
+            .expect("utf-8")
+            .to_string();
         let mut c = Configuration::new();
         let err = message(c.parse(&format!("include {missing}"), 1, NO_SEARCH_PATHS, ""));
         assert_eq!(err, format!("Could not read include file '{missing}'."));
@@ -1081,10 +1186,15 @@ mod tests {
         write(dir.path(), "cwd.conf", "from=cwd\n");
         let rel = format!(
             "{}/cwd.conf",
-            dir.path().file_name().expect("name").to_str().expect("utf-8")
+            dir.path()
+                .file_name()
+                .expect("name")
+                .to_str()
+                .expect("utf-8")
         );
         let mut c = Configuration::new();
-        c.parse(&format!("include {rel}"), 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse(&format!("include {rel}"), 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert_eq!(c.get("from"), "cwd");
     }
 
@@ -1112,7 +1222,8 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link_rc).expect("symlink");
 
         let mut c = Configuration::new();
-        c.load(link_rc.to_str().expect("utf-8"), 1, NO_SEARCH_PATHS).expect("load");
+        c.load(link_rc.to_str().expect("utf-8"), 1, NO_SEARCH_PATHS)
+            .expect("load");
         assert_eq!(c.get("from"), "target-dir");
     }
 
@@ -1125,7 +1236,8 @@ mod tests {
         let rc = write(dir.path(), "rc", "include x.conf\n");
 
         let mut c = Configuration::new();
-        c.load(&rc, 1, &[search.path().to_str().expect("utf-8")]).expect("load");
+        c.load(&rc, 1, &[search.path().to_str().expect("utf-8")])
+            .expect("load");
         assert_eq!(c.get("from"), "file-dir");
     }
 
@@ -1142,9 +1254,19 @@ mod tests {
         ];
 
         let mut c = Configuration::new();
-        c.parse("include only-second.conf\ninclude both.conf\n", 1, &paths, "").expect("parse");
+        c.parse(
+            "include only-second.conf\ninclude both.conf\n",
+            1,
+            &paths,
+            "",
+        )
+        .expect("parse");
         assert_eq!(c.get("which"), "second");
-        assert_eq!(c.get("both"), "first", "the first search path that has it wins");
+        assert_eq!(
+            c.get("both"),
+            "first",
+            "the first search path that has it wins"
+        );
     }
 
     #[test]
@@ -1156,7 +1278,8 @@ mod tests {
         let rc = write(dir.path(), "rc", "include outer.conf\n");
 
         let mut c = Configuration::new();
-        c.load(&rc, 1, &[search.path().to_str().expect("utf-8")]).expect("load");
+        c.load(&rc, 1, &[search.path().to_str().expect("utf-8")])
+            .expect("load");
         assert_eq!(c.get("deep"), "yes");
     }
 
@@ -1166,7 +1289,8 @@ mod tests {
         let inc = write(dir.path(), "env.conf", "from=env\n");
         std::env::set_var("TW_CONFIGURATION_INC_VAR", &inc);
         let mut c = Configuration::new();
-        c.parse("include $TW_CONFIGURATION_INC_VAR", 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse("include $TW_CONFIGURATION_INC_VAR", 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert_eq!(c.get("from"), "env");
 
         // `~` expands to $HOME; the included path is absolute afterwards.
@@ -1200,14 +1324,14 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let inc = write(dir.path(), "x.conf", "k=v\n");
         let mut c = Configuration::new();
-        c.parse(&format!("please include {inc}"), 1, NO_SEARCH_PATHS, "").expect("parse");
+        c.parse(&format!("please include {inc}"), 1, NO_SEARCH_PATHS, "")
+            .expect("parse");
         assert_eq!(c.get("k"), "v");
 
         let mut c = Configuration::new();
         let err = message(c.parse("include", 1, NO_SEARCH_PATHS, ""));
         assert_eq!(
-            err,
-            "Could not find file in CWD, directory of config file or search paths ''.",
+            err, "Could not find file in CWD, directory of config file or search paths ''.",
             "empty name"
         );
     }
@@ -1245,13 +1369,21 @@ mod tests {
             write(chain.path(), &format!("f{level}.conf"), &body);
         }
         let mut c = Configuration::new();
-        let err = message(c.load(chain.path().join("f1.conf").to_str().expect("utf-8"), 1, NO_SEARCH_PATHS));
+        let err = message(c.load(
+            chain.path().join("f1.conf").to_str().expect("utf-8"),
+            1,
+            NO_SEARCH_PATHS,
+        ));
         assert_eq!(err, "Configuration files may only be nested to 10 levels.");
         assert_eq!(c.get("level10"), "1");
 
         let mut c = Configuration::new();
-        c.load(chain.path().join("f2.conf").to_str().expect("utf-8"), 1, NO_SEARCH_PATHS)
-            .expect("ten levels");
+        c.load(
+            chain.path().join("f2.conf").to_str().expect("utf-8"),
+            1,
+            NO_SEARCH_PATHS,
+        )
+        .expect("ten levels");
         assert_eq!(c.get("bottom"), "reached");
 
         // Direct call above the limit.
@@ -1291,7 +1423,12 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rc2).expect("read"), "b=2\n");
 
         // A missing file is created.
-        let fresh = dir.path().join("fresh").to_str().expect("utf-8").to_string();
+        let fresh = dir
+            .path()
+            .join("fresh")
+            .to_str()
+            .expect("utf-8")
+            .to_string();
         assert!(set_variable_in_file(&fresh, "k", "v"));
         assert_eq!(std::fs::read_to_string(&fresh).expect("read"), "k=v\n");
     }
@@ -1302,12 +1439,21 @@ mod tests {
         let rc = write(dir.path(), "rc", "a=1\n# a=commented\nb=2 # c\na=again\n");
 
         assert!(unset_variable_in_file(&rc, "a"));
-        assert_eq!(std::fs::read_to_string(&rc).expect("read"), "# a=commented\nb=2 # c\n");
+        assert_eq!(
+            std::fs::read_to_string(&rc).expect("read"),
+            "# a=commented\nb=2 # c\n"
+        );
 
         assert!(!unset_variable_in_file(&rc, "zzz"));
-        assert_eq!(std::fs::read_to_string(&rc).expect("read"), "# a=commented\nb=2 # c\n");
+        assert_eq!(
+            std::fs::read_to_string(&rc).expect("read"),
+            "# a=commented\nb=2 # c\n"
+        );
 
         assert!(unset_variable_in_file(&rc, "b"));
-        assert_eq!(std::fs::read_to_string(&rc).expect("read"), "# a=commented\n");
+        assert_eq!(
+            std::fs::read_to_string(&rc).expect("read"),
+            "# a=commented\n"
+        );
     }
 }

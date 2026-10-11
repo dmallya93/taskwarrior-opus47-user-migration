@@ -83,13 +83,19 @@ impl Command for CmdAdd {
                 &[&task.get("uuid")],
             ));
         } else if context.verbose("new-uuid")
-            || (context.verbose("new-id") && (status == Status::Completed || status == Status::Deleted))
+            || (context.verbose("new-id")
+                && (status == Status::Completed || status == Status::Deleted))
         {
             output.push_str(&format("Created task {1}.\n", &[&task.get("uuid")]));
-        } else if context.verbose("new-id") && (status == Status::Pending || status == Status::Waiting) {
+        } else if context.verbose("new-id")
+            && (status == Status::Pending || status == Status::Waiting)
+        {
             output.push_str(&format("Created task {1}.\n", &[&task.id]));
         } else if context.verbose("new-id") && status == Status::Recurring {
-            output.push_str(&format("Created task {1} (recurrence template).\n", &[&task.id]));
+            output.push_str(&format(
+                "Created task {1} (recurrence template).\n",
+                &[&task.id],
+            ));
         }
 
         if context.verbose("project") {

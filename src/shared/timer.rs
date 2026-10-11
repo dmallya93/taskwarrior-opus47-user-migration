@@ -109,10 +109,22 @@ mod tests {
 
         let mut t1 = Timer::new();
         t1.stop();
-        assert!(t1.total_s() >= 0.0, "Timer: possibliy non-zero s if not started");
-        assert!(t1.total_ms() >= 0.0, "Timer: possibliy non-zero ms if not started");
-        assert!(t1.total_us() >= 0.0, "Timer: possibliy non-zero us if not started");
-        assert!(t1.total_ns() >= 0.0, "Timer: possibliy non-zero ns if not started");
+        assert!(
+            t1.total_s() >= 0.0,
+            "Timer: possibliy non-zero s if not started"
+        );
+        assert!(
+            t1.total_ms() >= 0.0,
+            "Timer: possibliy non-zero ms if not started"
+        );
+        assert!(
+            t1.total_us() >= 0.0,
+            "Timer: possibliy non-zero us if not started"
+        );
+        assert!(
+            t1.total_ns() >= 0.0,
+            "Timer: possibliy non-zero ns if not started"
+        );
 
         t0.stop();
         assert!(t0.total_ms() >= t0.total_s(), "Timer: more ms than s");

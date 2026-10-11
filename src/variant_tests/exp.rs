@@ -14,7 +14,6 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let v4 = Variant::from_time(1234567890, Type::Date)?;
     let v5 = Variant::from_time(1200, Type::Duration)?;
 
-
     // boolean ^ boolean  -> ERROR
     match v0.op_exp(&v0) {
         Ok(_v00) => t.fail("true ^ true --> error"),

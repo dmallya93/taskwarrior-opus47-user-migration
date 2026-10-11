@@ -68,15 +68,24 @@ mod tests {
     #[test]
     fn labels_and_delegation() {
         let mut env = FakeRenderEnv::with_config(&[("dateformat", "Y-M-D")]);
-        assert_eq!(factory("wait", "list", &env.config).unwrap().label(), "Wait");
-        assert_eq!(factory("wait.countdown", "list", &env.config).unwrap().label(), "Wait");
+        assert_eq!(
+            factory("wait", "list", &env.config).unwrap().label(),
+            "Wait"
+        );
+        assert_eq!(
+            factory("wait.countdown", "list", &env.config)
+                .unwrap()
+                .label(),
+            "Wait"
+        );
 
         let mut task = Task::new();
         task.set_int("wait", 1_700_000_000);
         let c = factory("wait.epoch", "list", &env.config).unwrap();
         assert_eq!(c.measure(&mut task, &mut env).unwrap(), (10, 10));
         let mut lines = Vec::new();
-        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env).unwrap();
+        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env)
+            .unwrap();
         assert_eq!(lines, vec!["  1700000000".to_string()]);
 
         // `remaining` renders nothing for a past date.
@@ -84,7 +93,8 @@ mod tests {
         task.set_int("wait", localtime::time_now() - 86400);
         assert_eq!(c.measure(&mut task, &mut env).unwrap(), (0, 0));
         let mut lines = Vec::new();
-        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env).unwrap();
+        c.render(&mut lines, &mut task, 12, &Color::new(), &mut env)
+            .unwrap();
         assert!(lines.is_empty());
 
         // No such date: nothing.

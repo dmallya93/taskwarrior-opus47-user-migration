@@ -247,26 +247,42 @@ impl Variant {
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Variant::Variant (const bool value)`.
     pub fn from_bool(value: bool) -> Self {
-        Variant { _type: Type::Boolean, _bool: value, ..Variant::default() }
+        Variant {
+            _type: Type::Boolean,
+            _bool: value,
+            ..Variant::default()
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Variant::Variant (const int value)`.
     pub fn from_int(value: i32) -> Self {
-        Variant { _type: Type::Integer, _integer: i64::from(value), ..Variant::default() }
+        Variant {
+            _type: Type::Integer,
+            _integer: i64::from(value),
+            ..Variant::default()
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Variant::Variant (const double value)`.
     pub fn from_real(value: f64) -> Self {
-        Variant { _type: Type::Real, _real: value, ..Variant::default() }
+        Variant {
+            _type: Type::Real,
+            _real: value,
+            ..Variant::default()
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////
     /// C++ `Variant::Variant (const std::string& value)` and
     /// `Variant::Variant (const char* value)`.
     pub fn from_string(value: &str) -> Self {
-        Variant { _type: Type::String, _string: value.to_string(), ..Variant::default() }
+        Variant {
+            _type: Type::String,
+            _string: value.to_string(),
+            ..Variant::default()
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -276,7 +292,10 @@ impl Variant {
     /// `Cannot instantiate this type with a time_t value.` unless `new_type`
     /// is [`Type::Date`] or [`Type::Duration`].
     pub fn from_time(value: i64, new_type: Type) -> Result<Self> {
-        let mut v = Variant { _type: new_type, ..Variant::default() };
+        let mut v = Variant {
+            _type: new_type,
+            ..Variant::default()
+        };
         match new_type {
             Type::Date => v._date = value,
             Type::Duration => v._duration = value,
@@ -458,7 +477,9 @@ impl Variant {
                         return Ok(false);
                     }
 
-                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                    if let Some((pos_left, pos_right)) =
+                        custom_order_positions(left.source(), &left._string, &right._string)
+                    {
                         // Guaranteed to be found, because of ColUDA::validate ().
                         Ok(pos_left < pos_right)
                     } else {
@@ -490,7 +511,12 @@ impl Variant {
             },
 
             Type::Date => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -501,7 +527,12 @@ impl Variant {
             },
 
             Type::Duration => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -614,7 +645,9 @@ impl Variant {
                         return Ok(true);
                     }
 
-                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                    if let Some((pos_left, pos_right)) =
+                        custom_order_positions(left.source(), &left._string, &right._string)
+                    {
                         // Guaranteed to be found, because of ColUDA::validate ().
                         Ok(pos_left <= pos_right)
                     } else {
@@ -646,7 +679,12 @@ impl Variant {
             },
 
             Type::Date => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -657,7 +695,12 @@ impl Variant {
             },
 
             Type::Duration => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -773,7 +816,9 @@ impl Variant {
                         return Ok(false);
                     }
 
-                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                    if let Some((pos_left, pos_right)) =
+                        custom_order_positions(left.source(), &left._string, &right._string)
+                    {
                         // Guaranteed to be found, because of ColUDA::validate ().
                         Ok(pos_left > pos_right)
                     } else {
@@ -805,7 +850,12 @@ impl Variant {
             },
 
             Type::Date => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -816,7 +866,12 @@ impl Variant {
             },
 
             Type::Duration => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -929,7 +984,9 @@ impl Variant {
                         return Ok(true);
                     }
 
-                    if let Some((pos_left, pos_right)) = custom_order_positions(left.source(), &left._string, &right._string) {
+                    if let Some((pos_left, pos_right)) =
+                        custom_order_positions(left.source(), &left._string, &right._string)
+                    {
                         // Guaranteed to be found, because of ColUDA::validate ().
                         Ok(pos_left >= pos_right)
                     } else {
@@ -961,7 +1018,12 @@ impl Variant {
             },
 
             Type::Date => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -972,7 +1034,12 @@ impl Variant {
             },
 
             Type::Duration => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -1102,7 +1169,12 @@ impl Variant {
             },
 
             Type::Date => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     if left.trivial() || right.trivial() {
                         return Ok(false);
                     }
@@ -1113,7 +1185,12 @@ impl Variant {
             },
 
             Type::Duration => match right._type {
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     right.cast(Type::Duration)?;
                     Ok(left._duration == right._duration)
                 }
@@ -1193,13 +1270,24 @@ impl Variant {
             }
         } else {
             // If pattern starts with '^', look for a leftmost compare only.
-            if pattern.starts_with('^') && find(&left._string, &pattern[1..], search_case_sensitive) == Some(0) {
+            if pattern.starts_with('^')
+                && find(&left._string, &pattern[1..], search_case_sensitive) == Some(0)
+            {
                 return Ok(true);
             }
             // If pattern ends with '$', look for a rightmost compare only.
             else if pattern.ends_with('$')
-                && find(&left._string, &pattern[..pattern.len() - 1], search_case_sensitive).unwrap_or(usize::MAX)
-                    == left._string.len().wrapping_sub(pattern.len()).wrapping_add(1)
+                && find(
+                    &left._string,
+                    &pattern[..pattern.len() - 1],
+                    search_case_sensitive,
+                )
+                .unwrap_or(usize::MAX)
+                    == left
+                        ._string
+                        .len()
+                        .wrapping_sub(pattern.len())
+                        .wrapping_add(1)
             {
                 return Ok(true);
             } else if find(&left._string, &pattern, search_case_sensitive).is_some() {
@@ -1403,7 +1491,12 @@ impl Variant {
 
             Type::Duration => match right._type {
                 // Same-day comparison.
-                Type::Boolean | Type::Integer | Type::Real | Type::String | Type::Date | Type::Duration => {
+                Type::Boolean
+                | Type::Integer
+                | Type::Real
+                | Type::String
+                | Type::Date
+                | Type::Duration => {
                     right.cast(Type::Duration)?;
                     Ok(left._duration == right._duration)
                 }
@@ -1479,28 +1572,40 @@ impl Variant {
             Type::Integer => match other._type {
                 Type::Boolean => return Err(TwError::Message(STRING_VARIANT_EXP_BOOL.to_string())),
                 Type::Integer => {
-                    self._integer = i64::from(c_double_to_int((self._integer as f64).powf(other._integer as f64)));
+                    self._integer = i64::from(c_double_to_int(
+                        (self._integer as f64).powf(other._integer as f64),
+                    ));
                 }
                 Type::Real => return Err(TwError::Message(STRING_VARIANT_EXP_NON_INT.to_string())),
-                Type::String => return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string()))
+                }
                 Type::Date => return Err(TwError::Message(STRING_VARIANT_EXP_DATE.to_string())),
-                Type::Duration => return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string())),
+                Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string()))
+                }
             },
 
             Type::Real => match other._type {
                 Type::Boolean => return Err(TwError::Message(STRING_VARIANT_EXP_BOOL.to_string())),
                 Type::Integer => self._real = self._real.powf(other._integer as f64),
                 Type::Real => return Err(TwError::Message(STRING_VARIANT_EXP_NON_INT.to_string())),
-                Type::String => return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string()))
+                }
                 Type::Date => return Err(TwError::Message(STRING_VARIANT_EXP_DATE.to_string())),
-                Type::Duration => return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string())),
+                Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string()))
+                }
             },
 
             Type::String => return Err(TwError::Message(STRING_VARIANT_EXP_STRING.to_string())),
 
             Type::Date => return Err(TwError::Message(STRING_VARIANT_EXP_DATE.to_string())),
 
-            Type::Duration => return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string())),
+            Type::Duration => {
+                return Err(TwError::Message(STRING_VARIANT_EXP_DURATION.to_string()))
+            }
         }
 
         Ok(())
@@ -1547,7 +1652,9 @@ impl Variant {
                     self.cast(Type::Real)?;
                     self._real -= right._real;
                 }
-                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string()))
+                }
                 Type::Date => {
                     self.cast(Type::Date)?;
                     self._date = self._date.wrapping_sub(right._date);
@@ -1559,7 +1666,9 @@ impl Variant {
             },
 
             Type::Real => match right._type {
-                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string()))
+                }
 
                 Type::Boolean | Type::Integer | Type::Real | Type::Date | Type::Duration => {
                     right.cast(Type::Real)?;
@@ -1584,8 +1693,14 @@ impl Variant {
                     self._date = self._date.wrapping_sub(right._integer);
                 }
                 Type::Integer => self._date = self._date.wrapping_sub(right._integer),
-                Type::Real => self._date = self._date.wrapping_sub(i64::from(c_double_to_int(right._real))),
-                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::Real => {
+                    self._date = self
+                        ._date
+                        .wrapping_sub(i64::from(c_double_to_int(right._real)))
+                }
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string()))
+                }
                 Type::Date => {
                     self._type = Type::Duration;
                     self._duration = self._date.wrapping_sub(right._date);
@@ -1599,8 +1714,14 @@ impl Variant {
                     self._duration = self._duration.wrapping_sub(right._integer);
                 }
                 Type::Integer => self._duration = self._duration.wrapping_sub(right._integer),
-                Type::Real => self._duration = self._duration.wrapping_sub(i64::from(c_double_to_int(right._real))),
-                Type::String => return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string())),
+                Type::Real => {
+                    self._duration = self
+                        ._duration
+                        .wrapping_sub(i64::from(c_double_to_int(right._real)))
+                }
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_SUB_STRING.to_string()))
+                }
                 Type::Date => return Err(TwError::Message(STRING_VARIANT_SUB_DATE.to_string())),
                 Type::Duration => self._duration = self._duration.wrapping_sub(right._duration),
             },
@@ -1708,13 +1829,15 @@ impl Variant {
                 Type::Date => {
                     self._type = Type::Date;
                     // (unsigned)(int) _real, widened to time_t.
-                    self._date = i64::from(c_double_to_int(self._real) as u32).wrapping_add(right._date);
+                    self._date =
+                        i64::from(c_double_to_int(self._real) as u32).wrapping_add(right._date);
                 }
 
                 Type::Duration => {
                     self._type = Type::Duration;
                     // (unsigned)(int) _real, widened to time_t.
-                    self._duration = i64::from(c_double_to_int(self._real) as u32).wrapping_add(right._duration);
+                    self._duration =
+                        i64::from(c_double_to_int(self._real) as u32).wrapping_add(right._duration);
                 }
             },
 
@@ -1726,7 +1849,11 @@ impl Variant {
                     self._date = self._date.wrapping_add(right._date);
                 }
                 Type::Integer => self._date = self._date.wrapping_add(right._integer),
-                Type::Real => self._date = self._date.wrapping_add(i64::from(c_double_to_int(right._real))),
+                Type::Real => {
+                    self._date = self
+                        ._date
+                        .wrapping_add(i64::from(c_double_to_int(right._real)))
+                }
                 Type::String => {
                     self.cast(Type::String)?;
                     self._string.push_str(&right._string);
@@ -1741,14 +1868,20 @@ impl Variant {
                     self._duration = self._duration.wrapping_add(right._duration);
                 }
                 Type::Integer => self._duration = self._duration.wrapping_add(right._integer),
-                Type::Real => self._duration = self._duration.wrapping_add(i64::from(c_double_to_int(right._real))),
+                Type::Real => {
+                    self._duration = self
+                        ._duration
+                        .wrapping_add(i64::from(c_double_to_int(right._real)))
+                }
                 Type::String => {
                     self.cast(Type::String)?;
                     self._string.push_str(&right._string);
                 }
                 Type::Date => {
                     self._type = Type::Date;
-                    self._date = self._date.wrapping_add(right._date.wrapping_add(self._duration));
+                    self._date = self
+                        ._date
+                        .wrapping_add(right._date.wrapping_add(self._duration));
                 }
                 Type::Duration => self._duration = self._duration.wrapping_add(right._duration),
             },
@@ -1814,7 +1947,11 @@ impl Variant {
                     self._real *= right._real;
                 }
                 Type::String => {
-                    self._string = if self._bool { right._string.clone() } else { String::new() };
+                    self._string = if self._bool {
+                        right._string.clone()
+                    } else {
+                        String::new()
+                    };
                     self._type = Type::String;
                 }
                 Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
@@ -1854,14 +1991,17 @@ impl Variant {
                     self._real *= right._real;
                 }
 
-                Type::String => return Err(TwError::Message(STRING_VARIANT_MUL_REAL_STR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_REAL_STR.to_string()))
+                }
 
                 Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
 
                 Type::Duration => {
                     self._type = Type::Duration;
                     // (time_t)(unsigned)(int)(_real * static_cast<double>(right._duration))
-                    self._duration = i64::from(c_double_to_int(self._real * right._duration as f64) as u32);
+                    self._duration =
+                        i64::from(c_double_to_int(self._real * right._duration as f64) as u32);
                 }
             },
 
@@ -1878,10 +2018,18 @@ impl Variant {
                     let fragment = self._string.clone();
                     self._string.push_str(&fragment.repeat(repeat_count(limit)));
                 }
-                Type::Real => return Err(TwError::Message(STRING_VARIANT_MUL_STR_REAL.to_string())),
-                Type::String => return Err(TwError::Message(STRING_VARIANT_MUL_STR_STR.to_string())),
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_STR_DATE.to_string())),
-                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MUL_STR_DUR.to_string())),
+                Type::Real => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_STR_REAL.to_string()))
+                }
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_STR_STR.to_string()))
+                }
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_STR_DATE.to_string()))
+                }
+                Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_STR_DUR.to_string()))
+                }
             },
 
             Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DATE.to_string())),
@@ -1894,11 +2042,18 @@ impl Variant {
                 Type::Integer => self._duration = self._duration.wrapping_mul(right._integer),
                 Type::Real => {
                     // (time_t)(unsigned)(int)(static_cast<double>(_duration) * right._real)
-                    self._duration = i64::from(c_double_to_int(self._duration as f64 * right._real) as u32);
+                    self._duration =
+                        i64::from(c_double_to_int(self._duration as f64 * right._real) as u32);
                 }
-                Type::String => return Err(TwError::Message(STRING_VARIANT_MUL_DUR_STR.to_string())),
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_MUL_DUR_DATE.to_string())),
-                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MUL_DUR_DUR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_DUR_STR.to_string()))
+                }
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_DUR_DATE.to_string()))
+                }
+                Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_MUL_DUR_DUR.to_string()))
+                }
             },
         }
 
@@ -1949,7 +2104,9 @@ impl Variant {
             Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_BOOL.to_string())),
 
             Type::Integer => match right._type {
-                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_INT_BOOL.to_string())),
+                Type::Boolean => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_INT_BOOL.to_string()))
+                }
 
                 Type::Integer => {
                     if right._integer == 0 {
@@ -1966,9 +2123,13 @@ impl Variant {
                     self._real /= right._real;
                 }
 
-                Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_INT_STR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_INT_STR.to_string()))
+                }
 
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_INT_DATE.to_string())),
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_INT_DATE.to_string()))
+                }
 
                 Type::Duration => {
                     if right._duration == 0 {
@@ -1976,12 +2137,15 @@ impl Variant {
                     }
                     self._type = Type::Duration;
                     // (time_t)(unsigned)(int)(_integer / right._duration)
-                    self._duration = i64::from(self._integer.wrapping_div(right._duration) as i32 as u32);
+                    self._duration =
+                        i64::from(self._integer.wrapping_div(right._duration) as i32 as u32);
                 }
             },
 
             Type::Real => match right._type {
-                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_BOOL.to_string())),
+                Type::Boolean => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_REAL_BOOL.to_string()))
+                }
 
                 Type::Integer => {
                     if right._integer == 0 {
@@ -1997,9 +2161,13 @@ impl Variant {
                     self._real /= right._real;
                 }
 
-                Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_STR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_REAL_STR.to_string()))
+                }
 
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_DATE.to_string())),
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_REAL_DATE.to_string()))
+                }
 
                 Type::Duration => {
                     if right._duration == 0 {
@@ -2007,7 +2175,8 @@ impl Variant {
                     }
                     self._type = Type::Duration;
                     // (time_t)(unsigned)(int)(_real / right._duration)
-                    self._duration = i64::from(c_double_to_int(self._real / right._duration as f64) as u32);
+                    self._duration =
+                        i64::from(c_double_to_int(self._real / right._duration as f64) as u32);
                 }
             },
 
@@ -2016,7 +2185,9 @@ impl Variant {
             Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_REAL_DATE.to_string())),
 
             Type::Duration => match right._type {
-                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_DIV_DUR_BOOL.to_string())),
+                Type::Boolean => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_DUR_BOOL.to_string()))
+                }
 
                 Type::Integer => {
                     if right._integer == 0 {
@@ -2030,12 +2201,17 @@ impl Variant {
                         return Err(TwError::Message(STRING_VARIANT_DIV_ZERO.to_string()));
                     }
                     // (time_t)(unsigned)(int)(static_cast<double>(_duration) / right._real)
-                    self._duration = i64::from(c_double_to_int(self._duration as f64 / right._real) as u32);
+                    self._duration =
+                        i64::from(c_double_to_int(self._duration as f64 / right._real) as u32);
                 }
 
-                Type::String => return Err(TwError::Message(STRING_VARIANT_DIV_DUR_STR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_DUR_STR.to_string()))
+                }
 
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_DIV_DUR_DATE.to_string())),
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_DIV_DUR_DATE.to_string()))
+                }
 
                 Type::Duration => {
                     self._type = Type::Real;
@@ -2084,7 +2260,9 @@ impl Variant {
             Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MOD_BOOL.to_string())),
 
             Type::Integer => match right._type {
-                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MOD_INT_BOOL.to_string())),
+                Type::Boolean => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_INT_BOOL.to_string()))
+                }
 
                 Type::Integer => {
                     if right._integer == 0 {
@@ -2102,15 +2280,23 @@ impl Variant {
                     self._real %= right._real;
                 }
 
-                Type::String => return Err(TwError::Message(STRING_VARIANT_MOD_INT_STR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_INT_STR.to_string()))
+                }
 
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_MOD_INT_DATE.to_string())),
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_INT_DATE.to_string()))
+                }
 
-                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MOD_INT_DUR.to_string())),
+                Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_INT_DUR.to_string()))
+                }
             },
 
             Type::Real => match right._type {
-                Type::Boolean => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_BOOL.to_string())),
+                Type::Boolean => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_REAL_BOOL.to_string()))
+                }
 
                 Type::Integer => {
                     if right._integer == 0 {
@@ -2128,11 +2314,17 @@ impl Variant {
                     self._real %= right._real;
                 }
 
-                Type::String => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_STR.to_string())),
+                Type::String => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_REAL_STR.to_string()))
+                }
 
-                Type::Date => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_DATE.to_string())),
+                Type::Date => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_REAL_DATE.to_string()))
+                }
 
-                Type::Duration => return Err(TwError::Message(STRING_VARIANT_MOD_REAL_DUR.to_string())),
+                Type::Duration => {
+                    return Err(TwError::Message(STRING_VARIANT_MOD_REAL_DUR.to_string()))
+                }
             },
 
             Type::String => return Err(TwError::Message(STRING_VARIANT_MOD_STR.to_string())),
@@ -2207,7 +2399,9 @@ impl Variant {
                 Type::Boolean => {}
                 Type::Integer => self._integer = if self._bool { 1 } else { 0 },
                 Type::Real => self._real = if self._bool { 1.0 } else { 0.0 },
-                Type::String => self._string = (if self._bool { "true" } else { "false" }).to_string(),
+                Type::String => {
+                    self._string = (if self._bool { "true" } else { "false" }).to_string()
+                }
                 Type::Date => self._date = if self._bool { 1 } else { 0 },
                 Type::Duration => self._duration = if self._bool { 1 } else { 0 },
             },
@@ -2236,10 +2430,16 @@ impl Variant {
                 Lexer::dequote(&mut self._string);
                 match new_type {
                     Type::Boolean => {
-                        self._bool = !(self._string.is_empty() || self._string == "0" || self._string == "0.0");
+                        self._bool = !(self._string.is_empty()
+                            || self._string == "0"
+                            || self._string == "0.0");
                     }
                     Type::Integer => {
-                        let base = if self._string.starts_with("0x") { 16 } else { 10 };
+                        let base = if self._string.starts_with("0x") {
+                            16
+                        } else {
+                            10
+                        };
                         self._integer = c_strtol(&self._string, base);
                     }
                     Type::Real => self._real = c_strtod(&self._string),
@@ -2249,7 +2449,9 @@ impl Variant {
                         let date_format = Variant::date_format();
                         let mut iso = Datetime::new();
                         let mut pos = 0usize;
-                        if iso.parse(&self._string, &mut pos, &date_format) && pos == self._string.len() {
+                        if iso.parse(&self._string, &mut pos, &date_format)
+                            && pos == self._string.len()
+                        {
                             self._date = iso.to_epoch();
                         } else {
                             pos = 0;
@@ -2257,7 +2459,8 @@ impl Variant {
                             if isop.parse(&self._string, &mut pos) && pos == self._string.len() {
                                 self._date = Datetime::new().to_epoch() + isop.to_time_t();
                             } else if !date_format.is_empty() {
-                                self._date = Datetime::from_string(&self._string, &date_format)?.to_epoch();
+                                self._date =
+                                    Datetime::from_string(&self._string, &date_format)?.to_epoch();
                             }
                         }
                     }
@@ -2402,7 +2605,11 @@ impl From<&str> for Variant {
 
 impl From<String> for Variant {
     fn from(value: String) -> Self {
-        Variant { _type: Type::String, _string: value, ..Variant::default() }
+        Variant {
+            _type: Type::String,
+            _string: value,
+            ..Variant::default()
+        }
     }
 }
 
@@ -2449,7 +2656,9 @@ fn repeat_count(limit: i32) -> usize {
 /// reproduces the x86-64 `cvttsd2si` result the reference binary produces
 /// (the "integer indefinite" `LLONG_MIN`) instead of Rust's saturation.
 fn c_double_to_long_long(value: f64) -> i64 {
-    if value.is_nan() || !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&value) {
+    if value.is_nan()
+        || !(-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&value)
+    {
         i64::MIN
     } else {
         value as i64

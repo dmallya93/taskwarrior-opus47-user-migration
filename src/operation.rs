@@ -93,8 +93,10 @@ impl Operation {
     pub fn get_old_task(&self) -> Vec<(String, String)> {
         match &self.op {
             TcOperation::Delete { old_task, .. } => {
-                let mut pairs: Vec<(String, String)> =
-                    old_task.iter().map(|(p, v)| (p.clone(), v.clone())).collect();
+                let mut pairs: Vec<(String, String)> = old_task
+                    .iter()
+                    .map(|(p, v)| (p.clone(), v.clone()))
+                    .collect();
                 pairs.sort();
                 pairs
             }
@@ -206,7 +208,12 @@ mod tests {
 
     const UUID1: Uuid = Uuid::from_u128(0x1234_5678_9abc_4def_8123_4567_89ab_cdef);
 
-    fn update(property: &str, value: Option<&str>, old_value: Option<&str>, timestamp: i64) -> Operation {
+    fn update(
+        property: &str,
+        value: Option<&str>,
+        old_value: Option<&str>,
+        timestamp: i64,
+    ) -> Operation {
         Operation::from(TcOperation::Update {
             uuid: UUID1,
             property: property.into(),
@@ -234,8 +241,17 @@ mod tests {
     fn operations_preserves_order_and_kinds() {
         let ops = Operation::operations(&task_lifecycle());
         assert_eq!(ops.len(), 7);
-        let kinds: Vec<(bool, bool, bool, bool)> =
-            ops.iter().map(|o| (o.is_create(), o.is_update(), o.is_delete(), o.is_undo_point())).collect();
+        let kinds: Vec<(bool, bool, bool, bool)> = ops
+            .iter()
+            .map(|o| {
+                (
+                    o.is_create(),
+                    o.is_update(),
+                    o.is_delete(),
+                    o.is_undo_point(),
+                )
+            })
+            .collect();
         assert_eq!(
             kinds,
             vec![
@@ -274,7 +290,10 @@ mod tests {
         let now = Utc::now().timestamp();
         assert!((ops[2].get_timestamp() - now).abs() < 60);
 
-        assert_eq!(ops[6].get_old_task(), vec![("description".to_string(), "bye".to_string())]);
+        assert_eq!(
+            ops[6].get_old_task(),
+            vec![("description".to_string(), "bye".to_string())]
+        );
     }
 
     #[test]
@@ -283,16 +302,26 @@ mod tests {
             .iter()
             .map(|(p, v)| (p.to_string(), v.to_string()))
             .collect();
-        let op = Operation::from(TcOperation::Delete { uuid: UUID1, old_task });
+        let op = Operation::from(TcOperation::Delete {
+            uuid: UUID1,
+            old_task,
+        });
         assert_eq!(
             op.get_old_task(),
-            vec![("a".into(), "2".into()), ("m".into(), "3".into()), ("z".into(), "1".into())]
+            vec![
+                ("a".into(), "2".into()),
+                ("m".into(), "3".into()),
+                ("z".into(), "1".into())
+            ]
         );
     }
 
     #[test]
     fn timestamp_is_seconds() {
-        assert_eq!(update("x", Some("1"), None, 1_234_567_890).get_timestamp(), 1_234_567_890);
+        assert_eq!(
+            update("x", Some("1"), None, 1_234_567_890).get_timestamp(),
+            1_234_567_890
+        );
     }
 
     #[test]
@@ -318,18 +347,21 @@ mod tests {
         let create = Operation::from(TcOperation::Create { uuid: UUID1 });
         let early = update("a", None, None, 100);
         let late = update("a", None, None, 200);
-        let delete = Operation::from(TcOperation::Delete { uuid: UUID1, old_task: Default::default() });
+        let delete = Operation::from(TcOperation::Delete {
+            uuid: UUID1,
+            old_task: Default::default(),
+        });
         let undo = Operation::from(TcOperation::UndoPoint);
 
         // Expected `row.lt(column)`, from Operation.cpp.
         let all = [&create, &early, &late, &delete, &undo];
         let expected = [
             // create early  late   delete undo
-            [false, true, true, true, true],     // create
-            [false, false, true, true, true],    // early
-            [false, false, false, true, true],   // late
-            [false, false, false, false, true],  // delete
-            [true, true, true, true, false],     // undo (C++ quirk, see `lt`)
+            [false, true, true, true, true],    // create
+            [false, false, true, true, true],   // early
+            [false, false, false, true, true],  // late
+            [false, false, false, false, true], // delete
+            [true, true, true, true, false],    // undo (C++ quirk, see `lt`)
         ];
         for (i, a) in all.iter().enumerate() {
             for (j, b) in all.iter().enumerate() {

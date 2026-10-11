@@ -4,7 +4,9 @@
 //! left-justified); `validate` and `modify` are inherited from `ColumnTypeString`.
 
 use crate::columns::col_type_string::ColumnTypeString;
-use crate::columns::column::{column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv};
+use crate::columns::column::{
+    column_base, render_string_left, strings, Column, ModifyEnv, RenderEnv,
+};
 use crate::error::Result;
 use crate::shared::color::Color;
 use crate::task::Task;
@@ -116,7 +118,13 @@ mod tests {
             ((3, 3), vec!["+++".to_string()])
         );
         let red = Color::parse("red").unwrap();
-        assert_eq!(run("mask", &mut with("mask", "-"), 2, &red, &mut env).1, vec!["\x1b[31m- \x1b[0m".to_string()]);
-        assert_eq!(run("mask", &mut Task::new(), 2, &none, &mut env), ((0, 0), vec![]));
+        assert_eq!(
+            run("mask", &mut with("mask", "-"), 2, &red, &mut env).1,
+            vec!["\x1b[31m- \x1b[0m".to_string()]
+        );
+        assert_eq!(
+            run("mask", &mut Task::new(), 2, &none, &mut env),
+            ((0, 0), vec![])
+        );
     }
 }

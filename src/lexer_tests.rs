@@ -88,13 +88,34 @@ fn is_boundary_was_quoted_dequote() {
     let _u = Upstream::setup();
 
     // static bool Lexer::isBoundary (int, int);
-    assert!(Lexer::is_boundary(c(' '), c('a')), "' ' --> 'a' = isBoundary");
-    assert!(Lexer::is_boundary(c('a'), c(' ')), "'a' --> ' ' = isBoundary");
-    assert!(Lexer::is_boundary(c(' '), c('+')), "' ' --> '+' = isBoundary");
-    assert!(Lexer::is_boundary(c(' '), c(',')), "' ' --> ',' = isBoundary");
-    assert!(!Lexer::is_boundary(c('3'), c('4')), "'3' --> '4' = isBoundary");
-    assert!(Lexer::is_boundary(c('('), c('(')), "'(' --> '(' = isBoundary");
-    assert!(!Lexer::is_boundary(c('r'), c('d')), "'r' --> 'd' = isBoundary");
+    assert!(
+        Lexer::is_boundary(c(' '), c('a')),
+        "' ' --> 'a' = isBoundary"
+    );
+    assert!(
+        Lexer::is_boundary(c('a'), c(' ')),
+        "'a' --> ' ' = isBoundary"
+    );
+    assert!(
+        Lexer::is_boundary(c(' '), c('+')),
+        "' ' --> '+' = isBoundary"
+    );
+    assert!(
+        Lexer::is_boundary(c(' '), c(',')),
+        "' ' --> ',' = isBoundary"
+    );
+    assert!(
+        !Lexer::is_boundary(c('3'), c('4')),
+        "'3' --> '4' = isBoundary"
+    );
+    assert!(
+        Lexer::is_boundary(c('('), c('(')),
+        "'(' --> '(' = isBoundary"
+    );
+    assert!(
+        !Lexer::is_boundary(c('r'), c('d')),
+        "'r' --> 'd' = isBoundary"
+    );
 
     // static bool Lexer::wasQuoted (const std::string&);
     assert!(!Lexer::was_quoted(""), "'' --> !wasQuoted");
@@ -132,7 +153,10 @@ fn no_tokens_and_mixed_tokens() {
 
     // Should result in no tokens.
     let mut l1 = Lexer::new("       \t ");
-    assert!(!l1.token(&mut token, &mut type_), "'       \\t ' --> no tokens");
+    assert!(
+        !l1.token(&mut token, &mut type_),
+        "'       \\t ' --> no tokens"
+    );
 
     // € = Euro symbol.
     let tokens = lex_all(r" one 'two \'three\''+456-(1.3*2 - 0x12) 1.2e-3.4    foo.bar and '€'");
@@ -174,7 +198,10 @@ fn no_tokens_and_mixed_tokens() {
     // Test for numbers that are no longer ISO-8601 dates.
     let tokens = lex_all("1 12 123 1234 12345 123456 1234567");
     assert_eq!(tokens.len(), 7, "7 tokens");
-    for (i, expected) in ["1", "12", "123", "1234", "12345", "123456", "1234567"].iter().enumerate() {
+    for (i, expected) in ["1", "12", "123", "1234", "12345", "123456", "1234567"]
+        .iter()
+        .enumerate()
+    {
         assert_eq!(tokens[i].0, *expected, "tokens[{i}] == '{expected}'");
         assert_eq!(tokens[i].1, Type::number, "tokens[{i}] == Type::number");
     }
@@ -202,8 +229,14 @@ fn split() {
     assert_eq!(items[3], "a", "split '  +-* a+b 12.3e4 'c d'' -> [3] 'a'");
     assert_eq!(items[4], "+", "split '  +-* a+b 12.3e4 'c d'' -> [4] '+'");
     assert_eq!(items[5], "b", "split '  +-* a+b 12.3e4 'c d'' -> [5] 'b'");
-    assert_eq!(items[6], "12.3e4", "split '  +-* a+b 12.3e4 'c d'' -> [6] '12.3e4'");
-    assert_eq!(items[7], "'c d'", "split '  +-* a+b 12.3e4 'c d'' -> [7] ''c d''");
+    assert_eq!(
+        items[6], "12.3e4",
+        "split '  +-* a+b 12.3e4 'c d'' -> [6] '12.3e4'"
+    );
+    assert_eq!(
+        items[7], "'c d'",
+        "split '  +-* a+b 12.3e4 'c d'' -> [7] ''c d''"
+    );
 }
 
 #[test]
@@ -222,7 +255,13 @@ fn decompose_pair() {
                         if modifier.is_empty() { "" } else { "." }
                     );
                     assert!(
-                        Lexer::decompose_pair(&input, &mut out_name, &mut out_mod, &mut out_sep, &mut out_value),
+                        Lexer::decompose_pair(
+                            &input,
+                            &mut out_name,
+                            &mut out_mod,
+                            &mut out_sep,
+                            &mut out_value
+                        ),
                         "decomposePair '{input}' --> true"
                     );
                     assert_eq!(name, out_name, "  '{input}' --> name '{name}'");
@@ -242,49 +281,79 @@ fn read_word() {
     // static bool readWord (const std::string&, const std::string&, std::string::size_type&, std::string&);
     let mut cursor: usize = 0;
     let mut word = String::new();
-    assert!(Lexer::read_word_quoted("'one two'", "'\"", &mut cursor, &mut word), "readWord ''one two'' --> true");
+    assert!(
+        Lexer::read_word_quoted("'one two'", "'\"", &mut cursor, &mut word),
+        "readWord ''one two'' --> true"
+    );
     assert_eq!(word, "'one two'", "  word '{word}'");
     assert_eq!(cursor, 9, "  cursor");
 
     // Unterminated quoted string is invalid.
     cursor = 0;
-    assert!(!Lexer::read_word_quoted("'one", "'\"", &mut cursor, &mut word), "readWord ''one' --> false");
+    assert!(
+        !Lexer::read_word_quoted("'one", "'\"", &mut cursor, &mut word),
+        "readWord ''one' --> false"
+    );
 
     // static bool readWord (const std::string&, std::string::size_type&, std::string&);
     cursor = 0;
-    assert!(Lexer::read_word("input", &mut cursor, &mut word), "readWord 'input' --> true");
+    assert!(
+        Lexer::read_word("input", &mut cursor, &mut word),
+        "readWord 'input' --> true"
+    );
     assert_eq!(word, "input", "  word '{word}'");
     assert_eq!(cursor, 5, "  cursor");
 
     cursor = 0;
-    assert!(Lexer::read_word("one\\ two", &mut cursor, &mut word), "readWord 'one\\ two' --> true");
+    assert!(
+        Lexer::read_word("one\\ two", &mut cursor, &mut word),
+        "readWord 'one\\ two' --> true"
+    );
     assert_eq!(word, "one two", "  word '{word}'");
     assert_eq!(cursor, 8, "  cursor");
 
     cursor = 0;
-    assert!(Lexer::read_word("\\u20A43", &mut cursor, &mut word), "readWord '\\u20A43' --> true");
+    assert!(
+        Lexer::read_word("\\u20A43", &mut cursor, &mut word),
+        "readWord '\\u20A43' --> true"
+    );
     assert_eq!(word, "₤3", "  word '{word}'");
     assert_eq!(cursor, 7, "  cursor");
 
     cursor = 0;
-    assert!(Lexer::read_word("U+20AC4", &mut cursor, &mut word), "readWord '\\u20AC4' --> true");
+    assert!(
+        Lexer::read_word("U+20AC4", &mut cursor, &mut word),
+        "readWord '\\u20AC4' --> true"
+    );
     assert_eq!(word, "€4", "  word '{word}'");
     assert_eq!(cursor, 7, "  cursor");
 
     let text = "one 'two' three\\ four";
     cursor = 0;
-    assert!(Lexer::read_word(text, &mut cursor, &mut word), r#"readWord "one 'two' three\ four" --> true"#);
+    assert!(
+        Lexer::read_word(text, &mut cursor, &mut word),
+        r#"readWord "one 'two' three\ four" --> true"#
+    );
     assert_eq!(word, "one", "  word '{word}'");
     cursor += 1;
-    assert!(Lexer::read_word(text, &mut cursor, &mut word), r#"readWord "one 'two' three\ four" --> true"#);
+    assert!(
+        Lexer::read_word(text, &mut cursor, &mut word),
+        r#"readWord "one 'two' three\ four" --> true"#
+    );
     assert_eq!(word, "'two'", "  word '{word}'");
     cursor += 1;
-    assert!(Lexer::read_word(text, &mut cursor, &mut word), r#"readWord "one 'two' three\ four" --> true"#);
+    assert!(
+        Lexer::read_word(text, &mut cursor, &mut word),
+        r#"readWord "one 'two' three\ four" --> true"#
+    );
     assert_eq!(word, "three four", "  word '{word}'");
 
     let text = "one     ";
     cursor = 0;
-    assert!(Lexer::read_word(text, &mut cursor, &mut word), "readWord \"one     \" --> true");
+    assert!(
+        Lexer::read_word(text, &mut cursor, &mut word),
+        "readWord \"one     \" --> true"
+    );
     assert_eq!(word, "one", "  word '{word}'");
 }
 
@@ -294,32 +363,83 @@ fn is_literal_is_one_of_common_length() {
 
     // bool isLiteral (const std::string&, bool, bool);
     let mut l4 = Lexer::new("one.two");
-    assert!(!l4.is_literal("zero", false, false), "isLiteral 'one.two' --> false");
-    assert!(l4.is_literal("one", false, false), "isLiteral 'one.two' --> 'one'");
-    assert!(l4.is_literal(".", false, false), "isLiteral 'one.two' --> '.'");
-    assert!(l4.is_literal("two", false, true), "isLiteral 'one.two' --> 'two'");
+    assert!(
+        !l4.is_literal("zero", false, false),
+        "isLiteral 'one.two' --> false"
+    );
+    assert!(
+        l4.is_literal("one", false, false),
+        "isLiteral 'one.two' --> 'one'"
+    );
+    assert!(
+        l4.is_literal(".", false, false),
+        "isLiteral 'one.two' --> '.'"
+    );
+    assert!(
+        l4.is_literal("two", false, true),
+        "isLiteral 'one.two' --> 'two'"
+    );
 
     let mut l5 = Lexer::new("wonder");
     assert!(
         !l5.is_literal("wonderful", false, false),
         "isLiteral 'wonderful' != 'wonder' without abbreviation"
     );
-    assert!(l5.is_literal("wonderful", true, false), "isLiteral 'wonderful' == 'wonder' with abbreviation");
+    assert!(
+        l5.is_literal("wonderful", true, false),
+        "isLiteral 'wonderful' == 'wonder' with abbreviation"
+    );
 
     // bool isOneOf (const std::string&, bool, bool);
     let mut l6 = Lexer::new("Grumpy.");
-    let dwarves = ["Sneezy", "Doc", "Bashful", "Grumpy", "Happy", "Sleepy", "Dopey"];
-    assert!(!l6.is_one_of(&dwarves, false, true), "isOneof ('Grumpy', true) --> false");
-    assert!(l6.is_one_of(&dwarves, false, false), "isOneOf ('Grumpy', false) --> true");
+    let dwarves = [
+        "Sneezy", "Doc", "Bashful", "Grumpy", "Happy", "Sleepy", "Dopey",
+    ];
+    assert!(
+        !l6.is_one_of(&dwarves, false, true),
+        "isOneof ('Grumpy', true) --> false"
+    );
+    assert!(
+        l6.is_one_of(&dwarves, false, false),
+        "isOneOf ('Grumpy', false) --> true"
+    );
 
     // static std::string::size_type commonLength (const std::string&, const std::string&);
-    assert_eq!(Lexer::common_length("", ""), 0, "commonLength '' : '' --> 0");
-    assert_eq!(Lexer::common_length("a", "a"), 1, "commonLength 'a' : 'a' --> 1");
-    assert_eq!(Lexer::common_length("abcde", "abcde"), 5, "commonLength 'abcde' : 'abcde' --> 5");
-    assert_eq!(Lexer::common_length("abc", ""), 0, "commonLength 'abc' : '' --> 0");
-    assert_eq!(Lexer::common_length("abc", "def"), 0, "commonLength 'abc' : 'def' --> 0");
-    assert_eq!(Lexer::common_length("foobar", "foo"), 3, "commonLength 'foobar' : 'foo' --> 3");
-    assert_eq!(Lexer::common_length("foo", "foobar"), 3, "commonLength 'foo' : 'foobar' --> 3");
+    assert_eq!(
+        Lexer::common_length("", ""),
+        0,
+        "commonLength '' : '' --> 0"
+    );
+    assert_eq!(
+        Lexer::common_length("a", "a"),
+        1,
+        "commonLength 'a' : 'a' --> 1"
+    );
+    assert_eq!(
+        Lexer::common_length("abcde", "abcde"),
+        5,
+        "commonLength 'abcde' : 'abcde' --> 5"
+    );
+    assert_eq!(
+        Lexer::common_length("abc", ""),
+        0,
+        "commonLength 'abc' : '' --> 0"
+    );
+    assert_eq!(
+        Lexer::common_length("abc", "def"),
+        0,
+        "commonLength 'abc' : 'def' --> 0"
+    );
+    assert_eq!(
+        Lexer::common_length("foobar", "foo"),
+        3,
+        "commonLength 'foobar' : 'foo' --> 3"
+    );
+    assert_eq!(
+        Lexer::common_length("foo", "foobar"),
+        3,
+        "commonLength 'foo' : 'foobar' --> 3"
+    );
 
     // static std::string::size_type commonLength (const std::string&, size_type, const std::string&, size_type);
     assert_eq!(
@@ -353,7 +473,10 @@ fn lexer_tests() -> Vec<(&'static str, Vec<Expect>)> {
         ("-tag", vec![r("-tag", tag)]),
         ("+@tag", vec![r("+@tag", tag)]),
         // Path
-        ("/long/path/to/file.txt", vec![r("/long/path/to/file.txt", path)]),
+        (
+            "/long/path/to/file.txt",
+            vec![r("/long/path/to/file.txt", path)],
+        ),
         // Word
         ("1.foo.bar", vec![r("1.foo.bar", word)]),
         // Identifier
@@ -363,7 +486,10 @@ fn lexer_tests() -> Vec<(&'static str, Vec<Expect>)> {
         ("name", vec![r("name", identifier)]),
         ("f1", vec![r("f1", identifier)]),
         ("foo.bar", vec![r("foo.bar", identifier)]),
-        ("a1a1a1a1_a1a1_a1a1_a1a1_a1a1a1a1a1a1", vec![r("a1a1a1a1_a1a1_a1a1_a1a1_a1a1a1a1a1a1", identifier)]),
+        (
+            "a1a1a1a1_a1a1_a1a1_a1a1_a1a1a1a1a1a1",
+            vec![r("a1a1a1a1_a1a1_a1a1_a1a1_a1a1a1a1a1a1", identifier)],
+        ),
         // Word that starts wih 'or', which is an operator, but should be ignored.
         ("ordinary", vec![r("ordinary", identifier)]),
         // DOM
@@ -371,11 +497,26 @@ fn lexer_tests() -> Vec<(&'static str, Vec<Expect>)> {
         ("123.tags", vec![r("123.tags", dom)]),
         ("123.tags.PENDING", vec![r("123.tags.PENDING", dom)]),
         ("123.description", vec![r("123.description", dom)]),
-        ("123.annotations.1.description", vec![r("123.annotations.1.description", dom)]),
-        ("123.annotations.1.entry", vec![r("123.annotations.1.entry", dom)]),
-        ("123.annotations.1.entry.year", vec![r("123.annotations.1.entry.year", dom)]),
-        ("a360fc44-315c-4366-b70c-ea7e7520b749.due", vec![r("a360fc44-315c-4366-b70c-ea7e7520b749.due", dom)]),
-        ("12345678-1234-1234-1234-123456789012.due", vec![r("12345678-1234-1234-1234-123456789012.due", dom)]),
+        (
+            "123.annotations.1.description",
+            vec![r("123.annotations.1.description", dom)],
+        ),
+        (
+            "123.annotations.1.entry",
+            vec![r("123.annotations.1.entry", dom)],
+        ),
+        (
+            "123.annotations.1.entry.year",
+            vec![r("123.annotations.1.entry.year", dom)],
+        ),
+        (
+            "a360fc44-315c-4366-b70c-ea7e7520b749.due",
+            vec![r("a360fc44-315c-4366-b70c-ea7e7520b749.due", dom)],
+        ),
+        (
+            "12345678-1234-1234-1234-123456789012.due",
+            vec![r("12345678-1234-1234-1234-123456789012.due", dom)],
+        ),
         ("system.os", vec![r("system.os", dom)]),
         ("rc.foo", vec![r("rc.foo", dom)]),
         ("rc.context.my-ctx", vec![r("rc.context.my-ctx", dom)]),
@@ -383,7 +524,10 @@ fn lexer_tests() -> Vec<(&'static str, Vec<Expect>)> {
         ("due-1d", vec![r("due", dom), r("-", op), r("1d", duration)]),
         // URL
         ("http://example.com", vec![r("http://example.com", url)]),
-        ("https://foo.example.com", vec![r("https://foo.example.com", url)]),
+        (
+            "https://foo.example.com",
+            vec![r("https://foo.example.com", url)],
+        ),
         // String
         ("'one two'", vec![r("'one two'", string)]),
         ("\"three\"", vec![r("\"three\"", string)]),
@@ -449,26 +593,47 @@ fn lexer_tests() -> Vec<(&'static str, Vec<Expect>)> {
         ("(", vec![r("(", op)]),
         (")", vec![r(")", op)]),
         // UUID
-        ("ffffffff-ffff-ffff-ffff-ffffffffffff", vec![r("ffffffff-ffff-ffff-ffff-ffffffffffff", uuid)]),
+        (
+            "ffffffff-ffff-ffff-ffff-ffffffffffff",
+            vec![r("ffffffff-ffff-ffff-ffff-ffffffffffff", uuid)],
+        ),
         (
             "0000000d-0000-0000-0000-000000000000",
             vec![("0000000d-0000-0000-0000-000000000000", uuid, true, true)],
         ),
-        ("00000000-0000-0000-0000-0000000", vec![r("00000000-0000-0000-0000-0000000", uuid)]),
-        ("00000000-0000-0000-0000", vec![r("00000000-0000-0000-0000", uuid)]),
+        (
+            "00000000-0000-0000-0000-0000000",
+            vec![r("00000000-0000-0000-0000-0000000", uuid)],
+        ),
+        (
+            "00000000-0000-0000-0000",
+            vec![r("00000000-0000-0000-0000", uuid)],
+        ),
         ("00000000-0000-0000", vec![r("00000000-0000-0000", uuid)]),
         ("00000000-0000", vec![r("00000000-0000", uuid)]),
         ("00000000", vec![r("00000000", uuid)]),
-        ("a360fc44-315c-4366-b70c-ea7e7520b749", vec![r("a360fc44-315c-4366-b70c-ea7e7520b749", uuid)]),
-        ("a360fc44-315c-4366-b70c-ea7e752", vec![r("a360fc44-315c-4366-b70c-ea7e752", uuid)]),
-        ("a360fc44-315c-4366-b70c", vec![r("a360fc44-315c-4366-b70c", uuid)]),
+        (
+            "a360fc44-315c-4366-b70c-ea7e7520b749",
+            vec![r("a360fc44-315c-4366-b70c-ea7e7520b749", uuid)],
+        ),
+        (
+            "a360fc44-315c-4366-b70c-ea7e752",
+            vec![r("a360fc44-315c-4366-b70c-ea7e752", uuid)],
+        ),
+        (
+            "a360fc44-315c-4366-b70c",
+            vec![r("a360fc44-315c-4366-b70c", uuid)],
+        ),
         ("a360fc44-315c-4366", vec![r("a360fc44-315c-4366", uuid)]),
         ("a360fc44-315c", vec![r("a360fc44-315c", uuid)]),
         ("a360fc44", vec![r("a360fc44", uuid)]),
         // Date
         ("2015-W01", vec![r("2015-W01", date)]),
         ("2015-02-17", vec![r("2015-02-17", date)]),
-        ("2013-11-29T22:58:00Z", vec![r("2013-11-29T22:58:00Z", date)]),
+        (
+            "2013-11-29T22:58:00Z",
+            vec![r("2013-11-29T22:58:00Z", date)],
+        ),
         ("20131129T225800Z", vec![r("20131129T225800Z", date)]),
         // PRODUCT_TASKWARRIOR
         ("9th", vec![r("9th", date)]),
@@ -492,27 +657,52 @@ fn lexer_tests() -> Vec<(&'static str, Vec<Expect>)> {
         // Misc
         ("--", vec![r("--", separator)]),
         // Expression
-        ("(1+2)", vec![r("(", op), r("1", number), r("+", op), r("2", number), r(")", op)]),
-        ("description~pattern", vec![r("description", dom), r("~", op), r("pattern", identifier)]),
+        (
+            "(1+2)",
+            vec![
+                r("(", op),
+                r("1", number),
+                r("+", op),
+                r("2", number),
+                r(")", op),
+            ],
+        ),
+        (
+            "description~pattern",
+            vec![r("description", dom), r("~", op), r("pattern", identifier)],
+        ),
         ("(+tag)", vec![r("(", op), r("+tag", tag), r(")", op)]),
-        ("(name:value)", vec![r("(", op), r("name:value", pair), r(")", op)]),
+        (
+            "(name:value)",
+            vec![r("(", op), r("name:value", pair), r(")", op)],
+        ),
     ]
 }
 
 /// C++ `t.is (..., expfail)`: with `expfail` the comparison is expected to
 /// fail (a match is reported as "# FIXED" and counted as a failure).
 /// Failures are collected so one run reports every divergence.
-fn check_results(lexer: &mut Lexer, input: &str, results: &[Expect], ok_message: &str, failures: &mut Vec<String>) {
+fn check_results(
+    lexer: &mut Lexer,
+    input: &str,
+    results: &[Expect],
+    ok_message: &str,
+    failures: &mut Vec<String>,
+) {
     let mut token = String::new();
     let mut type_ = Type::word;
     for &(etoken, etype, expfail_token, expfail_type) in results {
         if !lexer.token(&mut token, &mut type_) {
-            failures.push(format!("[{input:?}] {ok_message}: got false, expected {etoken:?}"));
+            failures.push(format!(
+                "[{input:?}] {ok_message}: got false, expected {etoken:?}"
+            ));
             return;
         }
         if (token == etoken) == expfail_token {
             let fixed = if expfail_token { " # FIXED" } else { "" };
-            failures.push(format!("[{input:?}]   token --> {token}{fixed}\n# expected: {etoken}\n#      got: {token}"));
+            failures.push(format!(
+                "[{input:?}]   token --> {token}{fixed}\n# expected: {etoken}\n#      got: {token}"
+            ));
         }
         if (type_ == etype) == expfail_type {
             let fixed = if expfail_type { " # FIXED" } else { "" };
@@ -532,14 +722,31 @@ fn lexer_tests_table() {
     for (input, results) in lexer_tests() {
         // The isolated test puts the input string directly into the Lexer.
         let mut isolated = Lexer::new(input);
-        check_results(&mut isolated, input, &results, "Isolated Lexer::token(...) --> true", &mut failures);
+        check_results(
+            &mut isolated,
+            input,
+            &results,
+            "Isolated Lexer::token(...) --> true",
+            &mut failures,
+        );
 
         // The embedded test surrounds the input string with a space.
         let mut embedded = Lexer::new(&format!(" {input} "));
-        check_results(&mut embedded, input, &results, "Embedded Lexer::token(...) --> true", &mut failures);
+        check_results(
+            &mut embedded,
+            input,
+            &results,
+            "Embedded Lexer::token(...) --> true",
+            &mut failures,
+        );
     }
 
-    assert!(failures.is_empty(), "{} lexerTests failures:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} lexerTests failures:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -565,7 +772,11 @@ fn type_names() {
         (Type::date, "date"),
         (Type::duration, "duration"),
     ] {
-        assert_eq!(Lexer::type_name(&type_), name, "Lexer::typeName (Lexer::Type::{name})");
+        assert_eq!(
+            Lexer::type_name(&type_),
+            name,
+            "Lexer::typeName (Lexer::Type::{name})"
+        );
     }
 }
 
@@ -575,7 +786,11 @@ fn lower_case_commify_trim() {
 
     // std::string Lexer::lowerCase (const std::string& input)
     assert_eq!(Lexer::lower_case(""), "", "Lexer::lowerCase '' -> ''");
-    assert_eq!(Lexer::lower_case("pre01_:POST"), "pre01_:post", "Lexer::lowerCase 'pre01_:POST' -> 'pre01_:post'");
+    assert_eq!(
+        Lexer::lower_case("pre01_:POST"),
+        "pre01_:post",
+        "Lexer::lowerCase 'pre01_:POST' -> 'pre01_:post'"
+    );
 
     // std::string Lexer::commify (const std::string& data)
     for (input, expected) in [
@@ -605,15 +820,31 @@ fn lower_case_commify_trim() {
         ("1234post", "1,234post"),
         ("pre1234post", "pre1,234post"),
     ] {
-        assert_eq!(Lexer::commify(input), expected, "Lexer::commify '{input}' -> '{expected}'");
+        assert_eq!(
+            Lexer::commify(input),
+            expected,
+            "Lexer::commify '{input}' -> '{expected}'"
+        );
     }
 
     // std::string Lexer::trimLeft (const std::string& in, const std::string& t /*= " "*/)
     assert_eq!(Lexer::trim_left(""), "", "Lexer::trimLeft '' -> ''");
     assert_eq!(Lexer::trim_left("   "), "", "Lexer::trimLeft '   ' -> ''");
-    assert_eq!(Lexer::trim_left_with("", " \t"), "", "Lexer::trimLeft '' -> ''");
-    assert_eq!(Lexer::trim_left("xxx"), "xxx", "Lexer::trimLeft 'xxx' -> 'xxx'");
-    assert_eq!(Lexer::trim_left_with("xxx", " \t"), "xxx", "Lexer::trimLeft 'xxx' -> 'xxx'");
+    assert_eq!(
+        Lexer::trim_left_with("", " \t"),
+        "",
+        "Lexer::trimLeft '' -> ''"
+    );
+    assert_eq!(
+        Lexer::trim_left("xxx"),
+        "xxx",
+        "Lexer::trimLeft 'xxx' -> 'xxx'"
+    );
+    assert_eq!(
+        Lexer::trim_left_with("xxx", " \t"),
+        "xxx",
+        "Lexer::trimLeft 'xxx' -> 'xxx'"
+    );
     assert_eq!(
         Lexer::trim_left("  \t xxx \t  "),
         "\t xxx \t  ",
@@ -628,9 +859,21 @@ fn lower_case_commify_trim() {
     // std::string Lexer::trimRight (const std::string& in, const std::string& t /*= " "*/)
     assert_eq!(Lexer::trim_right(""), "", "Lexer::trimRight '' -> ''");
     assert_eq!(Lexer::trim_right("   "), "", "Lexer::trimRight '   ' -> ''");
-    assert_eq!(Lexer::trim_right_with("", " \t"), "", "Lexer::trimRight '' -> ''");
-    assert_eq!(Lexer::trim_right("xxx"), "xxx", "Lexer::trimRight 'xxx' -> 'xxx'");
-    assert_eq!(Lexer::trim_right_with("xxx", " \t"), "xxx", "Lexer::trimRight 'xxx' -> 'xxx'");
+    assert_eq!(
+        Lexer::trim_right_with("", " \t"),
+        "",
+        "Lexer::trimRight '' -> ''"
+    );
+    assert_eq!(
+        Lexer::trim_right("xxx"),
+        "xxx",
+        "Lexer::trimRight 'xxx' -> 'xxx'"
+    );
+    assert_eq!(
+        Lexer::trim_right_with("xxx", " \t"),
+        "xxx",
+        "Lexer::trimRight 'xxx' -> 'xxx'"
+    );
     assert_eq!(
         Lexer::trim_right("  \t xxx \t  "),
         "  \t xxx \t",
@@ -647,7 +890,19 @@ fn lower_case_commify_trim() {
     assert_eq!(Lexer::trim("   "), "", "Lexer::trim '   ' -> ''");
     assert_eq!(Lexer::trim_with("", " \t"), "", "Lexer::trim '' -> ''");
     assert_eq!(Lexer::trim("xxx"), "xxx", "Lexer::trim 'xxx' -> 'xxx'");
-    assert_eq!(Lexer::trim_with("xxx", " \t"), "xxx", "Lexer::trim 'xxx' -> 'xxx'");
-    assert_eq!(Lexer::trim("  \t xxx \t  "), "\t xxx \t", r"Lexer::trim '  \t xxx \t  ' -> '\t xxx \t'");
-    assert_eq!(Lexer::trim_with("  \t xxx \t  ", " \t"), "xxx", "Lexer::trim '  \\t xxx \\t  ' -> 'xxx'");
+    assert_eq!(
+        Lexer::trim_with("xxx", " \t"),
+        "xxx",
+        "Lexer::trim 'xxx' -> 'xxx'"
+    );
+    assert_eq!(
+        Lexer::trim("  \t xxx \t  "),
+        "\t xxx \t",
+        r"Lexer::trim '  \t xxx \t  ' -> '\t xxx \t'"
+    );
+    assert_eq!(
+        Lexer::trim_with("  \t xxx \t  ", " \t"),
+        "xxx",
+        "Lexer::trim '  \\t xxx \\t  ' -> 'xxx'"
+    );
 }

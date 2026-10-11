@@ -60,7 +60,12 @@ impl CmdConfig {
     /// spaces. Without a matching line, `name=value` is appended (again
     /// after confirmation). Returns whether the file was rewritten; fails with
     /// `Could not write to '<file>'.` if that fails.
-    pub fn set_config_variable(config: &Configuration, name: &str, value: &str, confirmation: bool) -> Result<bool> {
+    pub fn set_config_variable(
+        config: &Configuration,
+        name: &str,
+        value: &str,
+        confirmation: bool,
+    ) -> Result<bool> {
         // Read .taskrc (or equivalent)
         let mut contents = File::read_file_lines(&config.file()).unwrap_or_default();
 
@@ -86,7 +91,8 @@ impl CmdConfig {
                 {
                     // line.substr (0, pos + name.length () + 1), with pos == 0.
                     let keep = (name.len() + 1).min(line.len());
-                    let mut new_line = String::from_utf8_lossy(&line.as_bytes()[..keep]).into_owned();
+                    let mut new_line =
+                        String::from_utf8_lossy(&line.as_bytes()[..keep]).into_owned();
                     new_line += &json::encode(value);
 
                     // Preserve the comment
@@ -115,7 +121,10 @@ impl CmdConfig {
         }
 
         if change && !File::write_file_lines(&config.file(), &contents, true) {
-            return Err(TwError::Message(format("Could not write to '{1}'.", &[&config.file()])));
+            return Err(TwError::Message(format(
+                "Could not write to '{1}'.",
+                &[&config.file()],
+            )));
         }
 
         Ok(change)
@@ -128,7 +137,11 @@ impl CmdConfig {
     /// Returns 0 if a line was removed, 1 if lines matched but none was
     /// removed, 2 if no line matched; fails with `Could not write to
     /// '<file>'.` if rewriting the file fails.
-    pub fn unset_config_variable(config: &Configuration, name: &str, confirmation: bool) -> Result<i32> {
+    pub fn unset_config_variable(
+        config: &Configuration,
+        name: &str,
+        confirmation: bool,
+    ) -> Result<i32> {
         // Read .taskrc (or equivalent)
         let contents = File::read_file_lines(&config.file()).unwrap_or_default();
 
@@ -146,7 +159,9 @@ impl CmdConfig {
                 found = true;
 
                 // Remove name
-                if !confirmation || confirm(&format("Are you sure you want to remove '{1}'?", &[&name])) {
+                if !confirmation
+                    || confirm(&format("Are you sure you want to remove '{1}'?", &[&name]))
+                {
                     change = true;
                     continue;
                 }
@@ -156,7 +171,10 @@ impl CmdConfig {
         }
 
         if change && !File::write_file_lines(&config.file(), &kept, true) {
-            return Err(TwError::Message(format("Could not write to '{1}'.", &[&config.file()])));
+            return Err(TwError::Message(format(
+                "Could not write to '{1}'.",
+                &[&config.file()],
+            )));
         }
 
         Ok(if change && found {
@@ -196,14 +214,18 @@ impl Command for CmdConfig {
         let mut out = String::new();
 
         // Get the non-attribute, non-fancy command line arguments.
-        let words = context.cli2.get_words(&context.config, &mut context.debug_messages);
+        let words = context
+            .cli2
+            .get_words(&context.config, &mut context.debug_messages);
 
         // Support:
         //   task config name value    # set name to value
         //   task config name ""       # set name to blank
         //   task config name          # remove name
         if words.is_empty() {
-            return Err(TwError::Message("Specify the name of a config variable to modify.".to_string()));
+            return Err(TwError::Message(
+                "Specify the name of a config variable to modify.".to_string(),
+            ));
         }
 
         let confirmation = context.config.get_boolean("confirmation");
@@ -215,7 +237,9 @@ impl Command for CmdConfig {
         let value = words[1..].join(" ");
 
         if name.is_empty() {
-            return Err(TwError::Message("Specify the name of a config variable to modify.".to_string()));
+            return Err(TwError::Message(
+                "Specify the name of a config variable to modify.".to_string(),
+            ));
         }
 
         let mut change = false;
@@ -236,7 +260,10 @@ impl Command for CmdConfig {
             }
 
             if !found {
-                return Err(TwError::Message(format("No entry named '{1}' found.", &[name])));
+                return Err(TwError::Message(format(
+                    "No entry named '{1}' found.",
+                    &[name],
+                )));
             }
         }
 
@@ -266,7 +293,8 @@ impl CmdCompletionConfig {
             meta: CommandMeta {
                 keyword: "_config".into(),
                 usage: "task          _config".into(),
-                description: "Lists all supported configuration variables, for completion purposes".into(),
+                description: "Lists all supported configuration variables, for completion purposes"
+                    .into(),
                 read_only: true,
                 displays_id: false,
                 needs_gc: false,
@@ -332,7 +360,8 @@ mod tests {
         let (config, rc) = config_from(dir, contents);
         let mut context = Context::new();
         context.config = config;
-        crate::commands::command::factory(&mut context.commands, &Configuration::new()).expect("factory");
+        crate::commands::command::factory(&mut context.commands, &Configuration::new())
+            .expect("factory");
         context.cli2.entity("cmd", "config");
         context.cli2.entity("cmd", "_config");
         for arg in args {
@@ -346,12 +375,18 @@ mod tests {
     #[test]
     fn set_config_variable_rewrites_appends_and_keeps_comments() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (config, rc) = config_from(dir.path(), "a=1 # note\n# a=commented\nb=2\n  a=indented\nxa=1\n");
+        let (config, rc) = config_from(
+            dir.path(),
+            "a=1 # note\n# a=commented\nb=2\n  a=indented\nxa=1\n",
+        );
 
         assert!(CmdConfig::set_config_variable(&config, "a", "new", false).unwrap());
         // The comment follows two spaces; the kept prefix comes from the
         // untrimmed line, so leading spaces eat into the name (C++ quirk).
-        assert_eq!(read(&rc), "a=new  # note\n# a=commented\nb=2\n  new\nxa=1\n");
+        assert_eq!(
+            read(&rc),
+            "a=new  # note\n# a=commented\nb=2\n  new\nxa=1\n"
+        );
 
         assert!(CmdConfig::set_config_variable(&config, "c", "x\"y\\z/", false).unwrap());
         assert_eq!(
@@ -368,13 +403,27 @@ mod tests {
     fn set_config_variable_creates_missing_file_and_reports_write_errors() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut config = Configuration::new();
-        let fresh = dir.path().join("fresh").to_str().expect("utf-8").to_string();
-        config.load(&fresh, 1, NO_SEARCH_PATHS).expect("missing file loads empty");
+        let fresh = dir
+            .path()
+            .join("fresh")
+            .to_str()
+            .expect("utf-8")
+            .to_string();
+        config
+            .load(&fresh, 1, NO_SEARCH_PATHS)
+            .expect("missing file loads empty");
         assert!(CmdConfig::set_config_variable(&config, "k", "v", false).unwrap());
         assert_eq!(read(&fresh), "k=v\n");
 
-        let bad = dir.path().join("missing/dir/rc").to_str().expect("utf-8").to_string();
-        config.load(&bad, 1, NO_SEARCH_PATHS).expect("missing file loads empty");
+        let bad = dir
+            .path()
+            .join("missing/dir/rc")
+            .to_str()
+            .expect("utf-8")
+            .to_string();
+        config
+            .load(&bad, 1, NO_SEARCH_PATHS)
+            .expect("missing file loads empty");
         let err = CmdConfig::set_config_variable(&config, "k", "v", false).unwrap_err();
         assert_eq!(err.to_string(), format!("Could not write to '{bad}'."));
         let status = CmdConfig::unset_config_variable(&config, "k", false).unwrap();
@@ -386,9 +435,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let (config, rc) = config_from(dir.path(), "a=1\n# a=c\n  a=2 # x\nab=3\nxa=4\n");
 
-        assert_eq!(CmdConfig::unset_config_variable(&config, "a", false).unwrap(), 0);
+        assert_eq!(
+            CmdConfig::unset_config_variable(&config, "a", false).unwrap(),
+            0
+        );
         assert_eq!(read(&rc), "# a=c\nab=3\nxa=4\n");
-        assert_eq!(CmdConfig::unset_config_variable(&config, "a", false).unwrap(), 2);
+        assert_eq!(
+            CmdConfig::unset_config_variable(&config, "a", false).unwrap(),
+            2
+        );
         assert_eq!(read(&rc), "# a=c\nab=3\nxa=4\n");
     }
 
@@ -401,31 +456,53 @@ mod tests {
             &["task", "rc.confirmation=off", "config", "foo", "bar", "baz"],
         );
         let mut output = String::new();
-        assert_eq!(CmdConfig::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdConfig::new().execute(&mut context, &mut output).unwrap(),
+            0
+        );
         assert_eq!(output, format!("Config file {rc} modified.\n"));
         assert_eq!(read(&rc), "confirmation=off\nfoo=bar baz\n");
 
-        let (mut context, _) = context_with(dir.path(), &read(&rc), &["task", "config", "--", "foo", ""]);
+        let (mut context, _) =
+            context_with(dir.path(), &read(&rc), &["task", "config", "--", "foo", ""]);
         let mut output = String::new();
-        assert_eq!(CmdConfig::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdConfig::new().execute(&mut context, &mut output).unwrap(),
+            0
+        );
         assert_eq!(read(&rc), "confirmation=off\nfoo=\n");
 
         let (mut context, _) = context_with(dir.path(), &read(&rc), &["task", "config", "foo"]);
         let mut output = String::new();
-        assert_eq!(CmdConfig::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdConfig::new().execute(&mut context, &mut output).unwrap(),
+            0
+        );
         assert_eq!(output, format!("Config file {rc} modified.\n"));
         assert_eq!(read(&rc), "confirmation=off\n");
 
         let (mut context, _) = context_with(dir.path(), &read(&rc), &["task", "config", "foo"]);
         let mut output = String::new();
-        let err = CmdConfig::new().execute(&mut context, &mut output).unwrap_err();
+        let err = CmdConfig::new()
+            .execute(&mut context, &mut output)
+            .unwrap_err();
         assert_eq!(err.to_string(), "No entry named 'foo' found.");
         assert_eq!(output, "");
 
-        for args in [&["task", "config"][..], &["task", "config", ""][..], &["task", "config", "", "x"][..]] {
+        for args in [
+            &["task", "config"][..],
+            &["task", "config", ""][..],
+            &["task", "config", "", "x"][..],
+        ] {
             let (mut context, _) = context_with(dir.path(), &read(&rc), args);
-            let err = CmdConfig::new().execute(&mut context, &mut String::new()).unwrap_err();
-            assert_eq!(err.to_string(), "Specify the name of a config variable to modify.", "{args:?}");
+            let err = CmdConfig::new()
+                .execute(&mut context, &mut String::new())
+                .unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "Specify the name of a config variable to modify.",
+                "{args:?}"
+            );
         }
         assert_eq!(read(&rc), "confirmation=off\n");
     }
@@ -433,9 +510,18 @@ mod tests {
     #[test]
     fn completion_config_lists_sorted_names() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let (mut context, _) = context_with(dir.path(), "zeta=1\nalpha=2\nmid.dle=3\n", &["task", "_config"]);
+        let (mut context, _) = context_with(
+            dir.path(),
+            "zeta=1\nalpha=2\nmid.dle=3\n",
+            &["task", "_config"],
+        );
         let mut output = String::new();
-        assert_eq!(CmdCompletionConfig::new().execute(&mut context, &mut output).unwrap(), 0);
+        assert_eq!(
+            CmdCompletionConfig::new()
+                .execute(&mut context, &mut output)
+                .unwrap(),
+            0
+        );
         assert_eq!(output, "alpha\nmid.dle\nzeta\n");
     }
 }

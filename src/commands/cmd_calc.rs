@@ -63,7 +63,10 @@ impl Command for CmdCalc {
 
         // Compile all the args into one expression.
         let mut expression = String::new();
-        for word in context.cli2.get_words(&context.config, &mut context.debug_messages) {
+        for word in context
+            .cli2
+            .get_words(&context.config, &mut context.debug_messages)
+        {
             expression += &word;
             expression.push(' ');
         }
@@ -127,7 +130,10 @@ mod tests {
 
     #[test]
     fn postfix_by_configuration() {
-        let (rc, out, _) = run(&["task", "calc", "12 3600 * 34 60 * 56 + +"], &[("expressions", "postfix")]);
+        let (rc, out, _) = run(
+            &["task", "calc", "12 3600 * 34 60 * 56 + +"],
+            &[("expressions", "postfix")],
+        );
         assert_eq!(rc.unwrap(), 0);
         assert_eq!(out, "45296\n");
     }
@@ -137,9 +143,20 @@ mod tests {
         let (rc, out, debug) = run(&["task", "calc", "2- -3"], &[("debug", "1")]);
         assert_eq!(rc.unwrap(), 0);
         assert_eq!(out, "5\n");
-        assert!(debug.iter().any(|m| m == "Eval literal number ↑'2'"), "{debug:?}");
-        assert!(debug.iter().any(|m| m == "Eval _neg_ ↓'3' → ↑'-3'"), "{debug:?}");
-        assert!(debug.iter().any(|m| m.starts_with("\x1b[1;37;42mFILTER\x1b[0m Infix ")), "{debug:?}");
+        assert!(
+            debug.iter().any(|m| m == "Eval literal number ↑'2'"),
+            "{debug:?}"
+        );
+        assert!(
+            debug.iter().any(|m| m == "Eval _neg_ ↓'3' → ↑'-3'"),
+            "{debug:?}"
+        );
+        assert!(
+            debug
+                .iter()
+                .any(|m| m.starts_with("\x1b[1;37;42mFILTER\x1b[0m Infix ")),
+            "{debug:?}"
+        );
     }
 
     #[test]

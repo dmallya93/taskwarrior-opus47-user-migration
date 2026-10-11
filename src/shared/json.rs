@@ -101,7 +101,9 @@ fn xdigit(x: u8) -> u32 {
 /// [`crate::shared::utf8::utf8_codepoint`].
 fn utf8_codepoint_bytes(input: &[u8]) -> u32 {
     let length = input.len();
-    if length >= 6 && ((input[0] == b'U' && input[1] == b'+') || (input[0] == b'\\' && input[1] == b'u')) {
+    if length >= 6
+        && ((input[0] == b'U' && input[1] == b'+') || (input[0] == b'\\' && input[1] == b'u'))
+    {
         xdigit(input[2]) << 12 | xdigit(input[3]) << 8 | xdigit(input[4]) << 4 | xdigit(input[5])
     } else if length >= 4 {
         xdigit(input[0]) << 12 | xdigit(input[1]) << 8 | xdigit(input[2]) << 4 | xdigit(input[3])
@@ -719,7 +721,15 @@ fn c_strtoul(s: &str) -> (u64, bool, bool) {
     let (negative, digits) = integer_prefix(s);
     let full = usize::from(negative) + digits.len() == s.len();
     match digits.parse::<u64>() {
-        Ok(value) => (if negative { value.wrapping_neg() } else { value }, full, false),
+        Ok(value) => (
+            if negative {
+                value.wrapping_neg()
+            } else {
+                value
+            },
+            full,
+            false,
+        ),
         Err(_) => (u64::MAX, full, true),
     }
 }
@@ -775,14 +785,20 @@ impl Sax {
         if self.is_object(input, &mut cursor, sink)? || self.is_array(input, &mut cursor, sink)? {
             Self::ignore_whitespace(input, &mut cursor);
             if cursor < input.len() {
-                return Err(Self::error("Error: extra characters found at position ", cursor));
+                return Err(Self::error(
+                    "Error: extra characters found at position ",
+                    cursor,
+                ));
             }
 
             sink.event_doc_end();
             return Ok(true);
         }
 
-        Err(Self::error("Error: Missing '{' or '[' at position ", cursor))
+        Err(Self::error(
+            "Error: Missing '{' or '[' at position ",
+            cursor,
+        ))
     }
 
     /// C++ `SAX::ignoreWhitespace`: the "complete Unicode whitespace list"
@@ -829,7 +845,12 @@ impl Sax {
     }
 
     /// C++ `SAX::isObject`: object := '{' [<pair> [, <pair> ...]] '}'
-    fn is_object(&mut self, input: &[u8], cursor: &mut usize, sink: &mut dyn SaxSink) -> Result<bool> {
+    fn is_object(
+        &mut self,
+        input: &[u8],
+        cursor: &mut usize,
+        sink: &mut dyn SaxSink,
+    ) -> Result<bool> {
         Self::ignore_whitespace(input, cursor);
         let backup = *cursor;
 
@@ -858,7 +879,12 @@ impl Sax {
     }
 
     /// C++ `SAX::isArray`: array := '[' [<value> [, <value> ...]] ']'
-    fn is_array(&mut self, input: &[u8], cursor: &mut usize, sink: &mut dyn SaxSink) -> Result<bool> {
+    fn is_array(
+        &mut self,
+        input: &[u8],
+        cursor: &mut usize,
+        sink: &mut dyn SaxSink,
+    ) -> Result<bool> {
         Self::ignore_whitespace(input, cursor);
         let backup = *cursor;
 
@@ -887,7 +913,12 @@ impl Sax {
     }
 
     /// C++ `SAX::isPair`: pair := <string> ':' <value>
-    fn is_pair(&mut self, input: &[u8], cursor: &mut usize, sink: &mut dyn SaxSink) -> Result<bool> {
+    fn is_pair(
+        &mut self,
+        input: &[u8],
+        cursor: &mut usize,
+        sink: &mut dyn SaxSink,
+    ) -> Result<bool> {
         Self::ignore_whitespace(input, cursor);
         let backup = *cursor;
 
@@ -909,7 +940,12 @@ impl Sax {
 
     /// C++ `SAX::isValue`: string, number, object, array, `true`/`false`, or
     /// `null`, tried in that order.
-    fn is_value(&mut self, input: &[u8], cursor: &mut usize, sink: &mut dyn SaxSink) -> Result<bool> {
+    fn is_value(
+        &mut self,
+        input: &[u8],
+        cursor: &mut usize,
+        sink: &mut dyn SaxSink,
+    ) -> Result<bool> {
         Self::ignore_whitespace(input, cursor);
 
         Ok(Self::is_string(input, cursor, sink)?
@@ -1169,7 +1205,11 @@ impl Sax {
         Self::ignore_whitespace(input, cursor);
 
         let c = *cursor;
-        if at(input, c) == b't' && at(input, c + 1) == b'r' && at(input, c + 2) == b'u' && at(input, c + 3) == b'e' {
+        if at(input, c) == b't'
+            && at(input, c + 1) == b'r'
+            && at(input, c + 2) == b'u'
+            && at(input, c + 3) == b'e'
+        {
             *cursor += 4;
             sink.event_value_bool(true);
             return true;
@@ -1192,7 +1232,11 @@ impl Sax {
         Self::ignore_whitespace(input, cursor);
 
         let c = *cursor;
-        if at(input, c) == b'n' && at(input, c + 1) == b'u' && at(input, c + 2) == b'l' && at(input, c + 3) == b'l' {
+        if at(input, c) == b'n'
+            && at(input, c + 1) == b'u'
+            && at(input, c + 2) == b'l'
+            && at(input, c + 3) == b'l'
+        {
             *cursor += 4;
             sink.event_value_null();
             return true;
@@ -1228,7 +1272,10 @@ impl Sax {
     /// C++ `SAX::hexToInt (int, int, int, int)`: four hex digits as a 16-bit
     /// value.
     fn hex_to_int4(c0: u8, c1: u8, c2: u8, c3: u8) -> u32 {
-        (Self::hex_to_int(c0) << 12) + (Self::hex_to_int(c1) << 8) + (Self::hex_to_int(c2) << 4) + Self::hex_to_int(c3)
+        (Self::hex_to_int(c0) << 12)
+            + (Self::hex_to_int(c1) << 8)
+            + (Self::hex_to_int(c2) << 4)
+            + Self::hex_to_int(c3)
     }
 
     /// C++ `SAX::error`: `message` followed by the cursor position, thrown.
@@ -1245,63 +1292,177 @@ mod tests {
     // The encode/decode assertions of libshared `test/json.t.cpp`.
     #[test]
     fn json_t_encode_decode() {
-        assert_eq!(encode("1\"2"), "1\\\"2", "json::encode <quote> -> <backslash><quote>");
-        assert_eq!(decode("1\\\"2"), "1\"2", "json::decode <backslash><quote> -> <quote>");
+        assert_eq!(
+            encode("1\"2"),
+            "1\\\"2",
+            "json::encode <quote> -> <backslash><quote>"
+        );
+        assert_eq!(
+            decode("1\\\"2"),
+            "1\"2",
+            "json::decode <backslash><quote> -> <quote>"
+        );
 
-        assert_eq!(encode("1/2"), "1\\/2", "json::encode <slash> -> <backslash><slash>");
-        assert_eq!(decode("1\\/2"), "1/2", "json::decode <backslash><slash> -> <slash>");
+        assert_eq!(
+            encode("1/2"),
+            "1\\/2",
+            "json::encode <slash> -> <backslash><slash>"
+        );
+        assert_eq!(
+            decode("1\\/2"),
+            "1/2",
+            "json::decode <backslash><slash> -> <slash>"
+        );
 
-        assert_eq!(encode("1\u{8}2"), "1\\b2", "json::encode <bell> -> <backslash><backslash><b>");
-        assert_eq!(decode("1\\b2"), "1\u{8}2", "json::decode <backslash><backslash><b> -> <bell>");
+        assert_eq!(
+            encode("1\u{8}2"),
+            "1\\b2",
+            "json::encode <bell> -> <backslash><backslash><b>"
+        );
+        assert_eq!(
+            decode("1\\b2"),
+            "1\u{8}2",
+            "json::decode <backslash><backslash><b> -> <bell>"
+        );
 
-        assert_eq!(encode("1\u{c}2"), "1\\f2", "json::encode <formfeed> -> <backslash><backslash><f>");
-        assert_eq!(decode("1\\f2"), "1\u{c}2", "json::decode <backslash><backslash><f> -> <formfeed>");
+        assert_eq!(
+            encode("1\u{c}2"),
+            "1\\f2",
+            "json::encode <formfeed> -> <backslash><backslash><f>"
+        );
+        assert_eq!(
+            decode("1\\f2"),
+            "1\u{c}2",
+            "json::decode <backslash><backslash><f> -> <formfeed>"
+        );
 
-        assert_eq!(encode("1\n2"), "1\\n2", "json::encode <newline> -> <backslash><newline>");
-        assert_eq!(decode("1\\n2"), "1\n2", "json::decode <backslash><newline> -> <newline>");
+        assert_eq!(
+            encode("1\n2"),
+            "1\\n2",
+            "json::encode <newline> -> <backslash><newline>"
+        );
+        assert_eq!(
+            decode("1\\n2"),
+            "1\n2",
+            "json::decode <backslash><newline> -> <newline>"
+        );
 
-        assert_eq!(encode("1\r2"), "1\\r2", "json::encode <cr> -> <backslash><r>");
-        assert_eq!(decode("1\\r2"), "1\r2", "json::decode <backslash><r> -> <cr>");
+        assert_eq!(
+            encode("1\r2"),
+            "1\\r2",
+            "json::encode <cr> -> <backslash><r>"
+        );
+        assert_eq!(
+            decode("1\\r2"),
+            "1\r2",
+            "json::decode <backslash><r> -> <cr>"
+        );
 
-        assert_eq!(encode("1\t2"), "1\\t2", "json::encode <tab> -> <backslash><t>");
-        assert_eq!(decode("1\\t2"), "1\t2", "json::decode <backslash><t> -> <tab>");
+        assert_eq!(
+            encode("1\t2"),
+            "1\\t2",
+            "json::encode <tab> -> <backslash><t>"
+        );
+        assert_eq!(
+            decode("1\\t2"),
+            "1\t2",
+            "json::decode <backslash><t> -> <tab>"
+        );
 
-        assert_eq!(encode("1\\2"), "1\\\\2", "json::encode <backslash> -> <backslash><backslash>");
-        assert_eq!(decode("1\\\\2"), "1\\2", "json::decode <backslash><backslash> -> <backslash>");
+        assert_eq!(
+            encode("1\\2"),
+            "1\\\\2",
+            "json::encode <backslash> -> <backslash><backslash>"
+        );
+        assert_eq!(
+            decode("1\\\\2"),
+            "1\\2",
+            "json::decode <backslash><backslash> -> <backslash>"
+        );
 
         // C++ "1\x2" is '1' followed by the byte 0x02.
-        assert_eq!(encode("1\x02"), "1\x02", "json::encode <backslash><x> -> <backslash><x>(NOP)");
-        assert_eq!(decode("1\x02"), "1\x02", "json::decode <backslash><x> -> <backslash><x>(NOP)");
+        assert_eq!(
+            encode("1\x02"),
+            "1\x02",
+            "json::encode <backslash><x> -> <backslash><x>(NOP)"
+        );
+        assert_eq!(
+            decode("1\x02"),
+            "1\x02",
+            "json::decode <backslash><x> -> <backslash><x>(NOP)"
+        );
 
         assert_eq!(encode("1€2"), "1€2", "json::encode € -> €");
-        assert_eq!(decode("1\\u20ac2"), "1€2", "json::decode <backslash>u20ac -> €");
+        assert_eq!(
+            decode("1\\u20ac2"),
+            "1€2",
+            "json::decode <backslash>u20ac -> €"
+        );
 
         let encoded = encode("one\\");
-        assert_eq!(encoded, "one\\\\", "json::encode one<backslash> -> one<backslash><backslash>");
+        assert_eq!(
+            encoded, "one\\\\",
+            "json::encode one<backslash> -> one<backslash><backslash>"
+        );
         assert_eq!(encoded.len(), 5, "json::encode one<backslash> -> length 5");
-        assert_eq!(encoded.as_bytes()[0], b'o', "json::encode one<backslash>[0] -> o");
-        assert_eq!(encoded.as_bytes()[1], b'n', "json::encode one<backslash>[1] -> n");
-        assert_eq!(encoded.as_bytes()[2], b'e', "json::encode one<backslash>[2] -> e");
-        assert_eq!(encoded.as_bytes()[3], b'\\', "json::encode one<backslash>[3] -> <backslash>");
-        assert_eq!(encoded.as_bytes()[4], b'\\', "json::encode one<backslash>[4] -> <backslash>");
+        assert_eq!(
+            encoded.as_bytes()[0],
+            b'o',
+            "json::encode one<backslash>[0] -> o"
+        );
+        assert_eq!(
+            encoded.as_bytes()[1],
+            b'n',
+            "json::encode one<backslash>[1] -> n"
+        );
+        assert_eq!(
+            encoded.as_bytes()[2],
+            b'e',
+            "json::encode one<backslash>[2] -> e"
+        );
+        assert_eq!(
+            encoded.as_bytes()[3],
+            b'\\',
+            "json::encode one<backslash>[3] -> <backslash>"
+        );
+        assert_eq!(
+            encoded.as_bytes()[4],
+            b'\\',
+            "json::encode one<backslash>[4] -> <backslash>"
+        );
 
-        assert_eq!(decode(&encoded), "one\\", "json::decode one<backslash><backslash> -> one<backslash>");
+        assert_eq!(
+            decode(&encoded),
+            "one\\",
+            "json::decode one<backslash><backslash> -> one<backslash>"
+        );
 
         // Invalid input, trailing `\`.
-        assert_eq!(decode("1\\"), "1\\", "json::decode <backslash> -> <backslash>");
+        assert_eq!(
+            decode("1\\"),
+            "1\\",
+            "json::decode <backslash> -> <backslash>"
+        );
 
         // Embedded NUL. C++ "\0012" is the byte 0x01 followed by '2'.
         assert_eq!(decode("\x012"), "\x012", "json::decode <nul>12 -> <nul>12");
 
         // Escaped embedded NUL.
-        assert_eq!(decode("\\\x012"), "\\\x012", "json::decode <backslash><nul>12 -> <backslash><nul>12");
+        assert_eq!(
+            decode("\\\x012"),
+            "\\\x012",
+            "json::decode <backslash><nul>12 -> <backslash><nul>12"
+        );
     }
 
     #[test]
     fn encode_only_touches_the_table_entries() {
         assert_eq!(encode(""), "");
         assert_eq!(encode("\x00\x01\x0b\x7f"), "\x00\x01\x0b\x7f");
-        assert_eq!(encode("\"\\/\u{8}\u{c}\n\r\t"), "\\\"\\\\\\/\\b\\f\\n\\r\\t");
+        assert_eq!(
+            encode("\"\\/\u{8}\u{c}\n\r\t"),
+            "\\\"\\\\\\/\\b\\f\\n\\r\\t"
+        );
         assert_eq!(encode("a\"b\"c"), "a\\\"b\\\"c");
         let all = "x\"\\/\u{8}\u{c}\n\r\ty € z";
         assert_eq!(decode(&encode(all)), all, "decode inverts encode");
@@ -1313,9 +1474,21 @@ mod tests {
         assert_eq!(decode("plain"), "plain");
         assert_eq!(decode("\\u0041\\u00e9"), "A\u{e9}");
         assert_eq!(decode("\\q"), "\\q", "unknown escapes are kept");
-        assert_eq!(decode("\\u41"), "", "short \\u escape is code point 0, which is empty");
-        assert_eq!(decode("\\uU+0041"), "A41", "the U+ form of utf8_codepoint, but only 4 bytes are skipped");
-        assert_eq!(decode("a\\\0b"), "a\\b", "embedded NUL after a backslash is dropped");
+        assert_eq!(
+            decode("\\u41"),
+            "",
+            "short \\u escape is code point 0, which is empty"
+        );
+        assert_eq!(
+            decode("\\uU+0041"),
+            "A41",
+            "the U+ form of utf8_codepoint, but only 4 bytes are skipped"
+        );
+        assert_eq!(
+            decode("a\\\0b"),
+            "a\\b",
+            "embedded NUL after a backslash is dropped"
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -1410,7 +1583,11 @@ mod tests {
             ("[?]", "Error: missing ']' at position 1"),
         ];
         for (input, message) in expected {
-            assert_eq!(parse(input).unwrap_err().to_string(), message, "negative: {input}");
+            assert_eq!(
+                parse(input).unwrap_err().to_string(),
+                message,
+                "negative: {input}"
+            );
         }
     }
 
@@ -1472,10 +1649,22 @@ mod tests {
     fn strings_are_stored_and_dumped_raw() {
         let root = parse(r#"["a\"b\u20ac\/\n", ""]"#).unwrap();
         let arr = root.as_array().unwrap();
-        assert_eq!(arr[0].as_str(), Some(r#"a\"b\u20ac\/\n"#), "escapes are kept raw");
+        assert_eq!(
+            arr[0].as_str(),
+            Some(r#"a\"b\u20ac\/\n"#),
+            "escapes are kept raw"
+        );
         assert_eq!(arr[1].as_str(), Some(""), "empty string");
-        assert_eq!(root.dump(), r#"["a\"b\u20ac\/\n",""]"#, "dump writes raw text back");
-        assert_eq!(decode(arr[0].as_str().unwrap()), "a\"b\u{20ac}/\n", "decode unescapes");
+        assert_eq!(
+            root.dump(),
+            r#"["a\"b\u20ac\/\n",""]"#,
+            "dump writes raw text back"
+        );
+        assert_eq!(
+            decode(arr[0].as_str().unwrap()),
+            "a\"b\u{20ac}/\n",
+            "decode unescapes"
+        );
 
         let root = parse(r#"{"k\"ey":"v"}"#).unwrap();
         assert!(root.get(r#"k\"ey"#).is_some(), "keys are raw too");
@@ -1512,7 +1701,10 @@ mod tests {
 
         // No word boundary after a literal or number: "truex" stops after
         // "true", which leaves 'x' where ',' or ']' is expected.
-        assert_eq!(parse("[truex]").unwrap_err().to_string(), "Error: missing ']' at position 5");
+        assert_eq!(
+            parse("[truex]").unwrap_err().to_string(),
+            "Error: missing ']' at position 5"
+        );
     }
 
     #[test]
@@ -1525,7 +1717,10 @@ mod tests {
         assert_eq!(root.get("n").unwrap().jtype(), JType::Number);
         assert_eq!(root.get("l").unwrap().jtype(), JType::Literal);
         assert!(root.get("missing").is_none());
-        assert!(root.get("s").unwrap().get("x").is_none(), "get on a non-object");
+        assert!(
+            root.get("s").unwrap().get("x").is_none(),
+            "get on a non-object"
+        );
         assert!(root.as_array().is_none());
         assert!(root.as_str().is_none());
         assert!(root.as_number().is_none());
@@ -1543,13 +1738,21 @@ mod tests {
         assert_eq!(JType::Number as i32, 4);
         assert_eq!(JType::Literal as i32, 5);
 
-        assert_eq!(JsonValue::new_string("a\\\"b").dump(), "\"a\\\"b\"", "string constructor stores raw text");
+        assert_eq!(
+            JsonValue::new_string("a\\\"b").dump(),
+            "\"a\\\"b\"",
+            "string constructor stores raw text"
+        );
 
         let mut root = root;
-        root.as_object_mut().unwrap().insert("z".to_string(), JsonValue::Number(1.0));
+        root.as_object_mut()
+            .unwrap()
+            .insert("z".to_string(), JsonValue::Number(1.0));
         assert_eq!(root.clone().into_object().unwrap().len(), 6);
         let mut arr = parse("[1]").unwrap();
-        arr.as_array_mut().unwrap().push(JsonValue::Literal(LiteralValue::Null));
+        arr.as_array_mut()
+            .unwrap()
+            .push(JsonValue::Literal(LiteralValue::Null));
         assert_eq!(arr.dump(), "[1.000000,null]");
         assert_eq!(arr.into_array().unwrap().len(), 2);
     }
@@ -1569,7 +1772,10 @@ mod tests {
         assert_eq!(pig.cursor(), 0, "object::parse restores the checkpoint");
 
         let mut pig = Pig::new("  [ ] ");
-        assert_eq!(parse_value(&mut pig).unwrap(), Some(JsonValue::Array(vec![])));
+        assert_eq!(
+            parse_value(&mut pig).unwrap(),
+            Some(JsonValue::Array(vec![]))
+        );
         assert_eq!(pig.cursor(), 5);
 
         let mut pig = Pig::new("12.5x");
@@ -1665,26 +1871,43 @@ mod tests {
     #[test]
     fn json_test_fixtures() {
         let files = fixture_files();
-        assert_eq!(files.len(), 20, "all 20 libshared test/json/*.json fixtures are present");
+        assert_eq!(
+            files.len(),
+            20,
+            "all 20 libshared test/json/*.json fixtures are present"
+        );
 
         for file in &files {
             let path = file.to_str().unwrap();
             let out = json_test(&[path]);
             let name = file.file_name().unwrap().to_string_lossy();
             assert!(!out.contains("Error"), "TestJsonParsing {name}: {out}");
-            assert!(out.starts_with('{') || out.starts_with('['), "TestJsonParsing {name} dumps: {out}");
+            assert!(
+                out.starts_with('{') || out.starts_with('['),
+                "TestJsonParsing {name} dumps: {out}"
+            );
         }
     }
 
     #[test]
     fn json_test_program() {
         assert!(json_test(&[]).starts_with("\nUsage: json_test [-q] <file | JSON> ...\n"));
-        assert_eq!(json_test(&["{\"a\":1}"]), "{\"a\":1.000000}\n", "JSON given on the command line");
+        assert_eq!(
+            json_test(&["{\"a\":1}"]),
+            "{\"a\":1.000000}\n",
+            "JSON given on the command line"
+        );
         assert_eq!(json_test(&["-q", "[1]"]), "", "-q suppresses the dump");
-        assert_eq!(json_test(&["[1", "-q"]), "Error: missing ']' at position 2\n");
+        assert_eq!(
+            json_test(&["[1", "-q"]),
+            "Error: missing ']' at position 2\n"
+        );
 
         let e3 = fixture_dir().join("e3.json");
-        assert_eq!(json_test(&[e3.to_str().unwrap()]), "{\"color\":\"red\",\"value\":\"#f00\"}\n");
+        assert_eq!(
+            json_test(&[e3.to_str().unwrap()]),
+            "{\"color\":\"red\",\"value\":\"#f00\"}\n"
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -1723,7 +1946,8 @@ mod tests {
             self.combined.push_str("<null />");
         }
         fn event_value_bool(&mut self, value: bool) {
-            self.combined.push_str(&format!("<bool>{}</bool>", i32::from(value)));
+            self.combined
+                .push_str(&format!("<bool>{}</bool>", i32::from(value)));
         }
         fn event_value_int(&mut self, value: i64) {
             self.combined.push_str(&format!("<int>{value}</int>"));
@@ -1756,7 +1980,10 @@ mod tests {
     #[test]
     fn json_t_sax() {
         sax_test("{}", "<doc><object></object></doc>");
-        sax_test("{\"name\":\"value\"}", "<doc><object><name>name</name><string>value</string></object></doc>");
+        sax_test(
+            "{\"name\":\"value\"}",
+            "<doc><object><name>name</name><string>value</string></object></doc>",
+        );
         sax_test(
             "\n\t {\n\t \"name\"\n\t :\n\t \"value\"\n\t }\n\t ",
             "<doc><object><name>name</name><string>value</string></object></doc>",
@@ -1848,22 +2075,41 @@ mod tests {
     fn sax_numbers() {
         assert_eq!(
             sax_events("[1.5,-2,1e3,0]"),
-            [Event::Double(1.5), Event::Int(-2), Event::Double(1000.0), Event::Int(0), Event::ArrayEnd(4)]
+            [
+                Event::Double(1.5),
+                Event::Int(-2),
+                Event::Double(1000.0),
+                Event::Int(0),
+                Event::ArrayEnd(4)
+            ]
         );
         assert_eq!(
             sax_events("[9223372036854775807,-9223372036854775808]"),
-            [Event::Int(i64::MAX), Event::Int(i64::MIN), Event::ArrayEnd(2)]
+            [
+                Event::Int(i64::MAX),
+                Event::Int(i64::MIN),
+                Event::ArrayEnd(2)
+            ]
         );
 
         // errno is never reset: after strtol overflows, strtoul's success is
         // ignored too, and every later number is a double.
         assert_eq!(
             sax_events("[7,18446744073709551615,7]"),
-            [Event::Int(7), Event::Double(18446744073709551615.0), Event::Double(7.0), Event::ArrayEnd(3)]
+            [
+                Event::Int(7),
+                Event::Double(18446744073709551615.0),
+                Event::Double(7.0),
+                Event::ArrayEnd(3)
+            ]
         );
         assert_eq!(
             sax_events("[1e999,7]"),
-            [Event::Double(f64::INFINITY), Event::Double(7.0), Event::ArrayEnd(2)],
+            [
+                Event::Double(f64::INFINITY),
+                Event::Double(7.0),
+                Event::ArrayEnd(2)
+            ],
             "strtod overflow sets ERANGE as well"
         );
         assert_eq!(
@@ -1879,7 +2125,10 @@ mod tests {
         // cursor is restored to the '1').
         let mut log = EventLog::default();
         assert_eq!(
-            Sax::new().parse("[1 .5]", &mut log).unwrap_err().to_string(),
+            Sax::new()
+                .parse("[1 .5]", &mut log)
+                .unwrap_err()
+                .to_string(),
             "Error: Missing ']' at position 1"
         );
     }
@@ -1895,8 +2144,14 @@ mod tests {
             ]
         );
         // A \u escape needs four hex digits, else 'u' is an ordinary escape.
-        assert_eq!(sax_events(r#"["\u12"]"#), [Event::Str("u12".to_string()), Event::ArrayEnd(1)]);
-        assert_eq!(sax_events("[\"\u{e9}\"]"), [Event::Str("\u{e9}".to_string()), Event::ArrayEnd(1)]);
+        assert_eq!(
+            sax_events(r#"["\u12"]"#),
+            [Event::Str("u12".to_string()), Event::ArrayEnd(1)]
+        );
+        assert_eq!(
+            sax_events("[\"\u{e9}\"]"),
+            [Event::Str("\u{e9}".to_string()), Event::ArrayEnd(1)]
+        );
     }
 
     #[test]
@@ -1920,7 +2175,11 @@ mod tests {
         assert_eq!(sax_events("[1,]"), [Event::Int(1), Event::ArrayEnd(1)]);
         assert_eq!(
             sax_events("{\"a\":1,}"),
-            [Event::Name("a".to_string()), Event::Int(1), Event::ObjectEnd(1)]
+            [
+                Event::Name("a".to_string()),
+                Event::Int(1),
+                Event::ObjectEnd(1)
+            ]
         );
 
         // Duplicate names are all reported.
@@ -1953,7 +2212,11 @@ mod tests {
         ];
         for (input, message) in cases {
             let mut log = EventLog::default();
-            assert_eq!(Sax::new().parse(input, &mut log).unwrap_err().to_string(), message, "{input}");
+            assert_eq!(
+                Sax::new().parse(input, &mut log).unwrap_err().to_string(),
+                message,
+                "{input}"
+            );
         }
     }
 
@@ -1970,7 +2233,8 @@ mod tests {
             self.out.push_str("# object start\n");
         }
         fn event_object_end(&mut self, count: i32) {
-            self.out.push_str(&format!("# object end ({count} items)\n"));
+            self.out
+                .push_str(&format!("# object end ({count} items)\n"));
         }
         fn event_array_start(&mut self) {
             self.out.push_str("# array start\n");
@@ -1985,7 +2249,10 @@ mod tests {
             self.out.push_str("# value 'null'\n");
         }
         fn event_value_bool(&mut self, value: bool) {
-            self.out.push_str(&format!("# value '{}'\n", if value { "true" } else { "false" }));
+            self.out.push_str(&format!(
+                "# value '{}'\n",
+                if value { "true" } else { "false" }
+            ));
         }
         fn event_value_int(&mut self, value: i64) {
             self.out.push_str(&format!("# value '{value}'\n"));
@@ -2007,7 +2274,9 @@ mod tests {
         let mut status = 0;
         let mut out = String::new();
         if args.is_empty() {
-            out.push_str("\nUsage: json2_test <file> ...\n\n      <file>    file containing JSON\n\n");
+            out.push_str(
+                "\nUsage: json2_test <file> ...\n\n      <file>    file containing JSON\n\n",
+            );
         } else {
             for arg in args {
                 // std::ifstream of a missing file reads as empty.
@@ -2032,7 +2301,9 @@ mod tests {
 
     #[test]
     fn sax_test_fixtures() {
-        assert!(sax_test_program(&[]).0.starts_with("\nUsage: json2_test <file> ...\n"));
+        assert!(sax_test_program(&[])
+            .0
+            .starts_with("\nUsage: json2_test <file> ...\n"));
 
         for file in fixture_files() {
             let (out, status) = sax_test_program(&[&file]);

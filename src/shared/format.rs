@@ -30,7 +30,14 @@ use crate::shared::utf8::{utf8_next_char, utf8_text_width};
 /// finite value.
 fn non_finite(value: f64) -> Option<String> {
     if value.is_nan() {
-        Some(if value.is_sign_negative() { "-nan" } else { "nan" }.to_string())
+        Some(
+            if value.is_sign_negative() {
+                "-nan"
+            } else {
+                "nan"
+            }
+            .to_string(),
+        )
     } else if value.is_infinite() {
         Some(if value < 0.0 { "-inf" } else { "inf" }.to_string())
     } else {
@@ -90,7 +97,11 @@ pub fn printf_g(value: f64, precision: usize) -> String {
     if x < -4 || x >= p as i32 {
         let (mantissa, exponent) = rust_exponential(value, p - 1);
         let sign = if exponent < 0 { '-' } else { '+' };
-        format!("{}e{sign}{:02}", strip_fraction_zeros(&mantissa), exponent.unsigned_abs())
+        format!(
+            "{}e{sign}{:02}",
+            strip_fraction_zeros(&mantissa),
+            exponent.unsigned_abs()
+        )
     } else {
         let decimals = (p as i32 - 1 - x) as usize;
         strip_fraction_zeros(&format!("{value:.decimals$}"))
@@ -104,7 +115,10 @@ fn strip_fraction_zeros(number: &str) -> String {
         return number.to_string();
     }
 
-    number.trim_end_matches('0').trim_end_matches('.').to_string()
+    number
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 /// `std::ostream << double` in the default float field: `%.*g` at the stream
@@ -553,16 +567,52 @@ mod tests {
     fn format_width_precision() {
         // std::string format (float, int, int);
         // (The C++ literals are doubles, so these exercise format (double, int, int).)
-        assert_eq!(format_double(0.12345678, 8, 4), "  0.1235", "format (0.12345678,    8,   4) -> __0.1235");
+        assert_eq!(
+            format_double(0.12345678, 8, 4),
+            "  0.1235",
+            "format (0.12345678,    8,   4) -> __0.1235"
+        );
 
-        assert_eq!(format_double(1.23456789, 8, 1), "       1", "format (1.23456789,    8,   1) -> _______1");
-        assert_eq!(format_double(1.23456789, 8, 2), "     1.2", "format (1.23456789,    8,   2) -> _____1.2");
-        assert_eq!(format_double(1.23456789, 8, 3), "    1.23", "format (1.23456789,    8,   3) -> ____1.23");
-        assert_eq!(format_double(1.23456789, 8, 4), "   1.235", "format (1.23456789,    8,   4) -> ___1.235");
-        assert_eq!(format_double(1.23456789, 8, 5), "  1.2346", "format (1.23456789,    8,   5) -> __1.2346");
-        assert_eq!(format_double(1.23456789, 8, 6), " 1.23457", "format (1.23456789,    8,   6) ->  1.23457");
-        assert_eq!(format_double(1.23456789, 8, 7), "1.234568", "format (1.23456789,    8,   7) -> 1.234568");
-        assert_eq!(format_double(1.23456789, 8, 8), "1.2345679", "format (1.23456789,    8,   8) -> 1.2345679");
+        assert_eq!(
+            format_double(1.23456789, 8, 1),
+            "       1",
+            "format (1.23456789,    8,   1) -> _______1"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 2),
+            "     1.2",
+            "format (1.23456789,    8,   2) -> _____1.2"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 3),
+            "    1.23",
+            "format (1.23456789,    8,   3) -> ____1.23"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 4),
+            "   1.235",
+            "format (1.23456789,    8,   4) -> ___1.235"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 5),
+            "  1.2346",
+            "format (1.23456789,    8,   5) -> __1.2346"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 6),
+            " 1.23457",
+            "format (1.23456789,    8,   6) ->  1.23457"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 7),
+            "1.234568",
+            "format (1.23456789,    8,   7) -> 1.234568"
+        );
+        assert_eq!(
+            format_double(1.23456789, 8, 8),
+            "1.2345679",
+            "format (1.23456789,    8,   8) -> 1.2345679"
+        );
         assert_eq!(
             format_double(2444238.56789, 12, 11),
             "2444238.5679",
@@ -572,16 +622,44 @@ mod tests {
 
     #[test]
     fn format_positional() {
-        assert_eq!(format("pre {1} post", &[&"mid"]), "pre mid post", "format 1a");
-        assert_eq!(format("pre {1}{1} post", &[&"mid"]), "pre midmid post", "format 1b");
+        assert_eq!(
+            format("pre {1} post", &[&"mid"]),
+            "pre mid post",
+            "format 1a"
+        );
+        assert_eq!(
+            format("pre {1}{1} post", &[&"mid"]),
+            "pre midmid post",
+            "format 1b"
+        );
         assert_eq!(format("pre {1} post", &[&0]), "pre 0 post", "format 1c");
         assert_eq!(format("pre {1}{1} post", &[&0]), "pre 00 post", "format 1d");
 
-        assert_eq!(format("pre {1}{2} post", &[&"one", &"two"]), "pre onetwo post", "format 2a");
-        assert_eq!(format("pre {2}{1} post", &[&"one", &"two"]), "pre twoone post", "format 2b");
-        assert_eq!(format("pre {1}{2} post", &[&"one", &2]), "pre one2 post", "format 2c");
-        assert_eq!(format("pre {1}{2} post", &[&1, &"two"]), "pre 1two post", "format 2d");
-        assert_eq!(format("pre {1}{2} post", &[&1, &2]), "pre 12 post", "format 2e");
+        assert_eq!(
+            format("pre {1}{2} post", &[&"one", &"two"]),
+            "pre onetwo post",
+            "format 2a"
+        );
+        assert_eq!(
+            format("pre {2}{1} post", &[&"one", &"two"]),
+            "pre twoone post",
+            "format 2b"
+        );
+        assert_eq!(
+            format("pre {1}{2} post", &[&"one", &2]),
+            "pre one2 post",
+            "format 2c"
+        );
+        assert_eq!(
+            format("pre {1}{2} post", &[&1, &"two"]),
+            "pre 1two post",
+            "format 2d"
+        );
+        assert_eq!(
+            format("pre {1}{2} post", &[&1, &2]),
+            "pre 12 post",
+            "format 2e"
+        );
 
         assert_eq!(
             format("pre {1}{2}{3} post", &[&"one", &"two", &"three"]),
@@ -598,26 +676,78 @@ mod tests {
     #[test]
     fn justify() {
         // std::string leftJustify (const std::string&, const int);
-        assert_eq!(left_justify_int(123, 3), "123", "leftJustify 123,3 -> '123'");
-        assert_eq!(left_justify_int(123, 4), "123 ", "leftJustify 123,4 -> '123 '");
-        assert_eq!(left_justify_int(123, 5), "123  ", "leftJustify 123,5 -> '123  '");
+        assert_eq!(
+            left_justify_int(123, 3),
+            "123",
+            "leftJustify 123,3 -> '123'"
+        );
+        assert_eq!(
+            left_justify_int(123, 4),
+            "123 ",
+            "leftJustify 123,4 -> '123 '"
+        );
+        assert_eq!(
+            left_justify_int(123, 5),
+            "123  ",
+            "leftJustify 123,5 -> '123  '"
+        );
 
         // std::string leftJustify (const std::string&, const int);
         assert_eq!(left_justify("foo", 3), "foo", "leftJustify foo,3 -> 'foo'");
-        assert_eq!(left_justify("foo", 4), "foo ", "leftJustify foo,4 -> 'foo '");
-        assert_eq!(left_justify("foo", 5), "foo  ", "leftJustify foo,5 -> 'foo  '");
-        assert_eq!(left_justify("föo", 5), "föo  ", "leftJustify föo,5 -> 'föo  '");
+        assert_eq!(
+            left_justify("foo", 4),
+            "foo ",
+            "leftJustify foo,4 -> 'foo '"
+        );
+        assert_eq!(
+            left_justify("foo", 5),
+            "foo  ",
+            "leftJustify foo,5 -> 'foo  '"
+        );
+        assert_eq!(
+            left_justify("föo", 5),
+            "föo  ",
+            "leftJustify föo,5 -> 'föo  '"
+        );
 
         // std::string rightJustify (const std::string&, const int);
-        assert_eq!(right_justify_int(123, 3), "123", "rightJustify 123,3 -> '123'");
-        assert_eq!(right_justify_int(123, 4), " 123", "rightJustify 123,4 -> ' 123'");
-        assert_eq!(right_justify_int(123, 5), "  123", "rightJustify 123,5 -> '  123'");
+        assert_eq!(
+            right_justify_int(123, 3),
+            "123",
+            "rightJustify 123,3 -> '123'"
+        );
+        assert_eq!(
+            right_justify_int(123, 4),
+            " 123",
+            "rightJustify 123,4 -> ' 123'"
+        );
+        assert_eq!(
+            right_justify_int(123, 5),
+            "  123",
+            "rightJustify 123,5 -> '  123'"
+        );
 
         // std::string rightJustify (const std::string&, const int);
-        assert_eq!(right_justify("foo", 3), "foo", "rightJustify foo,3 -> 'foo'");
-        assert_eq!(right_justify("foo", 4), " foo", "rightJustify foo,4 -> ' foo'");
-        assert_eq!(right_justify("foo", 5), "  foo", "rightJustify foo,5 -> '  foo'");
-        assert_eq!(right_justify("föo", 5), "  föo", "rightJustify föo,5 -> '  föo'");
+        assert_eq!(
+            right_justify("foo", 3),
+            "foo",
+            "rightJustify foo,3 -> 'foo'"
+        );
+        assert_eq!(
+            right_justify("foo", 4),
+            " foo",
+            "rightJustify foo,4 -> ' foo'"
+        );
+        assert_eq!(
+            right_justify("foo", 5),
+            "  foo",
+            "rightJustify foo,5 -> '  foo'"
+        );
+        assert_eq!(
+            right_justify("föo", 5),
+            "  föo",
+            "rightJustify föo,5 -> '  föo'"
+        );
     }
 
     #[test]
@@ -629,16 +759,48 @@ mod tests {
         assert_eq!(commify("123"), "123", "commify '123' -> '123'");
         assert_eq!(commify("1234"), "1,234", "commify '1234' -> '1,234'");
         assert_eq!(commify("12345"), "12,345", "commify '12345' -> '12,345'");
-        assert_eq!(commify("123456"), "123,456", "commify '123456' -> '123,456'");
-        assert_eq!(commify("1234567"), "1,234,567", "commify '1234567' -> '1,234,567'");
-        assert_eq!(commify("12345678"), "12,345,678", "commify '12345678' -> '12,345,678'");
-        assert_eq!(commify("123456789"), "123,456,789", "commify '123456789' -> '123,456,789'");
-        assert_eq!(commify("1234567890"), "1,234,567,890", "commify '1234567890' -> '1,234,567,890'");
+        assert_eq!(
+            commify("123456"),
+            "123,456",
+            "commify '123456' -> '123,456'"
+        );
+        assert_eq!(
+            commify("1234567"),
+            "1,234,567",
+            "commify '1234567' -> '1,234,567'"
+        );
+        assert_eq!(
+            commify("12345678"),
+            "12,345,678",
+            "commify '12345678' -> '12,345,678'"
+        );
+        assert_eq!(
+            commify("123456789"),
+            "123,456,789",
+            "commify '123456789' -> '123,456,789'"
+        );
+        assert_eq!(
+            commify("1234567890"),
+            "1,234,567,890",
+            "commify '1234567890' -> '1,234,567,890'"
+        );
 
         assert_eq!(commify("pre"), "pre", "commify 'pre' -> 'pre'");
-        assert_eq!(commify("pre1234"), "pre1,234", "commify 'pre1234' -> 'pre1,234'");
-        assert_eq!(commify("1234post"), "1,234post", "commify '1234post' -> '1,234post'");
-        assert_eq!(commify("pre1234post"), "pre1,234post", "commify 'pre1234post' -> 'pre1,234post'");
+        assert_eq!(
+            commify("pre1234"),
+            "pre1,234",
+            "commify 'pre1234' -> 'pre1,234'"
+        );
+        assert_eq!(
+            commify("1234post"),
+            "1,234post",
+            "commify '1234post' -> '1,234post'"
+        );
+        assert_eq!(
+            commify("pre1234post"),
+            "pre1,234post",
+            "commify 'pre1234post' -> 'pre1,234post'"
+        );
     }
 
     #[test]
@@ -683,7 +845,11 @@ mod tests {
     #[test]
     fn obfuscate_text_cases() {
         // std::string obfuscateText (const std::string&);
-        assert_eq!(obfuscate_text("foo"), "xxx", "obfuscateText 'foo' --> 'xxx'");
+        assert_eq!(
+            obfuscate_text("foo"),
+            "xxx",
+            "obfuscateText 'foo' --> 'xxx'"
+        );
         assert_eq!(
             obfuscate_text("\x1b[33mfoo\x1b[0m"),
             "\x1b[33mxxx\x1b[0m",
@@ -773,7 +939,10 @@ mod tests {
         // bool streams as 1/0.
         assert_eq!(format("{1}{2}", &[&true, &false]), "10");
         // Other integer widths and owned strings.
-        assert_eq!(format("{1} {2} {3}", &[&u64::MAX, &-5i64, &String::from("s")]), "18446744073709551615 -5 s");
+        assert_eq!(
+            format("{1} {2} {3}", &[&u64::MAX, &-5i64, &String::from("s")]),
+            "18446744073709551615 -5 s"
+        );
         assert_eq!(format_value("text"), "text");
         assert_eq!(format_value(&&"ref"), "ref");
     }

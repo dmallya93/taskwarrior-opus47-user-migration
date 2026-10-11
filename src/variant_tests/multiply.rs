@@ -72,7 +72,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // integer * string   -> string
     let v13 = v1.op_mul(&v3)?;
     t.is(v13.type_(), Type::String, "42 * foo --> string");
-    t.is(substr(v13.get_string(), 0, 10), "foofoofoof", "42 * foo --> foofoofoofoo...");
+    t.is(
+        substr(v13.get_string(), 0, 10),
+        "foofoofoof",
+        "42 * foo --> foofoofoofoo...",
+    );
     // integer * date     -> error
     match v1.op_mul(&v4) {
         Ok(_v14) => t.fail("42 * 1234567890 --> error"),
@@ -124,7 +128,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     // string * integer  -> string
     let v31 = v3.op_mul(&v1)?;
     t.is(v31.type_(), Type::String, "foo * 42 --> string");
-    t.is(substr(v31.get_string(), 0, 10), "foofoofoof", "foo * 42 --> foofoofoof...");
+    t.is(
+        substr(v31.get_string(), 0, 10),
+        "foofoofoof",
+        "foo * 42 --> foofoofoof...",
+    );
 
     // string * real     -> string
     match v3.op_mul(&v2) {

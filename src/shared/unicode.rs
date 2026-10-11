@@ -116,7 +116,10 @@ mod tests {
     #[test]
     fn whitespace() {
         // White space detection.
-        assert!(!unicode_whitespace(0x0041), "U+0041 (A) ! unicodeWhitespace");
+        assert!(
+            !unicode_whitespace(0x0041),
+            "U+0041 (A) ! unicodeWhitespace"
+        );
         assert!(unicode_whitespace(0x0020), "U+0020 unicodeWhitespace");
         assert!(unicode_whitespace(0x0009), "U+0009 unicodeWhitespace");
         assert!(unicode_whitespace(0x000A), "U+000A unicodeWhitespace");
@@ -148,71 +151,236 @@ mod tests {
     #[test]
     fn horizontal_whitespace() {
         // Horizontal white space detection.
-        assert!(!unicode_horizontal_whitespace(0x0041), "U+0041 (A) ! unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x0020), "U+0020 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x0009), "U+0009 unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x000A), "U+000A ! unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x000B), "U+000B ! unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x000C), "U+000C ! unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x000D), "U+000D ! unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x0085), "U+0085 ! unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x00A0), "U+00A0 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x1680), "U+1680 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x180E), "U+180E unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2000), "U+2000 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2001), "U+2001 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2002), "U+2002 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2003), "U+2003 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2004), "U+2004 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2005), "U+2005 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2006), "U+2006 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2007), "U+2007 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2008), "U+2008 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x2009), "U+2009 unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x200A), "U+200A unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x2028), "U+2028 ! unicodeHorizontalWhitespace");
-        assert!(!unicode_horizontal_whitespace(0x2029), "U+2029 ! unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x202F), "U+202F unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x205F), "U+205F unicodeHorizontalWhitespace");
-        assert!(unicode_horizontal_whitespace(0x3000), "U+3000 unicodeHorizontalWhitespace");
+        assert!(
+            !unicode_horizontal_whitespace(0x0041),
+            "U+0041 (A) ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x0020),
+            "U+0020 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x0009),
+            "U+0009 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x000A),
+            "U+000A ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x000B),
+            "U+000B ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x000C),
+            "U+000C ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x000D),
+            "U+000D ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x0085),
+            "U+0085 ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x00A0),
+            "U+00A0 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x1680),
+            "U+1680 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x180E),
+            "U+180E unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2000),
+            "U+2000 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2001),
+            "U+2001 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2002),
+            "U+2002 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2003),
+            "U+2003 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2004),
+            "U+2004 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2005),
+            "U+2005 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2006),
+            "U+2006 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2007),
+            "U+2007 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2008),
+            "U+2008 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x2009),
+            "U+2009 unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x200A),
+            "U+200A unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x2028),
+            "U+2028 ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            !unicode_horizontal_whitespace(0x2029),
+            "U+2029 ! unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x202F),
+            "U+202F unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x205F),
+            "U+205F unicodeHorizontalWhitespace"
+        );
+        assert!(
+            unicode_horizontal_whitespace(0x3000),
+            "U+3000 unicodeHorizontalWhitespace"
+        );
     }
 
     #[test]
     fn vertical_whitespace() {
         // Vertical white space detection.
-        assert!(!unicode_vertical_whitespace(0x0041), "U+0041 (A) ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x0020), "U+0020 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x0009), "U+0009 ! unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x000A), "U+000A unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x000B), "U+000B unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x000C), "U+000C unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x000D), "U+000D unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x0085), "U+0085 unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x00A0), "U+00A0 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x1680), "U+1680 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x180E), "U+180E ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2000), "U+2000 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2001), "U+2001 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2002), "U+2002 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2003), "U+2003 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2004), "U+2004 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2005), "U+2005 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2006), "U+2006 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2007), "U+2007 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2008), "U+2008 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x2009), "U+2009 ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x200A), "U+200A ! unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x2028), "U+2028 unicodeVerticalWhitespace");
-        assert!(unicode_vertical_whitespace(0x2029), "U+2029 unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x202F), "U+202F ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x205F), "U+205F ! unicodeVerticalWhitespace");
-        assert!(!unicode_vertical_whitespace(0x3000), "U+3000 ! unicodeVerticalWhitespace");
+        assert!(
+            !unicode_vertical_whitespace(0x0041),
+            "U+0041 (A) ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x0020),
+            "U+0020 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x0009),
+            "U+0009 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x000A),
+            "U+000A unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x000B),
+            "U+000B unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x000C),
+            "U+000C unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x000D),
+            "U+000D unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x0085),
+            "U+0085 unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x00A0),
+            "U+00A0 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x1680),
+            "U+1680 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x180E),
+            "U+180E ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2000),
+            "U+2000 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2001),
+            "U+2001 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2002),
+            "U+2002 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2003),
+            "U+2003 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2004),
+            "U+2004 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2005),
+            "U+2005 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2006),
+            "U+2006 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2007),
+            "U+2007 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2008),
+            "U+2008 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x2009),
+            "U+2009 ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x200A),
+            "U+200A ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x2028),
+            "U+2028 unicodeVerticalWhitespace"
+        );
+        assert!(
+            unicode_vertical_whitespace(0x2029),
+            "U+2029 unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x202F),
+            "U+202F ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x205F),
+            "U+205F ! unicodeVerticalWhitespace"
+        );
+        assert!(
+            !unicode_vertical_whitespace(0x3000),
+            "U+3000 ! unicodeVerticalWhitespace"
+        );
     }
 
     #[test]
     fn latin_alpha() {
         // Latin Alpha
-        assert!(!unicode_latin_alpha(0x0033), "U+0033 (3) ! unicodeLatinAlpha");
+        assert!(
+            !unicode_latin_alpha(0x0033),
+            "U+0033 (3) ! unicodeLatinAlpha"
+        );
         assert!(unicode_latin_alpha(0x0041), "U+0041 (A) unicodeLatinAlpha");
         assert!(unicode_latin_alpha(0x005A), "U+005A (Z) unicodeLatinAlpha");
         assert!(unicode_latin_alpha(0x0061), "U+0061 (a) unicodeLatinAlpha");
@@ -222,7 +390,10 @@ mod tests {
     #[test]
     fn latin_digit() {
         // Latin Digit
-        assert!(!unicode_latin_digit(0x0041), "U+0041 (A) ! unicodeLatinDigit");
+        assert!(
+            !unicode_latin_digit(0x0041),
+            "U+0041 (A) ! unicodeLatinDigit"
+        );
         assert!(unicode_latin_digit(0x0030), "U+0030 (0) unicodeLatinDigit");
         assert!(unicode_latin_digit(0x0031), "U+0031 (1) unicodeLatinDigit");
         assert!(unicode_latin_digit(0x0032), "U+0032 (2) unicodeLatinDigit");
@@ -266,7 +437,10 @@ mod tests {
     #[test]
     fn punctuation() {
         // Punctuation
-        assert!(!unicode_punctuation(0x0033), "U+0033 (3) ! unicodePunctuation");
+        assert!(
+            !unicode_punctuation(0x0033),
+            "U+0033 (3) ! unicodePunctuation"
+        );
         assert!(unicode_punctuation(0x002C), "U+002C (,) unicodePunctuation");
         assert!(unicode_punctuation(0x002E), "U+002E (.) unicodePunctuation");
         assert!(unicode_punctuation(0x003A), "U+003A (:) unicodePunctuation");

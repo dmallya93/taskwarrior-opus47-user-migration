@@ -490,7 +490,8 @@ impl Path {
             // Expand environment variable.
             else if bytes[i] == b'$' {
                 let mut end = i + 1;
-                while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
                 {
                     end += 1;
                 }
@@ -1381,7 +1382,11 @@ mod tests {
         assert_eq!(p3.data, p3_copy.data, "Path::Path (Path&)");
 
         // operator (std::string) const;
-        assert_eq!(String::from(&p3), slash_tmp, "Path::operator (std::string) const");
+        assert_eq!(
+            String::from(&p3),
+            slash_tmp,
+            "Path::operator (std::string) const"
+        );
 
         // std::string name () const;
         let p4 = Path::new("/a/b/c/file.ext");
@@ -1422,7 +1427,11 @@ mod tests {
         std::env::set_var("HOME", "/home/user");
         std::env::set_var("FOO", "hello/world");
         assert_eq!(Path::expand("~"), "/home/user", "Path::expand ~");
-        assert_eq!(Path::expand("~/foo"), "/home/user/foo", "Path::expand ~/foo");
+        assert_eq!(
+            Path::expand("~/foo"),
+            "/home/user/foo",
+            "Path::expand ~/foo"
+        );
         // Relative paths are kept.
         assert_eq!(Path::expand("."), ".", "Path::expand . == .");
         assert_eq!(Path::expand("./"), "./", "Path::expand ./ == ./");
@@ -1478,23 +1487,44 @@ mod tests {
         File::write_file(&at("file.t.txt"), "This is a test\n");
         let f6 = File::new(&at("file.t.txt"));
         assert!(f6.size().unwrap() == 15, "File::size tmp/file.t.txt good");
-        assert!(has(f6.mode().unwrap(), libc::S_IRUSR), "File::mode tmp/file.t.txt good");
-        assert!(File::remove_file(&at("file.t.txt")), "File::remove tmp/file.t.txt good");
+        assert!(
+            has(f6.mode().unwrap(), libc::S_IRUSR),
+            "File::mode tmp/file.t.txt good"
+        );
+        assert!(
+            File::remove_file(&at("file.t.txt")),
+            "File::remove tmp/file.t.txt good"
+        );
 
         // operator (std::string) const;
-        assert_eq!(f6.to_string(), at("file.t.txt"), "File::operator (std::string) const");
+        assert_eq!(
+            f6.to_string(),
+            at("file.t.txt"),
+            "File::operator (std::string) const"
+        );
 
         assert!(
             File::create_file(&at("file.t.create"), File::DEFAULT_MODE).unwrap(),
             "File::create tmp/file.t.create good"
         );
-        assert!(File::remove_file(&at("file.t.create")), "File::remove tmp/file.t.create good");
+        assert!(
+            File::remove_file(&at("file.t.create")),
+            "File::remove tmp/file.t.create good"
+        );
 
         // basename (std::string) const;
-        assert_eq!(f6.name(), "file.t.txt", "File::basename tmp/file.t.txt --> file.t.txt");
+        assert_eq!(
+            f6.name(),
+            "file.t.txt",
+            "File::basename tmp/file.t.txt --> file.t.txt"
+        );
 
         // dirname (std::string) const;
-        assert_eq!(f6.parent(), tmp_path, "File::dirname tmp/file.t.txt --> tmp");
+        assert_eq!(
+            f6.parent(),
+            tmp_path,
+            "File::dirname tmp/file.t.txt --> tmp"
+        );
 
         // bool rename (const std::string&);
         let mut f7 = File::new(&at("file.t.2.txt"));
@@ -1512,16 +1542,46 @@ mod tests {
         f8.create(0o744).unwrap();
         assert!(f8.exists(), "File::create perm file exists");
         let m = f8.mode().unwrap();
-        assert!(has(m, libc::S_IFREG), "File::mode tmp/file.t.perm.txt S_IFREG good");
-        assert!(has(m, libc::S_IRUSR), "File::mode tmp/file.t.perm.txt r-------- good");
-        assert!(has(m, libc::S_IWUSR), "File::mode tmp/file.t.perm.txt -w------- good");
-        assert!(has(m, libc::S_IXUSR), "File::mode tmp/file.t.perm.txt --x------ good");
-        assert!(has(m, libc::S_IRGRP), "File::mode tmp/file.t.perm.txt ---r----- good");
-        assert!(!has(m, libc::S_IWGRP), "File::mode tmp/file.t.perm.txt ----w---- good");
-        assert!(!has(m, libc::S_IXGRP), "File::mode tmp/file.t.perm.txt -----x--- good");
-        assert!(has(m, libc::S_IROTH), "File::mode tmp/file.t.perm.txt ------r-- good");
-        assert!(!has(m, libc::S_IWOTH), "File::mode tmp/file.t.perm.txt -------w- good");
-        assert!(!has(m, libc::S_IXOTH), "File::mode tmp/file.t.perm.txt --------x good");
+        assert!(
+            has(m, libc::S_IFREG),
+            "File::mode tmp/file.t.perm.txt S_IFREG good"
+        );
+        assert!(
+            has(m, libc::S_IRUSR),
+            "File::mode tmp/file.t.perm.txt r-------- good"
+        );
+        assert!(
+            has(m, libc::S_IWUSR),
+            "File::mode tmp/file.t.perm.txt -w------- good"
+        );
+        assert!(
+            has(m, libc::S_IXUSR),
+            "File::mode tmp/file.t.perm.txt --x------ good"
+        );
+        assert!(
+            has(m, libc::S_IRGRP),
+            "File::mode tmp/file.t.perm.txt ---r----- good"
+        );
+        assert!(
+            !has(m, libc::S_IWGRP),
+            "File::mode tmp/file.t.perm.txt ----w---- good"
+        );
+        assert!(
+            !has(m, libc::S_IXGRP),
+            "File::mode tmp/file.t.perm.txt -----x--- good"
+        );
+        assert!(
+            has(m, libc::S_IROTH),
+            "File::mode tmp/file.t.perm.txt ------r-- good"
+        );
+        assert!(
+            !has(m, libc::S_IWOTH),
+            "File::mode tmp/file.t.perm.txt -------w- good"
+        );
+        assert!(
+            !has(m, libc::S_IXOTH),
+            "File::mode tmp/file.t.perm.txt --------x good"
+        );
         f8.remove();
         assert!(!f8.exists(), "File::remove perm file no longer exists");
 
@@ -1532,7 +1592,10 @@ mod tests {
         );
         let f9 = File::new(&at("file.t.copy.txt"));
         assert!(f9.exists(), "File::copy created copy");
-        assert!(f9.size().unwrap() == 15, "File::copy tmp/file.t.copy.txt good after copy");
+        assert!(
+            f9.size().unwrap() == 15,
+            "File::copy tmp/file.t.copy.txt good after copy"
+        );
         assert!(
             !File::copy(&at("does-not-exits.txt"), &at("should-not-exists.txt")),
             "File::copy returns false if not exists"
@@ -1552,9 +1615,18 @@ mod tests {
         let d0 = Directory::from(Path::new(&tmp_path));
         let d1 = Directory::from(File::new(&tmp_path));
         let d2 = Directory::from(File::from(Path::new(&tmp_path)));
-        assert_eq!(d0.data, d1.data, "Directory(std::string) == Directory (File&)");
-        assert_eq!(d0.data, d2.data, "Directory(std::string) == Directory (File (Path &))");
-        assert_eq!(d1.data, d2.data, "Directory(File&)) == Directory (File (Path &))");
+        assert_eq!(
+            d0.data, d1.data,
+            "Directory(std::string) == Directory (File&)"
+        );
+        assert_eq!(
+            d0.data, d2.data,
+            "Directory(std::string) == Directory (File (Path &))"
+        );
+        assert_eq!(
+            d1.data, d2.data,
+            "Directory(File&)) == Directory (File (Path &))"
+        );
 
         // Directory (const Directory&);
         let d3 = d2.clone();
@@ -1568,14 +1640,24 @@ mod tests {
         assert_eq!(d5.data, at("test_directory"), "Directory::operator=");
 
         // operator (std::string) const;
-        assert_eq!(String::from(&d3), tmp_path, "Directory::operator (std::string) const");
+        assert_eq!(
+            String::from(&d3),
+            tmp_path,
+            "Directory::operator (std::string) const"
+        );
 
         // virtual bool create ();
-        assert!(d5.create(Directory::DEFAULT_MODE), "Directory::create tmp/test_directory");
+        assert!(
+            d5.create(Directory::DEFAULT_MODE),
+            "Directory::create tmp/test_directory"
+        );
         assert!(d5.exists(), "Directory::exists tmp/test_directory");
 
         let d6 = Directory::new(&format!("{}/dir", d5.data));
-        assert!(d6.create(Directory::DEFAULT_MODE), "Directory::create tmp/test_directory/dir");
+        assert!(
+            d6.create(Directory::DEFAULT_MODE),
+            "Directory::create tmp/test_directory/dir"
+        );
 
         File::create_file(&format!("{}/f0", d5.data), File::DEFAULT_MODE).unwrap();
         File::create_file(&format!("{}/f1", d6.data), File::DEFAULT_MODE).unwrap();
@@ -1584,35 +1666,66 @@ mod tests {
         let mut files = d5.list().unwrap();
         files.sort();
         assert_eq!(files.len(), 2, "Directory::list 1 file");
-        assert_eq!(files[0], at("test_directory/dir"), "file[0] is tmp/test_directory/dir");
-        assert_eq!(files[1], at("test_directory/f0"), "file[1] is tmp/test_directory/f0");
+        assert_eq!(
+            files[0],
+            at("test_directory/dir"),
+            "file[0] is tmp/test_directory/dir"
+        );
+        assert_eq!(
+            files[1],
+            at("test_directory/f0"),
+            "file[1] is tmp/test_directory/f0"
+        );
 
         // std::vector <std::string> listRecursive ();
         let mut files = d5.list_recursive().unwrap();
         files.sort();
         assert_eq!(files.len(), 2, "Directory::list 1 file");
-        assert_eq!(files[0], at("test_directory/dir/f1"), "file is tmp/test_directory/dir/f1");
-        assert_eq!(files[1], at("test_directory/f0"), "file is tmp/test_directory/f0");
+        assert_eq!(
+            files[0],
+            at("test_directory/dir/f1"),
+            "file is tmp/test_directory/dir/f1"
+        );
+        assert_eq!(
+            files[1],
+            at("test_directory/f0"),
+            "file is tmp/test_directory/f0"
+        );
 
         // virtual bool remove ();
-        assert!(File::remove_file(&format!("{}/f0", d5.data)), "File::remove tmp/test_directory/f0");
+        assert!(
+            File::remove_file(&format!("{}/f0", d5.data)),
+            "File::remove tmp/test_directory/f0"
+        );
         assert!(
             File::remove_file(&format!("{}/f1", d6.data)),
             "File::remove tmp/test_directory/dir/f1"
         );
 
-        assert!(d6.remove().unwrap(), "Directory::remove tmp/test_directory/dir");
-        assert!(!d6.exists(), "Directory::exists tmp/test_directory/dir - no");
+        assert!(
+            d6.remove().unwrap(),
+            "Directory::remove tmp/test_directory/dir"
+        );
+        assert!(
+            !d6.exists(),
+            "Directory::exists tmp/test_directory/dir - no"
+        );
 
         assert!(d5.remove().unwrap(), "Directory::remove tmp/test_directory");
         assert!(!d5.exists(), "Directory::exists tmp/test_directory - no");
 
         // bool remove (const std::string&);
         let d7 = Directory::new(&at("to_be_removed"));
-        assert!(d7.create(Directory::DEFAULT_MODE), "Directory::create tmp/to_be_removed");
+        assert!(
+            d7.create(Directory::DEFAULT_MODE),
+            "Directory::create tmp/to_be_removed"
+        );
         File::create_file(&format!("{}/f0", d7.data), File::DEFAULT_MODE).unwrap();
         let d8 = Directory::new(&format!("{}/another", d7.data));
-        assert!(d8.create(Directory::DEFAULT_MODE), "Directory::create tmp/to_be_removed/another");
+        assert!(
+            d8.create(Directory::DEFAULT_MODE),
+            "Directory::create tmp/to_be_removed/another"
+        );
         File::create_file(&format!("{}/f1", d8.data), File::DEFAULT_MODE).unwrap();
         assert!(d7.remove().unwrap(), "Directory::remove tmp/to_be_removed");
         assert!(!d7.exists(), "Directory tmp/to_be_removed gone");
@@ -1624,7 +1737,10 @@ mod tests {
         // bool parent (std::string&) const;
         let mut d9 = Directory::new("/one/two/three/four.txt");
         assert!(d9.up(), "parent /one/two/three/four.txt --> true");
-        assert_eq!(d9.data, "/one/two/three", "parent /one/two/three/four.txt --> /one/two/three");
+        assert_eq!(
+            d9.data, "/one/two/three",
+            "parent /one/two/three/four.txt --> /one/two/three"
+        );
         assert!(d9.up(), "parent /one/two/three --> true");
         assert_eq!(d9.data, "/one/two", "parent /one/two/three --> /one/two");
         assert!(d9.up(), "parent /one/two --> true");
@@ -1639,18 +1755,51 @@ mod tests {
         d10.create(0o750);
         assert!(d10.exists(), "Directory::create perm file exists");
         let m = d10.mode().unwrap();
-        assert!(has(m, libc::S_IFDIR), "Directory::mode tmp/dir.perm S_IFDIR good");
-        assert!(has(m, libc::S_IRUSR), "Directory::mode tmp/dir.perm r-------- good");
-        assert!(has(m, libc::S_IWUSR), "Directory::mode tmp/dir.perm -w------- good");
-        assert!(has(m, libc::S_IXUSR), "Directory::mode tmp/dir.perm --x------ good");
-        assert!(has(m, libc::S_IRGRP), "Directory::mode tmp/dir.perm ---r----- good");
-        assert!(!has(m, libc::S_IWGRP), "Directory::mode tmp/dir.perm ----w---- good");
-        assert!(has(m, libc::S_IXGRP), "Directory::mode tmp/dir.perm -----x--- good");
-        assert!(!has(m, libc::S_IROTH), "Directory::mode tmp/dir.perm ------r-- good");
-        assert!(!has(m, libc::S_IWOTH), "Directory::mode tmp/dir.perm -------w- good");
-        assert!(!has(m, libc::S_IXOTH), "Directory::mode tmp/dir.perm --------x good");
+        assert!(
+            has(m, libc::S_IFDIR),
+            "Directory::mode tmp/dir.perm S_IFDIR good"
+        );
+        assert!(
+            has(m, libc::S_IRUSR),
+            "Directory::mode tmp/dir.perm r-------- good"
+        );
+        assert!(
+            has(m, libc::S_IWUSR),
+            "Directory::mode tmp/dir.perm -w------- good"
+        );
+        assert!(
+            has(m, libc::S_IXUSR),
+            "Directory::mode tmp/dir.perm --x------ good"
+        );
+        assert!(
+            has(m, libc::S_IRGRP),
+            "Directory::mode tmp/dir.perm ---r----- good"
+        );
+        assert!(
+            !has(m, libc::S_IWGRP),
+            "Directory::mode tmp/dir.perm ----w---- good"
+        );
+        assert!(
+            has(m, libc::S_IXGRP),
+            "Directory::mode tmp/dir.perm -----x--- good"
+        );
+        assert!(
+            !has(m, libc::S_IROTH),
+            "Directory::mode tmp/dir.perm ------r-- good"
+        );
+        assert!(
+            !has(m, libc::S_IWOTH),
+            "Directory::mode tmp/dir.perm -------w- good"
+        );
+        assert!(
+            !has(m, libc::S_IXOTH),
+            "Directory::mode tmp/dir.perm --------x good"
+        );
         d10.remove().unwrap();
-        assert!(!d10.exists(), "Directory::remove temp/dir.perm file no longer exists");
+        assert!(
+            !d10.exists(),
+            "Directory::remove temp/dir.perm file no longer exists"
+        );
 
         // Directory::cd (into the current directory, so the CWD is unchanged)
         let d11 = Directory::new(&cwd);
@@ -1668,13 +1817,21 @@ mod tests {
         );
 
         let line = "no";
-        assert_eq!(File::remove_bom(line), line, "File::removeBOM 'no' --> 'no'");
+        assert_eq!(
+            File::remove_bom(line),
+            line,
+            "File::removeBOM 'no' --> 'no'"
+        );
 
         let line = "";
         assert_eq!(File::remove_bom(line), line, "File::removeBOM '' --> ''");
 
         let line = "\u{FEFF}Foo";
-        assert_eq!(File::remove_bom(line), "Foo", "File::removeBOM '<BOM>Foo' --> 'Foo'");
+        assert_eq!(
+            File::remove_bom(line),
+            "Foo",
+            "File::removeBOM '<BOM>Foo' --> 'Foo'"
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -1688,7 +1845,11 @@ mod tests {
         assert_eq!(Path::new("/file").parent(), "");
         assert_eq!(Path::new("dir/").name(), "");
         assert_eq!(Path::new("noext").extension(), "");
-        assert_eq!(Path::new("a.b/c").extension(), "b/c", "last '.' anywhere, as in C++");
+        assert_eq!(
+            Path::new("a.b/c").extension(),
+            "b/c",
+            "last '.' anywhere, as in C++"
+        );
 
         let mut p = Path::new("a");
         p += "b";
@@ -1718,17 +1879,29 @@ mod tests {
         assert_eq!(Path::expand(""), "");
         assert_eq!(Path::expand("a$"), "a$", "lone $ kept");
         assert_eq!(Path::expand("$/x"), "$/x", "$ before non-name kept");
-        assert_eq!(Path::expand("$TW_FS_UNSET/x"), "/x", "unset variable is empty");
+        assert_eq!(
+            Path::expand("$TW_FS_UNSET/x"),
+            "/x",
+            "unset variable is empty"
+        );
         assert_eq!(Path::expand("$TW_FS_SET.d"), "v.d");
         assert_eq!(Path::expand("a~b"), "a~b", "~ only at start");
-        assert_eq!(Path::expand("~tw_no_such_user_x/y"), "/home/tw_no_such_user_x/y");
-        assert_eq!(Path::expand("~tw_no_such_user_x"), "/home/tw_no_such_user_x");
+        assert_eq!(
+            Path::expand("~tw_no_such_user_x/y"),
+            "/home/tw_no_such_user_x/y"
+        );
+        assert_eq!(
+            Path::expand("~tw_no_such_user_x"),
+            "/home/tw_no_such_user_x"
+        );
 
         std::env::set_var("HOME", "");
         assert_eq!(Path::expand("~/x"), "/x", "empty HOME is used as is");
 
         std::env::remove_var("HOME");
-        let passwd_home = home_of_current_user().map(|h| lossy(&h)).unwrap_or_default();
+        let passwd_home = home_of_current_user()
+            .map(|h| lossy(&h))
+            .unwrap_or_default();
         assert_eq!(Path::expand("~"), passwd_home, "no HOME: passwd entry");
 
         // A NUL ends the path for C calls, as with c_str ().
@@ -1778,7 +1951,11 @@ mod tests {
         assert!(renamed.rename(&format!("{base}/renamed")));
         assert_eq!(renamed.data, format!("{base}/renamed"));
         assert!(!renamed.rename(&format!("{base}/no/such/dir/x")));
-        assert_eq!(renamed.data, format!("{base}/renamed"), "unchanged on failure");
+        assert_eq!(
+            renamed.data,
+            format!("{base}/renamed"),
+            "unchanged on failure"
+        );
     }
 
     #[test]
@@ -1794,7 +1971,10 @@ mod tests {
             assert!(file.open().unwrap());
         } else {
             let err = file.open().unwrap_err();
-            assert_eq!(err.to_string(), format!("Insufficient permissions for '{name}'."));
+            assert_eq!(
+                err.to_string(),
+                format!("Insufficient permissions for '{name}'.")
+            );
         }
 
         assert!(!File::default().open().unwrap(), "empty path does not open");
@@ -1806,7 +1986,11 @@ mod tests {
         let name = format!("{base}/r.txt");
         File::write_file(&name, "\u{FEFF}one\ntwo");
         let file = File::new(&name);
-        assert_eq!(file.read().unwrap(), "one\ntwo\n", "BOM removed, last line terminated");
+        assert_eq!(
+            file.read().unwrap(),
+            "one\ntwo\n",
+            "BOM removed, last line terminated"
+        );
         assert_eq!(file.read_lines(), vec!["one", "two"]);
 
         File::write_file(&name, "a\n\nb\n");
@@ -1816,7 +2000,11 @@ mod tests {
         File::write_file(&name, "\n");
         assert_eq!(file.read_lines(), vec![""]);
         File::write_file(&name, "x\u{FEFF}\n\u{FEFF}y\n");
-        assert_eq!(file.read_lines(), vec!["x\u{FEFF}", "\u{FEFF}y"], "BOM only on line one");
+        assert_eq!(
+            file.read_lines(),
+            vec!["x\u{FEFF}", "\u{FEFF}y"],
+            "BOM only on line one"
+        );
 
         File::write_file(&name, "");
         assert_eq!(file.read().unwrap(), "");
@@ -1850,7 +2038,10 @@ mod tests {
         assert_eq!(File::read_file(&format!("{base}/l.txt")).unwrap(), "a\nb\n");
         assert!(File::write_file_lines("~/l.txt", &["a", "b"], false));
         assert_eq!(File::read_file(&format!("{base}/l.txt")).unwrap(), "ab\n");
-        assert_eq!(File::read_file_lines(&format!("{base}/l.txt")).unwrap(), vec!["ab"]);
+        assert_eq!(
+            File::read_file_lines(&format!("{base}/l.txt")).unwrap(),
+            vec!["ab"]
+        );
         assert!(File::write_file_lines::<&str>("~/l.txt", &[], true));
         assert_eq!(File::read_file(&format!("{base}/l.txt")).unwrap(), "");
 
@@ -1861,7 +2052,11 @@ mod tests {
         assert_eq!(File::read_file(&base).unwrap(), "");
 
         assert!(!File::write_file(&format!("{base}/no/such/dir"), "x"));
-        assert!(!File::write_file_lines(&format!("{base}/no/such/dir"), &["x"], true));
+        assert!(!File::write_file_lines(
+            &format!("{base}/no/such/dir"),
+            &["x"],
+            true
+        ));
         assert!(!File::create_file(&format!("{base}/no/such/dir"), 0o600).unwrap());
 
         // Static create truncates and chmods exactly (no umask).
@@ -1898,14 +2093,23 @@ mod tests {
         let (_dir, base) = base();
         let empty = format!("{base}/empty");
         File::write_file(&empty, "");
-        assert!(!File::copy(&empty, &format!("{base}/empty.copy")), "C++ failbit on empty");
-        assert!(Path::new(&format!("{base}/empty.copy")).exists(), "but the copy exists");
+        assert!(
+            !File::copy(&empty, &format!("{base}/empty.copy")),
+            "C++ failbit on empty"
+        );
+        assert!(
+            Path::new(&format!("{base}/empty.copy")).exists(),
+            "but the copy exists"
+        );
 
         let full = format!("{base}/full");
         File::write_file(&full, "abc");
         assert!(!File::copy(&full, &format!("{base}/no/such/dir")));
         assert!(File::copy(&full, &format!("{base}/full.copy")));
-        assert_eq!(File::read_file(&format!("{base}/full.copy")).unwrap(), "abc\n");
+        assert_eq!(
+            File::read_file(&format!("{base}/full.copy")).unwrap(),
+            "abc\n"
+        );
     }
 
     #[test]
@@ -1945,7 +2149,11 @@ mod tests {
         let mut over = File::new(&name);
         over.write_raw("X").unwrap();
         drop(over);
-        assert_eq!(File::read_file(&name).unwrap(), "Xbcd\n", "r+ keeps the rest");
+        assert_eq!(
+            File::read_file(&name).unwrap(),
+            "Xbcd\n",
+            "r+ keeps the rest"
+        );
 
         // assign: new path, same handle.
         let mut a = File::new(&name);
@@ -1965,10 +2173,16 @@ mod tests {
     fn directory_edge_cases() {
         let (_dir, base) = base();
 
-        assert!(!Directory::new("").create(Directory::DEFAULT_MODE), "no endless recursion");
+        assert!(
+            !Directory::new("").create(Directory::DEFAULT_MODE),
+            "no endless recursion"
+        );
         assert!(Directory::new(&format!("{base}/x/y/z")).create(Directory::DEFAULT_MODE));
         assert!(Path::new(&format!("{base}/x/y/z")).is_directory().unwrap());
-        assert!(!Directory::new(&format!("{base}/x")).create(Directory::DEFAULT_MODE), "exists");
+        assert!(
+            !Directory::new(&format!("{base}/x")).create(Directory::DEFAULT_MODE),
+            "exists"
+        );
 
         let mut rel = Directory::new("a/b");
         assert!(rel.up());
@@ -1976,7 +2190,10 @@ mod tests {
         assert!(!rel.up());
         assert_eq!(rel.data, "a");
 
-        assert!(Directory::new(&format!("{base}/missing")).list().unwrap().is_empty());
+        assert!(Directory::new(&format!("{base}/missing"))
+            .list()
+            .unwrap()
+            .is_empty());
         assert!(!Directory::new(&format!("{base}/missing")).remove().unwrap());
         assert!(!Directory::new(&format!("{base}/missing")).cd());
 

@@ -70,7 +70,15 @@ pub const EPOCH_MIN_VALUE: i64 = 315_532_800;
 pub const EPOCH_MAX_VALUE: i64 = 253_402_293_599;
 
 /// C++ file-static `dayNames`.
-const DAY_NAMES: [&str; 7] = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const DAY_NAMES: [&str; 7] = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+];
 
 /// C++ file-static `monthNames`.
 const MONTH_NAMES: [&str; 12] = [
@@ -867,7 +875,9 @@ impl Datetime {
 
         if self.parse_date_ext(pig)
             && pig.skip('T')
-            && (self.parse_time_utc_ext(pig) || self.parse_time_off_ext(pig) || self.parse_time_ext(pig, true))
+            && (self.parse_time_utc_ext(pig)
+                || self.parse_time_off_ext(pig)
+                || self.parse_time_ext(pig, true))
         {
             return true;
         }
@@ -1189,7 +1199,9 @@ impl Datetime {
 
             let terminator = pig.peek();
             if !terminated
-                || (!unicode_latin_digit(terminator as u32) && terminator != '-' as i32 && terminator != '+' as i32)
+                || (!unicode_latin_digit(terminator as u32)
+                    && terminator != '-' as i32
+                    && terminator != '+' as i32)
             {
                 self._seconds = (hour * 3600) + (minute * 60) + second;
                 return true;
@@ -1446,7 +1458,9 @@ impl Datetime {
         let checkpoint = pig.cursor();
 
         let mut token = String::new();
-        if pig.skip_partial("today", &mut token, false) && token.len() >= Datetime::minimum_match_length() as usize {
+        if pig.skip_partial("today", &mut token, false)
+            && token.len() >= Datetime::minimum_match_length() as usize
+        {
             let following = pig.peek();
             if !unicode_latin_alpha(following as u32) && !unicode_latin_digit(following as u32) {
                 let now = localtime::time_now();
@@ -1514,10 +1528,23 @@ impl Datetime {
             {
                 let remainder1 = (number % 10) as i32;
                 let remainder2 = (number % 100) as i32;
-                if (remainder2 != 11 && remainder1 == 1 && character1 == 's' as i32 && character2 == 't' as i32)
-                    || (remainder2 != 12 && remainder1 == 2 && character1 == 'n' as i32 && character2 == 'd' as i32)
-                    || (remainder2 != 13 && remainder1 == 3 && character1 == 'r' as i32 && character2 == 'd' as i32)
-                    || ((remainder2 == 11 || remainder2 == 12 || remainder2 == 13 || remainder1 == 0 || remainder1 > 3)
+                if (remainder2 != 11
+                    && remainder1 == 1
+                    && character1 == 's' as i32
+                    && character2 == 't' as i32)
+                    || (remainder2 != 12
+                        && remainder1 == 2
+                        && character1 == 'n' as i32
+                        && character2 == 'd' as i32)
+                    || (remainder2 != 13
+                        && remainder1 == 3
+                        && character1 == 'r' as i32
+                        && character2 == 'd' as i32)
+                    || ((remainder2 == 11
+                        || remainder2 == 12
+                        || remainder2 == 13
+                        || remainder1 == 0
+                        || remainder1 > 3)
                         && character1 == 't' as i32
                         && character2 == 'h' as i32)
                 {
@@ -1584,9 +1611,11 @@ impl Datetime {
                     let mut t = localtime::localtime(now);
 
                     if t.tm_wday >= day {
-                        t.tm_mday += day - t.tm_wday + if Datetime::time_relative() { 7 } else { 0 };
+                        t.tm_mday +=
+                            day - t.tm_wday + if Datetime::time_relative() { 7 } else { 0 };
                     } else {
-                        t.tm_mday += day - t.tm_wday - if Datetime::time_relative() { 0 } else { 7 };
+                        t.tm_mday +=
+                            day - t.tm_wday - if Datetime::time_relative() { 0 } else { 7 };
                     }
 
                     t.tm_hour = 0;
@@ -1654,7 +1683,8 @@ impl Datetime {
         let checkpoint = pig.cursor();
 
         let mut token = String::new();
-        if (pig.skip_partial("later", &mut token, false) && token.len() >= Datetime::minimum_match_length() as usize)
+        if (pig.skip_partial("later", &mut token, false)
+            && token.len() >= Datetime::minimum_match_length() as usize)
             || (pig.skip_partial("someday", &mut token, false)
                 && token.len() >= std::cmp::max(Datetime::minimum_match_length(), 4) as usize)
         {
@@ -2637,7 +2667,13 @@ impl Datetime {
     fn initialize_easter(&mut self, pig: &mut Pig) -> bool {
         let checkpoint = pig.cursor();
 
-        let holidays: [&str; 5] = ["eastermonday", "easter", "ascension", "pentecost", "goodfriday"];
+        let holidays: [&str; 5] = [
+            "eastermonday",
+            "easter",
+            "ascension",
+            "pentecost",
+            "goodfriday",
+        ];
         let offsets: [i32; 5] = [1, 0, 39, 49, -2];
 
         for holiday in 0..5 {
@@ -2810,14 +2846,21 @@ impl Datetime {
                 let mut t = localtime::localtime(now);
 
                 let now_seconds = (t.tm_hour * 3600) + (t.tm_min * 60) + t.tm_sec;
-                let calc_seconds = ((hours as i64 * 3600) + (minutes as i64 * 60)).wrapping_add(seconds) as i32;
+                let calc_seconds =
+                    ((hours as i64 * 3600) + (minutes as i64 * 60)).wrapping_add(seconds) as i32;
 
                 if Datetime::time_relative() && calc_seconds < now_seconds {
                     t.tm_mday += 1;
                 }
 
                 // Basic validation.
-                if hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60 && seconds >= 0 && seconds < 60 {
+                if hours >= 0
+                    && hours < 24
+                    && minutes >= 0
+                    && minutes < 60
+                    && seconds >= 0
+                    && seconds < 60
+                {
                     t.tm_hour = hours;
                     t.tm_min = minutes;
                     t.tm_sec = seconds as i32;
@@ -2833,7 +2876,6 @@ impl Datetime {
         false
     }
 }
-
 
 // -----------------------------------------------------------------------------
 // Datetime.cpp line 2929 onwards.
@@ -2975,7 +3017,8 @@ impl Datetime {
             || (self._month != 0 && (self._month < 1 || self._month > 12))
             || (self._week != 0 && (self._week < 1 || self._week > 53))
             || (self._weekday < wks || self._weekday > wke)
-            || (self._julian != 0 && (self._julian < 1 || self._julian > Datetime::days_in_year(self._year)))
+            || (self._julian != 0
+                && (self._julian < 1 || self._julian > Datetime::days_in_year(self._year)))
             || (self._day != 0
                 && (self._day < 1 || self._day > Datetime::days_in_month(self._year, self._month)))
             || (self._seconds != 0 && (self._seconds < 1 || self._seconds > 86400))
@@ -3030,7 +3073,11 @@ impl Datetime {
         }
 
         // Get 'now' in the relevant location.
-        let t_now = if utc { localtime::gmtime(now) } else { localtime::localtime(now) };
+        let t_now = if utc {
+            localtime::gmtime(now)
+        } else {
+            localtime::localtime(now)
+        };
 
         let seconds_now = (t_now.tm_hour * 3600) + (t_now.tm_min * 60) + t_now.tm_sec;
 
@@ -3125,7 +3172,11 @@ impl Datetime {
         t.tm_min = (seconds % 3600) / 60;
         t.tm_sec = seconds % 60;
 
-        self._date = if utc { self.timegm(&mut t) } else { localtime::mktime(&mut t) };
+        self._date = if utc {
+            self.timegm(&mut t)
+        } else {
+            localtime::mktime(&mut t)
+        };
     }
 
     /// C++ `Datetime::toEpoch`.
@@ -3230,7 +3281,8 @@ impl Datetime {
             formatted.extend_from_slice(piece.as_bytes());
         }
 
-        String::from_utf8(formatted).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        String::from_utf8(formatted)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
     }
 
     /// C++ `Datetime::startOfDay`: local midnight of the same day.
@@ -3438,8 +3490,8 @@ impl Datetime {
         let mut len = 0;
         for &i in format_.as_bytes() {
             match i {
-                b'm' | b'M' | b'd' | b'D' | b'y' | b'v' | b'V' | b'h' | b'H' | b'n' | b'N' | b's'
-                | b'S' => len += 2,
+                b'm' | b'M' | b'd' | b'D' | b'y' | b'v' | b'V' | b'h' | b'H' | b'n' | b'N'
+                | b's' | b'S' => len += 2,
                 b'b' | b'j' | b'J' | b'a' => len += 3,
                 b'Y' => len += 4,
                 b'A' | b'B' => len += 10,
@@ -3470,7 +3522,9 @@ impl Datetime {
             0 => localtime::strftime("%U", &t),
             1 => localtime::strftime("%V", &t),
             _ => {
-                return Err(TwError::Message("The week may only start on a Sunday or Monday.".to_string()));
+                return Err(TwError::Message(
+                    "The week may only start on a Sunday or Monday.".to_string(),
+                ));
             }
         };
 
@@ -3726,7 +3780,11 @@ mod tests {
 
         Datetime::set_weekstart(0);
         assert_eq!(Datetime::weekstart(), 0);
-        assert_eq!(Datetime::from_epoch(0)._weekday, 0, "clear () uses weekstart");
+        assert_eq!(
+            Datetime::from_epoch(0)._weekday,
+            0,
+            "clear () uses weekstart"
+        );
         Datetime::set_iso_enabled(false);
         assert!(!Datetime::iso_enabled());
         Datetime::set_iso_enabled(true);
@@ -3743,7 +3801,10 @@ mod tests {
         assert_eq!(EPOCH_MIN_VALUE, 315532800);
         assert_eq!(EPOCH_MAX_VALUE, 253402293599);
         with_tz("UTC", || {
-            assert_eq!(Datetime::from_epoch(EPOCH_MIN_VALUE).to_iso(), "19800101T000000Z");
+            assert_eq!(
+                Datetime::from_epoch(EPOCH_MIN_VALUE).to_iso(),
+                "19800101T000000Z"
+            );
         });
     }
 
@@ -3752,14 +3813,27 @@ mod tests {
         let dt = Datetime::from_epoch(1234567890);
         assert_eq!(dt._date, 1234567890);
         assert_eq!(
-            (dt._year, dt._month, dt._week, dt._weekday, dt._julian, dt._day, dt._seconds, dt._offset, dt._utc),
+            (
+                dt._year,
+                dt._month,
+                dt._week,
+                dt._weekday,
+                dt._julian,
+                dt._day,
+                dt._seconds,
+                dt._offset,
+                dt._utc
+            ),
             (0, 0, 0, 1, 0, 0, 0, 0, false)
         );
 
         let before = localtime::time_now();
         let now = Datetime::new();
         let after = localtime::time_now();
-        assert!(now._date >= before && now._date <= after, "Datetime () is now");
+        assert!(
+            now._date >= before && now._date <= after,
+            "Datetime () is now"
+        );
         assert!(Datetime::default()._date >= before);
         with_tz("UTC", || {
             assert!(!Datetime::new().to_iso().contains("1969"), "'now' != 1969");
@@ -3770,7 +3844,9 @@ mod tests {
     fn from_string_error_message() {
         // 'foo' matches no grammar production (nor a named date).
         match Datetime::from_string("foo", "m/d/Y") {
-            Err(TwError::Message(m)) => assert_eq!(m, "'foo' is not a valid date in the 'm/d/Y' format."),
+            Err(TwError::Message(m)) => {
+                assert_eq!(m, "'foo' is not a valid date in the 'm/d/Y' format.")
+            }
             other => panic!("unexpected {other:?}"),
         }
         assert!(!Datetime::valid_str("foo", ""));
@@ -3794,10 +3870,22 @@ mod tests {
         assert!(!Datetime::valid_yd(2007, 0));
         assert!(!Datetime::valid_yd(-1, 1));
 
-        assert!(Datetime::valid_ymdhms(2010, 2, 28, 0, 0, 0), "valid 2/28/2010 0:00:00");
-        assert!(Datetime::valid_ymdhms(2010, 2, 28, 23, 59, 59), "valid 2/28/2010 23:59:59");
-        assert!(!Datetime::valid_ymdhms(2010, 2, 28, 24, 59, 59), "valid 2/28/2010 24:59:59");
-        assert!(!Datetime::valid_ymdhms(2010, 2, 28, -1, 0, 0), "valid 2/28/2010 -1:00:00");
+        assert!(
+            Datetime::valid_ymdhms(2010, 2, 28, 0, 0, 0),
+            "valid 2/28/2010 0:00:00"
+        );
+        assert!(
+            Datetime::valid_ymdhms(2010, 2, 28, 23, 59, 59),
+            "valid 2/28/2010 23:59:59"
+        );
+        assert!(
+            !Datetime::valid_ymdhms(2010, 2, 28, 24, 59, 59),
+            "valid 2/28/2010 24:59:59"
+        );
+        assert!(
+            !Datetime::valid_ymdhms(2010, 2, 28, -1, 0, 0),
+            "valid 2/28/2010 -1:00:00"
+        );
         assert!(Datetime::valid_ymdhms(2010, 2, 28, 24, 0, 0));
         assert!(!Datetime::valid_ymdhms(2010, 2, 28, 1, 60, 0));
         assert!(!Datetime::valid_ymdhms(2010, 2, 28, 1, 0, 60));
@@ -3814,8 +3902,16 @@ mod tests {
         assert_eq!(Datetime::days_in_year(2016), 366, "366 days in 2016");
         assert_eq!(Datetime::days_in_year(2015), 365, "365 days in 2015");
 
-        assert_eq!(Datetime::days_in_month(2008, 2), 29, "29 days in February 2008");
-        assert_eq!(Datetime::days_in_month(2007, 2), 28, "28 days in February 2007");
+        assert_eq!(
+            Datetime::days_in_month(2008, 2),
+            29,
+            "29 days in February 2008"
+        );
+        assert_eq!(
+            Datetime::days_in_month(2007, 2),
+            28,
+            "28 days in February 2007"
+        );
         let expected = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
         for (m, days) in expected.iter().enumerate() {
             assert_eq!(Datetime::days_in_month(2015, m as i32 + 1), *days);
@@ -3841,15 +3937,31 @@ mod tests {
         for (i, name) in months.iter().enumerate() {
             let m = i as i32 + 1;
             assert_eq!(Datetime::month_name(m), *name, "{m} = {name}");
-            assert_eq!(Datetime::month_name_short(m), name[..3], "{m} = short {name}");
+            assert_eq!(
+                Datetime::month_name_short(m),
+                name[..3],
+                "{m} = short {name}"
+            );
             assert_eq!(Datetime::month_of_year(name), m, "{name} = {m}");
         }
 
-        let days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        let days = [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+        ];
         for (i, name) in days.iter().enumerate() {
             let d = i as i32;
             assert_eq!(Datetime::day_name(d), *name, "{d} == {name}");
-            assert_eq!(Datetime::day_name_short(d), name[..3], "{d} == short {name}");
+            assert_eq!(
+                Datetime::day_name_short(d),
+                name[..3],
+                "{d} == short {name}"
+            );
             assert_eq!(Datetime::day_of_week_str(name), d, "{name} == {d}");
         }
 
@@ -3857,7 +3969,11 @@ mod tests {
         assert_eq!(Datetime::day_of_week_str("sunday"), 0, "sunday == 0");
         assert_eq!(Datetime::day_of_week_str("Sunday"), 0, "Sunday == 0");
         assert_eq!(Datetime::day_of_week_str("sun"), 0);
-        assert_eq!(Datetime::day_of_week_str("su"), -1, "shorter than minimumMatchLength");
+        assert_eq!(
+            Datetime::day_of_week_str("su"),
+            -1,
+            "shorter than minimumMatchLength"
+        );
         assert_eq!(Datetime::day_of_week_str("sundayx"), -1);
         assert_eq!(Datetime::day_of_week_str("foo"), -1);
         assert_eq!(Datetime::month_of_year("dec"), 12);
@@ -3881,7 +3997,11 @@ mod tests {
 
     #[test]
     fn day_of_week_zeller() {
-        assert_eq!(Datetime::day_of_week_ymd(2008, 1, 1), 2, "1/1/2008 == Tuesday");
+        assert_eq!(
+            Datetime::day_of_week_ymd(2008, 1, 1),
+            2,
+            "1/1/2008 == Tuesday"
+        );
         assert_eq!(Datetime::day_of_week_ymd(2015, 10, 28), 3);
         assert_eq!(Datetime::day_of_week_ymd(9015, 10, 28), 6);
         assert_eq!(Datetime::day_of_week_ymd(2000, 2, 29), 2);
@@ -3918,7 +4038,11 @@ mod tests {
             ("", 0),
         ];
         for (format_, len) in cases {
-            assert_eq!(Datetime::length(format_), len, "length '{format_}' --> {len}");
+            assert_eq!(
+                Datetime::length(format_),
+                len,
+                "length '{format_}' --> {len}"
+            );
         }
     }
 
@@ -3931,8 +4055,19 @@ mod tests {
                 assert_eq!(happy_new_year.month(), 1, "1/1/2008 == January");
                 assert_eq!(happy_new_year.day(), 1, "1/1/2008 == 1");
                 assert_eq!(happy_new_year.year(), 2008, "1/1/2008 == 2008");
-                assert_eq!(happy_new_year.to_string("Y-M-D"), "2008-01-01", "toString 2008-01-01");
-                assert_eq!((happy_new_year.hour(), happy_new_year.minute(), happy_new_year.second()), (0, 0, 0));
+                assert_eq!(
+                    happy_new_year.to_string("Y-M-D"),
+                    "2008-01-01",
+                    "toString 2008-01-01"
+                );
+                assert_eq!(
+                    (
+                        happy_new_year.hour(),
+                        happy_new_year.minute(),
+                        happy_new_year.second()
+                    ),
+                    (0, 0, 0)
+                );
                 assert_eq!(happy_new_year.day_of_year(), 1);
 
                 let (mut y, mut m, mut d) = (0, 0, 0);
@@ -3945,17 +4080,29 @@ mod tests {
                 assert!(epoch.to_epoch() > 1000000000, "9/10/2001 > 1,000,000,000");
 
                 let from_epoch = Datetime::from_epoch(epoch.to_epoch());
-                assert_eq!(from_epoch.to_string("Y-M-D"), epoch.to_string("Y-M-D"), "ctor (time_t)");
+                assert_eq!(
+                    from_epoch.to_string("Y-M-D"),
+                    epoch.to_string("Y-M-D"),
+                    "ctor (time_t)"
+                );
 
                 let iso = Datetime::from_epoch(1000000000);
-                assert_eq!(iso.to_iso(), "20010909T014640Z", "1,000,000,000 -> 20010909T014640Z");
+                assert_eq!(
+                    iso.to_iso(),
+                    "20010909T014640Z",
+                    "1,000,000,000 -> 20010909T014640Z"
+                );
 
                 // Test for Y2038 problem
                 let f_epoch = Datetime::from_ymd(2039, 1, 1);
                 assert!(f_epoch.to_epoch() > 2147483647, "9/01/2039 > 2,147,483,647");
 
                 let f_iso = Datetime::from_epoch(2147483650);
-                assert_eq!(f_iso.to_iso(), "20380119T031410Z", "2147483650 -> 20380119T031410Z");
+                assert_eq!(
+                    f_iso.to_iso(),
+                    "20380119T031410Z",
+                    "2147483650 -> 20380119T031410Z"
+                );
             });
         }
     }
@@ -3964,14 +4111,32 @@ mod tests {
     fn local_epochs_by_zone() {
         with_tz("UTC", || {
             assert_eq!(Datetime::from_ymd(2013, 12, 6).to_epoch(), 1386288000);
-            assert_eq!(Datetime::from_ymdhms(2015, 10, 28, 12, 55, 0).to_epoch(), 1446036900);
-            assert_eq!(Datetime::from_epoch(1000000000).to_iso_local_extended(), "2001-09-09T01:46:40");
+            assert_eq!(
+                Datetime::from_ymdhms(2015, 10, 28, 12, 55, 0).to_epoch(),
+                1446036900
+            );
+            assert_eq!(
+                Datetime::from_epoch(1000000000).to_iso_local_extended(),
+                "2001-09-09T01:46:40"
+            );
         });
         with_tz("America/New_York", || {
-            assert_eq!(Datetime::from_ymd(2013, 12, 6).to_epoch(), 1386288000 + 5 * 3600);
-            assert_eq!(Datetime::from_ymdhms(2015, 10, 28, 12, 55, 0).to_epoch(), 1446036900 + 4 * 3600);
-            assert_eq!(Datetime::from_epoch(1000000000).to_iso_local_extended(), "2001-09-08T21:46:40");
-            assert_eq!(Datetime::from_epoch(1000000000).to_iso(), "20010909T014640Z");
+            assert_eq!(
+                Datetime::from_ymd(2013, 12, 6).to_epoch(),
+                1386288000 + 5 * 3600
+            );
+            assert_eq!(
+                Datetime::from_ymdhms(2015, 10, 28, 12, 55, 0).to_epoch(),
+                1446036900 + 4 * 3600
+            );
+            assert_eq!(
+                Datetime::from_epoch(1000000000).to_iso_local_extended(),
+                "2001-09-08T21:46:40"
+            );
+            assert_eq!(
+                Datetime::from_epoch(1000000000).to_iso(),
+                "20010909T014640Z"
+            );
         });
     }
 
@@ -3989,10 +4154,26 @@ mod tests {
         for tz in ["UTC", "America/New_York"] {
             with_tz(tz, || {
                 let quant = Datetime::from_epoch(1234526400);
-                assert_eq!(quant.start_of_day().to_string("YMDHNS"), "20090213000000", "startOfDay");
-                assert_eq!(quant.start_of_week().to_string("YMDHNS"), "20090208000000", "startOfWeek");
-                assert_eq!(quant.start_of_month().to_string("YMDHNS"), "20090201000000", "startOfMonth");
-                assert_eq!(quant.start_of_year().to_string("YMDHNS"), "20090101000000", "startOfYear");
+                assert_eq!(
+                    quant.start_of_day().to_string("YMDHNS"),
+                    "20090213000000",
+                    "startOfDay"
+                );
+                assert_eq!(
+                    quant.start_of_week().to_string("YMDHNS"),
+                    "20090208000000",
+                    "startOfWeek"
+                );
+                assert_eq!(
+                    quant.start_of_month().to_string("YMDHNS"),
+                    "20090201000000",
+                    "startOfMonth"
+                );
+                assert_eq!(
+                    quant.start_of_year().to_string("YMDHNS"),
+                    "20090101000000",
+                    "startOfYear"
+                );
             });
         }
     }
@@ -4029,7 +4210,11 @@ mod tests {
                     ("w", "3"),
                 ];
                 for (f, expected) in cases {
-                    assert_eq!(r32.to_string(f), expected, "2015-10-28T12:55:00 -> {f} -> {expected}");
+                    assert_eq!(
+                        r32.to_string(f),
+                        expected,
+                        "2015-10-28T12:55:00 -> {f} -> {expected}"
+                    );
                 }
 
                 // Test all format options for a future date
@@ -4058,7 +4243,11 @@ mod tests {
                     ("w", "6"),
                 ];
                 for (f, expected) in cases {
-                    assert_eq!(r38.to_string(f), expected, "9015-10-28T12:55:00 -> {f} -> {expected}");
+                    assert_eq!(
+                        r38.to_string(f),
+                        expected,
+                        "9015-10-28T12:55:00 -> {f} -> {expected}"
+                    );
                 }
             });
         }
@@ -4071,9 +4260,16 @@ mod tests {
             assert_eq!(dt.to_string("Y-M-D H:N:S"), "2009-02-03 04:05:06");
             assert_eq!(dt.to_string("m/d/y h:n:s"), "2/3/09 4:5:6");
             assert_eq!(dt.to_string("J j"), "034 34");
-            assert_eq!(dt.to_string("[Y] é → x"), "[2009] é → x", "other bytes pass through");
+            assert_eq!(
+                dt.to_string("[Y] é → x"),
+                "[2009] é → x",
+                "other bytes pass through"
+            );
             assert_eq!(dt.to_string(""), "");
-            assert_eq!(Datetime::from_ymd(2000, 1, 2).to_string("y V v"), "00 52 52");
+            assert_eq!(
+                Datetime::from_ymd(2000, 1, 2).to_string("y V v"),
+                "00 52 52"
+            );
         });
     }
 
@@ -4096,7 +4292,9 @@ mod tests {
 
             Datetime::set_weekstart(2);
             match dt.try_week() {
-                Err(TwError::Message(m)) => assert_eq!(m, "The week may only start on a Sunday or Monday."),
+                Err(TwError::Message(m)) => {
+                    assert_eq!(m, "The week may only start on a Sunday or Monday.")
+                }
                 other => panic!("unexpected {other:?}"),
             }
         });
@@ -4110,31 +4308,88 @@ mod tests {
 
             let left = Datetime::from_ymd(2008, 7, 4);
             let comp1 = Datetime::from_ymd(2008, 7, 4);
-            assert!(left.same_day(&comp1), "7/4/2008 is on the same day as 7/4/2008");
-            assert!(left.same_week(&comp1), "7/4/2008 is on the same week as 7/4/2008");
-            assert!(left.same_month(&comp1), "7/4/2008 is in the same month as 7/4/2008");
-            assert!(left.same_quarter(&comp1), "7/4/2008 is in the same quarter as 7/4/2008");
-            assert!(left.same_year(&comp1), "7/4/2008 is in the same year as 7/4/2008");
+            assert!(
+                left.same_day(&comp1),
+                "7/4/2008 is on the same day as 7/4/2008"
+            );
+            assert!(
+                left.same_week(&comp1),
+                "7/4/2008 is on the same week as 7/4/2008"
+            );
+            assert!(
+                left.same_month(&comp1),
+                "7/4/2008 is in the same month as 7/4/2008"
+            );
+            assert!(
+                left.same_quarter(&comp1),
+                "7/4/2008 is in the same quarter as 7/4/2008"
+            );
+            assert!(
+                left.same_year(&comp1),
+                "7/4/2008 is in the same year as 7/4/2008"
+            );
 
             let comp2 = Datetime::from_ymd(2008, 7, 5);
-            assert!(!left.same_day(&comp2), "7/4/2008 is not on the same day as 7/5/2008");
-            assert!(left.same_month(&comp2), "7/4/2008 is in the same month as 7/5/2008");
-            assert!(left.same_quarter(&comp2), "7/4/2008 is in the same quarter as 7/5/2008");
-            assert!(left.same_year(&comp2), "7/4/2008 is in the same year as 7/5/2008");
+            assert!(
+                !left.same_day(&comp2),
+                "7/4/2008 is not on the same day as 7/5/2008"
+            );
+            assert!(
+                left.same_month(&comp2),
+                "7/4/2008 is in the same month as 7/5/2008"
+            );
+            assert!(
+                left.same_quarter(&comp2),
+                "7/4/2008 is in the same quarter as 7/5/2008"
+            );
+            assert!(
+                left.same_year(&comp2),
+                "7/4/2008 is in the same year as 7/5/2008"
+            );
 
             let comp3 = Datetime::from_ymd(2008, 8, 4);
-            assert!(!left.same_day(&comp3), "7/4/2008 is not on the same day as 8/4/2008");
-            assert!(!left.same_week(&comp3), "7/4/2008 is not on the same week as 8/4/2008");
-            assert!(!left.same_month(&comp3), "7/4/2008 is not in the same month as 8/4/2008");
-            assert!(left.same_quarter(&comp3), "7/4/2008 is in the same quarter as 8/4/2008");
-            assert!(left.same_year(&comp3), "7/4/2008 is in the same year as 8/4/2008");
+            assert!(
+                !left.same_day(&comp3),
+                "7/4/2008 is not on the same day as 8/4/2008"
+            );
+            assert!(
+                !left.same_week(&comp3),
+                "7/4/2008 is not on the same week as 8/4/2008"
+            );
+            assert!(
+                !left.same_month(&comp3),
+                "7/4/2008 is not in the same month as 8/4/2008"
+            );
+            assert!(
+                left.same_quarter(&comp3),
+                "7/4/2008 is in the same quarter as 8/4/2008"
+            );
+            assert!(
+                left.same_year(&comp3),
+                "7/4/2008 is in the same year as 8/4/2008"
+            );
 
             let comp4 = Datetime::from_ymd(2009, 7, 4);
-            assert!(!left.same_day(&comp4), "7/4/2008 is not on the same day as 7/4/2009");
-            assert!(!left.same_week(&comp4), "7/4/2008 is not on the same week as 7/4/2009");
-            assert!(!left.same_month(&comp4), "7/4/2008 is not in the same month as 7/4/2009");
-            assert!(!left.same_quarter(&comp4), "7/4/2008 is not in the same quarter as 7/4/2009");
-            assert!(!left.same_year(&comp4), "7/4/2008 is not in the same year as 7/4/2009");
+            assert!(
+                !left.same_day(&comp4),
+                "7/4/2008 is not on the same day as 7/4/2009"
+            );
+            assert!(
+                !left.same_week(&comp4),
+                "7/4/2008 is not on the same week as 7/4/2009"
+            );
+            assert!(
+                !left.same_month(&comp4),
+                "7/4/2008 is not in the same month as 7/4/2009"
+            );
+            assert!(
+                !left.same_quarter(&comp4),
+                "7/4/2008 is not in the same quarter as 7/4/2009"
+            );
+            assert!(
+                !left.same_year(&comp4),
+                "7/4/2008 is not in the same year as 7/4/2009"
+            );
 
             assert!(!left.same_quarter(&Datetime::from_ymd(2008, 10, 1)));
             assert!(left.same_quarter(&Datetime::from_ymd(2008, 9, 30)));
@@ -4164,7 +4419,11 @@ mod tests {
     fn arithmetic() {
         // Datetime::operator-
         let r25 = Datetime::from_epoch(1234567890);
-        assert_eq!((r25 - 1).to_epoch(), 1234567889, "1234567890 - 1 = 1234567889");
+        assert_eq!(
+            (r25 - 1).to_epoch(),
+            1234567889,
+            "1234567890 - 1 = 1234567889"
+        );
         assert_eq!((r25 + 10).to_epoch(), 1234567900);
         let mut r = r25;
         r += 100;
@@ -4175,7 +4434,11 @@ mod tests {
         #[allow(clippy::op_ref)] // Exercises the by-reference impl.
         let by_ref = &r25 - &r;
         assert_eq!(by_ref, -50);
-        assert_eq!(r25.to_epoch(), 1234567890, "operator+/- do not modify the operand");
+        assert_eq!(
+            r25.to_epoch(),
+            1234567890,
+            "operator+/- do not modify the operand"
+        );
     }
 
     #[test]
@@ -4184,20 +4447,36 @@ mod tests {
             // Datetime::operator--
             let mut r26 = Datetime::from_ymdhms(2010, 11, 7, 23, 59, 59);
             r26.dec();
-            assert_eq!(r26.to_string("YMDHNS"), "20101106235959", "decrement across fall DST boundary");
+            assert_eq!(
+                r26.to_string("YMDHNS"),
+                "20101106235959",
+                "decrement across fall DST boundary"
+            );
 
             let mut r27 = Datetime::from_ymdhms(2010, 3, 14, 23, 59, 59);
             r27.dec();
-            assert_eq!(r27.to_string("YMDHNS"), "20100313235959", "decrement across spring DST boundary");
+            assert_eq!(
+                r27.to_string("YMDHNS"),
+                "20100313235959",
+                "decrement across spring DST boundary"
+            );
 
             // Datetime::operator++
             let mut r28 = Datetime::from_ymdhms(2010, 11, 6, 23, 59, 59);
             r28.inc();
-            assert_eq!(r28.to_string("YMDHNS"), "20101107235959", "increment across fall DST boundary");
+            assert_eq!(
+                r28.to_string("YMDHNS"),
+                "20101107235959",
+                "increment across fall DST boundary"
+            );
 
             let mut r29 = Datetime::from_ymdhms(2010, 3, 13, 23, 59, 59);
             r29.inc();
-            assert_eq!(r29.to_string("YMDHNS"), "20100314235959", "increment across spring DST boundary");
+            assert_eq!(
+                r29.to_string("YMDHNS"),
+                "20100314235959",
+                "increment across spring DST boundary"
+            );
 
             // Fall-back day is 25 hours long.
             assert_eq!(
@@ -4208,18 +4487,38 @@ mod tests {
     }
 
     fn tm_for_year(year: i32) -> Tm {
-        Tm { tm_year: year - 1900, tm_mon: 0, tm_mday: 1, tm_isdst: -1, ..Tm::default() }
+        Tm {
+            tm_year: year - 1900,
+            tm_mon: 0,
+            tm_mday: 1,
+            tm_isdst: -1,
+            ..Tm::default()
+        }
     }
 
     #[test]
     fn easter_dates() {
         let dt = Datetime::from_epoch(0);
-        for (year, month, day) in [(2017, 4, 16), (2024, 3, 31), (2025, 4, 20), (2000, 4, 23), (2038, 4, 25)] {
+        for (year, month, day) in [
+            (2017, 4, 16),
+            (2024, 3, 31),
+            (2025, 4, 20),
+            (2000, 4, 23),
+            (2038, 4, 25),
+        ] {
             let mut t = tm_for_year(year);
             t.tm_hour = 5;
             dt.easter(&mut t);
             assert_eq!(
-                (t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, t.tm_isdst),
+                (
+                    t.tm_year + 1900,
+                    t.tm_mon + 1,
+                    t.tm_mday,
+                    t.tm_hour,
+                    t.tm_min,
+                    t.tm_sec,
+                    t.tm_isdst
+                ),
                 (year, month, day, 0, 0, 0, -1),
                 "easter {year}"
             );
@@ -4231,16 +4530,27 @@ mod tests {
         for tz in ["UTC", "America/New_York"] {
             with_tz(tz, || {
                 let dt = Datetime::from_epoch(0);
-                for (year, midsommar, afton) in [(2017, 24, 23), (2024, 22, 21), (2015, 20, 19), (2021, 26, 18)] {
+                for (year, midsommar, afton) in [
+                    (2017, 24, 23),
+                    (2024, 22, 21),
+                    (2015, 20, 19),
+                    (2021, 26, 18),
+                ] {
                     let mut t = tm_for_year(year);
                     dt.midsommar(&mut t);
                     let epoch = localtime::mktime(&mut t);
-                    assert_eq!(Datetime::from_epoch(epoch).to_string("Y-M-D H:N:S w"), format!("{year}-06-{midsommar} 00:00:00 6"));
+                    assert_eq!(
+                        Datetime::from_epoch(epoch).to_string("Y-M-D H:N:S w"),
+                        format!("{year}-06-{midsommar} 00:00:00 6")
+                    );
 
                     let mut t = tm_for_year(year);
                     dt.midsommarafton(&mut t);
                     let epoch = localtime::mktime(&mut t);
-                    assert_eq!(Datetime::from_epoch(epoch).to_string("Y-M-D H:N:S w"), format!("{year}-06-{afton} 00:00:00 5"));
+                    assert_eq!(
+                        Datetime::from_epoch(epoch).to_string("Y-M-D H:N:S w"),
+                        format!("{year}-06-{afton} 00:00:00 5")
+                    );
                 }
             });
         }
@@ -4250,7 +4560,19 @@ mod tests {
     fn ordinals() {
         let dt = Datetime::from_epoch(0);
         let mut ordinal = 0;
-        for (token, expected) in [("1st", 1), ("2nd", 2), ("3rd", 3), ("4th", 4), ("11th", 11), ("12th", 12), ("13th", 13), ("21st", 21), ("22nd", 22), ("23rd", 23), ("1th", 1)] {
+        for (token, expected) in [
+            ("1st", 1),
+            ("2nd", 2),
+            ("3rd", 3),
+            ("4th", 4),
+            ("11th", 11),
+            ("12th", 12),
+            ("13th", 13),
+            ("21st", 21),
+            ("22nd", 22),
+            ("23rd", 23),
+            ("1th", 1),
+        ] {
             assert!(dt.is_ordinal(token, &mut ordinal), "{token}");
             assert_eq!(ordinal, expected, "{token}");
         }
@@ -4274,7 +4596,17 @@ mod tests {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn fields(year: i32, month: i32, week: i32, weekday: i32, julian: i32, day: i32, seconds: i32, offset: i32, utc: bool) -> Datetime {
+    fn fields(
+        year: i32,
+        month: i32,
+        week: i32,
+        weekday: i32,
+        julian: i32,
+        day: i32,
+        seconds: i32,
+        offset: i32,
+        utc: bool,
+    ) -> Datetime {
         let mut dt = Datetime::from_epoch(0);
         dt._year = year;
         dt._month = month;
@@ -4299,7 +4631,10 @@ mod tests {
         assert!(!fields(2013, 13, 0, 1, 0, 0, 0, 0, false).validate());
         assert!(!fields(2013, 0, 54, 1, 0, 0, 0, 0, false).validate());
         assert!(fields(2013, 0, 53, 7, 0, 0, 0, 0, false).validate());
-        assert!(!fields(2013, 0, 1, 0, 0, 0, 0, 0, false).validate(), "weekday 0 invalid for ISO weeks");
+        assert!(
+            !fields(2013, 0, 1, 0, 0, 0, 0, 0, false).validate(),
+            "weekday 0 invalid for ISO weeks"
+        );
         assert!(!fields(2013, 0, 1, 8, 0, 0, 0, 0, false).validate());
         assert!(fields(2012, 0, 0, 1, 366, 0, 0, 0, false).validate());
         assert!(!fields(2013, 0, 0, 1, 366, 0, 0, 0, false).validate());
@@ -4328,16 +4663,38 @@ mod tests {
                 Datetime::set_weekstart(1);
 
                 // y m d
-                assert_eq!(resolved(fields(2013, 12, 0, 1, 0, 6, 0, 0, false)), Datetime::from_ymd(2013, 12, 6).to_epoch());
+                assert_eq!(
+                    resolved(fields(2013, 12, 0, 1, 0, 6, 0, 0, false)),
+                    Datetime::from_ymd(2013, 12, 6).to_epoch()
+                );
                 // y m -  -->  y m 1
-                assert_eq!(resolved(fields(2013, 12, 0, 1, 0, 0, 0, 0, false)), Datetime::from_ymd(2013, 12, 1).to_epoch());
+                assert_eq!(
+                    resolved(fields(2013, 12, 0, 1, 0, 0, 0, 0, false)),
+                    Datetime::from_ymd(2013, 12, 1).to_epoch()
+                );
                 // y - -  -->  y 1 1
-                assert_eq!(resolved(fields(2013, 0, 0, 1, 0, 0, 0, 0, false)), Datetime::from_ymd(2013, 1, 1).to_epoch());
+                assert_eq!(
+                    resolved(fields(2013, 0, 0, 1, 0, 0, 0, 0, false)),
+                    Datetime::from_ymd(2013, 1, 1).to_epoch()
+                );
                 // Julian.
-                assert_eq!(resolved(fields(2013, 0, 0, 1, 340, 0, 0, 0, false)), Datetime::from_ymd(2013, 12, 6).to_epoch());
+                assert_eq!(
+                    resolved(fields(2013, 0, 0, 1, 340, 0, 0, 0, false)),
+                    Datetime::from_ymd(2013, 12, 6).to_epoch()
+                );
                 // Time of day.
                 assert_eq!(
-                    resolved(fields(2013, 12, 0, 1, 0, 6, 12 * 3600 + 34 * 60 + 56, 0, false)),
+                    resolved(fields(
+                        2013,
+                        12,
+                        0,
+                        1,
+                        0,
+                        6,
+                        12 * 3600 + 34 * 60 + 56,
+                        0,
+                        false
+                    )),
                     Datetime::from_ymdhms(2013, 12, 6, 12, 34, 56).to_epoch()
                 );
                 // Seconds past a day roll over.
@@ -4346,9 +4703,18 @@ mod tests {
                     Datetime::from_ymdhms(2013, 12, 7, 0, 1, 0).to_epoch()
                 );
                 // UTC and offsets.
-                assert_eq!(resolved(fields(2013, 12, 0, 1, 0, 6, 0, 0, true)), 1386288000);
-                assert_eq!(resolved(fields(2013, 12, 0, 1, 0, 6, 12 * 3600, 3600, false)), 1386288000 + 11 * 3600);
-                assert_eq!(resolved(fields(2013, 12, 0, 1, 0, 6, 12 * 3600, -18000, false)), 1386288000 + 17 * 3600);
+                assert_eq!(
+                    resolved(fields(2013, 12, 0, 1, 0, 6, 0, 0, true)),
+                    1386288000
+                );
+                assert_eq!(
+                    resolved(fields(2013, 12, 0, 1, 0, 6, 12 * 3600, 3600, false)),
+                    1386288000 + 11 * 3600
+                );
+                assert_eq!(
+                    resolved(fields(2013, 12, 0, 1, 0, 6, 12 * 3600, -18000, false)),
+                    1386288000 + 17 * 3600
+                );
 
                 // ISO weeks (from the upstream boundary table).
                 for (y, w, wd, ey, em, ed) in [
@@ -4394,11 +4760,17 @@ mod tests {
             if Datetime::new().to_epoch() - today.to_epoch() > 1 {
                 Datetime::set_time_relative(true);
                 let t = Datetime::from_epoch(resolved(fields(0, 0, 0, 1, 0, 0, 1, 0, false)));
-                assert!(!today.same_day(&t), "Datetime::timeRelative=true 0:00:01 --> tomorrow");
+                assert!(
+                    !today.same_day(&t),
+                    "Datetime::timeRelative=true 0:00:01 --> tomorrow"
+                );
 
                 Datetime::set_time_relative(false);
                 let t = Datetime::from_epoch(resolved(fields(0, 0, 0, 1, 0, 0, 1, 0, false)));
-                assert!(today.same_day(&t), "Datetime::timeRelative=false 0:00:01 --> today");
+                assert!(
+                    today.same_day(&t),
+                    "Datetime::timeRelative=false 0:00:01 --> today"
+                );
             }
         });
     }
@@ -4422,7 +4794,10 @@ mod tests {
     fn test_parse_error(input: &str) {
         let mut neg = Datetime::new();
         let mut pos = 0usize;
-        assert!(!neg.parse(input, &mut pos, ""), "Datetime::parse negative '{input}' --> fail");
+        assert!(
+            !neg.parse(input, &mut pos, ""),
+            "Datetime::parse negative '{input}' --> fail"
+        );
     }
 
     #[test]
@@ -4440,9 +4815,15 @@ mod tests {
             // parse_named, which leaves the ISO fields untouched.
             let mut informal = Datetime::new();
             let mut start = 0usize;
-            assert!(informal.parse("12:34:56", &mut start, ""), "isoEnabled=false '12:34:56' --> informal time");
+            assert!(
+                informal.parse("12:34:56", &mut start, ""),
+                "isoEnabled=false '12:34:56' --> informal time"
+            );
             assert_eq!(start, 8);
-            assert_eq!(informal._seconds, 0, "isoEnabled=false '12:34:56' is not parse_time_ext");
+            assert_eq!(
+                informal._seconds, 0,
+                "isoEnabled=false '12:34:56' is not parse_time_ext"
+            );
             Datetime::set_iso_enabled(true);
         });
     }
@@ -4546,12 +4927,18 @@ mod tests {
             assert_eq!(value, 0);
 
             let mut pig = Pig::new("0");
-            assert!(!dt.parse_weekday(&mut pig, &mut value), "0 invalid when weekstart=1");
+            assert!(
+                !dt.parse_weekday(&mut pig, &mut value),
+                "0 invalid when weekstart=1"
+            );
             Datetime::set_weekstart(0);
             assert!(dt.parse_weekday(&mut pig, &mut value));
             assert_eq!(value, 0);
             let mut pig = Pig::new("7");
-            assert!(!dt.parse_weekday(&mut pig, &mut value), "7 invalid when weekstart=0");
+            assert!(
+                !dt.parse_weekday(&mut pig, &mut value),
+                "7 invalid when weekstart=0"
+            );
             Datetime::set_weekstart(1);
 
             // Offset forms set _offset; '-' sign negates.
@@ -4580,10 +4967,26 @@ mod tests {
                 let hns = |dt: &Datetime| (dt.hour(), dt.minute(), dt.second());
 
                 // Format parsing (datetime.t.cpp 730-795).
-                assert_eq!(ymd(&Datetime::from_string("1/1/2008", "m/d/Y").unwrap()), (2008, 1, 1), "fromString1");
-                assert_eq!(ymd(&Datetime::from_string("20080101", "YMD").unwrap()), (2008, 1, 1), "fromString2");
-                assert_eq!(ymd(&Datetime::from_string("12/31/2007", "m/d/Y").unwrap()), (2007, 12, 31), "fromString3");
-                assert_eq!(ymd(&Datetime::from_string("01/01/2008", "m/d/Y").unwrap()), (2008, 1, 1), "fromString4");
+                assert_eq!(
+                    ymd(&Datetime::from_string("1/1/2008", "m/d/Y").unwrap()),
+                    (2008, 1, 1),
+                    "fromString1"
+                );
+                assert_eq!(
+                    ymd(&Datetime::from_string("20080101", "YMD").unwrap()),
+                    (2008, 1, 1),
+                    "fromString2"
+                );
+                assert_eq!(
+                    ymd(&Datetime::from_string("12/31/2007", "m/d/Y").unwrap()),
+                    (2007, 12, 31),
+                    "fromString3"
+                );
+                assert_eq!(
+                    ymd(&Datetime::from_string("01/01/2008", "m/d/Y").unwrap()),
+                    (2008, 1, 1),
+                    "fromString4"
+                );
                 assert_eq!(
                     ymd(&Datetime::from_string("Tue 05 Feb 2008 (06)", "a D b Y (V)").unwrap()),
                     (2008, 2, 5),
@@ -4601,22 +5004,59 @@ mod tests {
                 );
 
                 let f8 = Datetime::from_string("6/7/2010 1:23:45", "m/d/Y h:N:S").unwrap();
-                assert_eq!((ymd(&f8), hns(&f8)), ((2010, 6, 7), (1, 23, 45)), "fromString8");
+                assert_eq!(
+                    (ymd(&f8), hns(&f8)),
+                    ((2010, 6, 7), (1, 23, 45)),
+                    "fromString8"
+                );
                 let f9 = Datetime::from_string("6/7/2010 01:23:45", "m/d/Y H:N:S").unwrap();
-                assert_eq!((ymd(&f9), hns(&f9)), ((2010, 6, 7), (1, 23, 45)), "fromString9");
+                assert_eq!(
+                    (ymd(&f9), hns(&f9)),
+                    ((2010, 6, 7), (1, 23, 45)),
+                    "fromString9"
+                );
                 let f10 = Datetime::from_string("6/7/2010 12:34:56", "m/d/Y H:N:S").unwrap();
-                assert_eq!((ymd(&f10), hns(&f10)), ((2010, 6, 7), (12, 34, 56)), "fromString10");
+                assert_eq!(
+                    (ymd(&f10), hns(&f10)),
+                    ((2010, 6, 7), (12, 34, 56)),
+                    "fromString10"
+                );
                 let f11 = Datetime::from_string("6/7/3010 12:34:56", "m/d/Y H:N:S").unwrap();
-                assert_eq!((ymd(&f11), hns(&f11)), ((3010, 6, 7), (12, 34, 56)), "fromString11");
+                assert_eq!(
+                    (ymd(&f11), hns(&f11)),
+                    ((3010, 6, 7), (12, 34, 56)),
+                    "fromString11"
+                );
 
                 // Day of year.
-                assert_eq!(Datetime::from_string("1/1/2011", "m/d/Y").unwrap().day_of_year(), 1);
-                assert_eq!(Datetime::from_string("5/1/2011", "m/d/Y").unwrap().day_of_year(), 121);
-                assert_eq!(Datetime::from_string("12/31/2011", "m/d/Y").unwrap().day_of_year(), 365);
+                assert_eq!(
+                    Datetime::from_string("1/1/2011", "m/d/Y")
+                        .unwrap()
+                        .day_of_year(),
+                    1
+                );
+                assert_eq!(
+                    Datetime::from_string("5/1/2011", "m/d/Y")
+                        .unwrap()
+                        .day_of_year(),
+                    121
+                );
+                assert_eq!(
+                    Datetime::from_string("12/31/2011", "m/d/Y")
+                        .unwrap()
+                        .day_of_year(),
+                    365
+                );
 
                 // Datetime::valid with a format (datetime.t.cpp 570-571).
-                assert!(Datetime::valid_str("2/29/2008", "m/d/Y"), "valid: 2/29/2008");
-                assert!(!Datetime::valid_str("2/29/2007", "m/d/Y"), "invalid: 2/29/2007");
+                assert!(
+                    Datetime::valid_str("2/29/2008", "m/d/Y"),
+                    "valid: 2/29/2008"
+                );
+                assert!(
+                    !Datetime::valid_str("2/29/2007", "m/d/Y"),
+                    "invalid: 2/29/2007"
+                );
 
                 // Comparisons on formatted dates (datetime.t.cpp 538-565).
                 let left = Datetime::from_string("7/4/2008", "m/d/Y").unwrap();
@@ -4631,9 +5071,17 @@ mod tests {
 
                 // Depletion requirement.
                 let r30 = Datetime::from_string("Mon Jun 30 2014", "a b D Y").unwrap();
-                assert_eq!(r30.to_string("YMDHNS"), "20140630000000", "Depletion required on complex format with spaces");
+                assert_eq!(
+                    r30.to_string("YMDHNS"),
+                    "20140630000000",
+                    "Depletion required on complex format with spaces"
+                );
                 let r31 = Datetime::from_string("Mon Jun 30 2014 xxx", "a b D Y").unwrap();
-                assert_eq!(r31.to_string("YMDHNS"), "20140630000000", "Depletion not required on complex format with spaces");
+                assert_eq!(
+                    r31.to_string("YMDHNS"),
+                    "20140630000000",
+                    "Depletion not required on complex format with spaces"
+                );
 
                 // Test all format options (ISO input, no format).
                 let r32 = Datetime::from_string("2015-10-28T12:55:00", "").unwrap();
@@ -4665,9 +5113,17 @@ mod tests {
 
                 // Test all parse options.
                 let r33 = Datetime::from_string("2015 10 28 19 28 01", "Y M D H N S").unwrap();
-                assert_eq!((ymd(&r33), hns(&r33)), ((2015, 10, 28), (19, 28, 1)), "Y M D H N S works");
+                assert_eq!(
+                    (ymd(&r33), hns(&r33)),
+                    ((2015, 10, 28), (19, 28, 1)),
+                    "Y M D H N S works"
+                );
                 let r34 = Datetime::from_string("15 5 4 3 2 1", "y m d h n s").unwrap();
-                assert_eq!((ymd(&r34), hns(&r34)), ((2015, 5, 4), (3, 2, 1)), "y m d h n s works");
+                assert_eq!(
+                    (ymd(&r34), hns(&r34)),
+                    ((2015, 5, 4), (3, 2, 1)),
+                    "y m d h n s works"
+                );
                 let r35 = Datetime::from_string("Wednesday October 28 2015", "A B D Y").unwrap();
                 assert_eq!(ymd(&r35), (2015, 10, 28), "A B D Y works");
                 assert_eq!(r35.day_of_week(), 3, "A works");
@@ -4712,15 +5168,24 @@ mod tests {
 
             // Single-digit tokens take one or two digits.
             assert_eq!(fields_of("2015-1-2", "Y-m-d"), (true, 8, 2015, 1, 2, 0));
-            assert_eq!(fields_of("2015-12-31", "Y-m-d"), (true, 10, 2015, 12, 31, 0));
+            assert_eq!(
+                fields_of("2015-12-31", "Y-m-d"),
+                (true, 10, 2015, 12, 31, 0)
+            );
             assert_eq!(fields_of("2015-01-09", "Y-m-d"), (true, 10, 2015, 1, 9, 0));
             // 'm' only reads a second digit after a leading 1: "2" then "5" is a literal mismatch.
             assert!(!fields_of("25/1/2015", "m/d/Y").0);
             // 'd' reads a second digit after 1, 2 or 3 only.
             assert!(!fields_of("2015-1-45", "Y-m-d").0);
             // 'h' reads a second digit after 1 or 2; 'n'/'s' after 0-5.
-            assert_eq!(fields_of("2015 23:59:59", "Y h:n:s"), (true, 13, 2015, 1, 1, 86399));
-            assert_eq!(fields_of("2015 3:7:9", "Y h:n:s"), (true, 10, 2015, 1, 1, 3 * 3600 + 7 * 60 + 9));
+            assert_eq!(
+                fields_of("2015 23:59:59", "Y h:n:s"),
+                (true, 13, 2015, 1, 1, 86399)
+            );
+            assert_eq!(
+                fields_of("2015 3:7:9", "Y h:n:s"),
+                (true, 10, 2015, 1, 1, 3 * 3600 + 7 * 60 + 9)
+            );
             // Week tokens are consumed (and unused).
             assert_eq!(fields_of("2015 W5", "Y Wv"), (true, 7, 2015, 1, 1, 0));
             assert_eq!(fields_of("2015 W05", "Y WV"), (true, 8, 2015, 1, 1, 0));
@@ -4732,11 +5197,17 @@ mod tests {
             let now = Datetime::new();
             let (ok, _, y, m, d, s) = fields_of("12:00", "H:N");
             assert!(ok);
-            assert_eq!((y, m, d, s), (now.year(), now.month(), now.day(), 12 * 3600));
+            assert_eq!(
+                (y, m, d, s),
+                (now.year(), now.month(), now.day(), 12 * 3600)
+            );
 
             // Trailing text must be whitespace (or end of input).
             assert!(!fields_of("2015-10-28T12:00", "Y-M-D").0);
-            assert_eq!(fields_of("2015-10-28 12:00", "Y-M-D"), (true, 10, 2015, 10, 28, 0));
+            assert_eq!(
+                fields_of("2015-10-28 12:00", "Y-M-D"),
+                (true, 10, 2015, 10, 28, 0)
+            );
 
             // A failed token restores the cursor.
             let mut dt = Datetime::new();
@@ -4752,12 +5223,21 @@ mod tests {
             assert!(!fields_of("Xyz 2015", "b Y").0);
             assert_eq!(fields_of("2015 February", "Y B"), (true, 13, 2015, 2, 1, 0));
             assert_eq!(fields_of("2015 Thursday", "Y A"), (true, 13, 2015, 1, 1, 0));
-            assert!(fields_of("2015 Thurs", "Y A").0, "abbreviated day names are accepted");
+            assert!(
+                fields_of("2015 Thurs", "Y A").0,
+                "abbreviated day names are accepted"
+            );
             assert!(!fields_of("2015 Frogday", "Y A").0);
 
             // Literal bytes, including multi-byte UTF-8 literals, match byte by byte.
-            assert_eq!(fields_of("28.10.2015", "D.M.Y"), (true, 10, 2015, 10, 28, 0));
-            assert_eq!(fields_of("2015年10月28日", "Y年M月D日"), (true, 17, 2015, 10, 28, 0));
+            assert_eq!(
+                fields_of("28.10.2015", "D.M.Y"),
+                (true, 10, 2015, 10, 28, 0)
+            );
+            assert_eq!(
+                fields_of("2015年10月28日", "Y年M月D日"),
+                (true, 17, 2015, 10, 28, 0)
+            );
             assert!(!fields_of("2015年10月28日", "Y月M月D日").0);
 
             // Through Datetime::parse: a formatted date that fails validation
@@ -4885,7 +5365,11 @@ mod tests {
     fn check_rows(label: &str, rows: &[Row]) {
         for (input, (ok, start, date), expected) in rows {
             assert!(*ok, "{label}: Datetime::parse (\"{input}\") --> true");
-            assert_eq!(*start, input.len(), "{label}: Datetime::parse (\"{input}\") --> []");
+            assert_eq!(
+                *start,
+                input.len(),
+                "{label}: Datetime::parse (\"{input}\") --> []"
+            );
             assert_eq!(
                 *date,
                 *expected,
@@ -4915,7 +5399,10 @@ mod tests {
 
     /// Builds rows by parsing each input and pairing it with its expectation.
     fn rows_of(cases: Vec<(&str, i64)>) -> Vec<Row> {
-        cases.into_iter().map(|(input, expected)| (input.to_string(), parse_at(input), expected)).collect()
+        cases
+            .into_iter()
+            .map(|(input, expected)| (input.to_string(), parse_at(input), expected))
+            .collect()
     }
 
     #[test]
@@ -5070,7 +5557,11 @@ mod tests {
                 for (month, spellings) in names.iter().enumerate() {
                     let month = month as i32 + 1;
                     // Relative: months up to and including this one are next year.
-                    let year = if Datetime::time_relative() && t.m >= month { t.y + 1 } else { t.y };
+                    let year = if Datetime::time_relative() && t.m >= month {
+                        t.y + 1
+                    } else {
+                        t.y
+                    };
                     for spelling in spellings {
                         cases.push((*spelling, Datetime::from_ymd(year, month, 1)._date));
                     }
@@ -5104,7 +5595,10 @@ mod tests {
                     let n = k as i32 + 1;
                     let delta = if Datetime::time_relative() && n <= t.d {
                         1
-                    } else if !Datetime::time_relative() && t.d < n && n <= Datetime::days_in_month(t.y, t.m) {
+                    } else if !Datetime::time_relative()
+                        && t.d < n
+                        && n <= Datetime::days_in_month(t.y, t.m)
+                    {
                         -1
                     } else {
                         0
@@ -5152,7 +5646,10 @@ mod tests {
             // Outside the table: the anonymous Gregorian algorithm (checked
             // against known dates by `easter_dates`).
             let dt = Datetime::new();
-            let mut t = Tm { tm_year: year - 1900, ..Tm::default() };
+            let mut t = Tm {
+                tm_year: year - 1900,
+                ..Tm::default()
+            };
             dt.easter(&mut t);
             (year, t.tm_mon + 1, t.tm_mday)
         }
@@ -5235,7 +5732,11 @@ mod tests {
                     .map(|&(input, hh, mm, ss)| {
                         // timeRelative: a time already past today is tomorrow.
                         let calc = hh * 3600 + mm * 60 + ss;
-                        let days = if Datetime::time_relative() && calc < t.secs { 1 } else { 0 };
+                        let days = if Datetime::time_relative() && calc < t.secs {
+                            1
+                        } else {
+                            0
+                        };
                         (input, local_at(t.y, t.m, t.d, days, hh, mm, ss))
                     })
                     .collect();
@@ -5268,18 +5769,74 @@ mod tests {
             ] {
                 let (ok, start, _) = parse_at(input);
                 assert!(ok, "{label}: Datetime::parse (\"{input}\") --> true");
-                assert_eq!(start, cursor, "{label}: Datetime::parse (\"{input}\") --> []");
+                assert_eq!(
+                    start, cursor,
+                    "{label}: Datetime::parse (\"{input}\") --> []"
+                );
             }
 
             for input in [
-                "nowadays", "now7", "tomorrov", "yesteryear", "yest7", "to", "ye", "TODAY", "Now", "sodx", "sod7",
-                "eoww2", "sowx", "la", "lat3", "so", "su", "ju", "jan:", "jan=", "mon:", "mon=", "mo", "0th",
-                "32nd", "1th", "2th", "3th", "11st", "12nd", "13rd", "21th", "1st5", "1stx", "1s", "easterx",
-                "eastermondays", "midsommarx", "juhannusx", "pentecost2", "8", "13pm", "25am", "99am", "123am",
-                "8:3", "8:30:75", "8amx", "8am:", "8am-", "8am+1d", "8:30-", "8:30+", "25:00", "8:60",
+                "nowadays",
+                "now7",
+                "tomorrov",
+                "yesteryear",
+                "yest7",
+                "to",
+                "ye",
+                "TODAY",
+                "Now",
+                "sodx",
+                "sod7",
+                "eoww2",
+                "sowx",
+                "la",
+                "lat3",
+                "so",
+                "su",
+                "ju",
+                "jan:",
+                "jan=",
+                "mon:",
+                "mon=",
+                "mo",
+                "0th",
+                "32nd",
+                "1th",
+                "2th",
+                "3th",
+                "11st",
+                "12nd",
+                "13rd",
+                "21th",
+                "1st5",
+                "1stx",
+                "1s",
+                "easterx",
+                "eastermondays",
+                "midsommarx",
+                "juhannusx",
+                "pentecost2",
+                "8",
+                "13pm",
+                "25am",
+                "99am",
+                "123am",
+                "8:3",
+                "8:30:75",
+                "8amx",
+                "8am:",
+                "8am-",
+                "8am+1d",
+                "8:30-",
+                "8:30+",
+                "25:00",
+                "8:60",
             ] {
                 let (ok, start, _) = parse_at(input);
-                assert!(!ok, "{label}: Datetime::parse negative '{input}' --> fail (cursor {start})");
+                assert!(
+                    !ok,
+                    "{label}: Datetime::parse negative '{input}' --> fail (cursor {start})"
+                );
             }
         });
     }
@@ -5291,10 +5848,16 @@ mod tests {
 
             Datetime::set_minimum_match_length(4);
             for input in ["yes", "tod", "tom", "sun", "jan", "lat"] {
-                assert!(!parse_at(input).0, "minimumMatchLength=4 '{input}' --> fail");
+                assert!(
+                    !parse_at(input).0,
+                    "minimumMatchLength=4 '{input}' --> fail"
+                );
             }
             for input in ["yest", "toda", "tomo", "sund", "janu", "late", "some"] {
-                assert!(parse_at(input).0, "minimumMatchLength=4 '{input}' --> success");
+                assert!(
+                    parse_at(input).0,
+                    "minimumMatchLength=4 '{input}' --> success"
+                );
             }
             // 'som' is the start of the month, never 'someday' (which needs 4).
             let rows = same_second(|| {
@@ -5306,7 +5869,10 @@ mod tests {
             Datetime::set_minimum_match_length(2);
             let rows = same_second(|| {
                 let t = today();
-                rows_of(vec![("to", midnight(t.y, t.m, t.d, 0)), ("ye", midnight(t.y, t.m, t.d, -1))])
+                rows_of(vec![
+                    ("to", midnight(t.y, t.m, t.d, 0)),
+                    ("ye", midnight(t.y, t.m, t.d, -1)),
+                ])
             });
             check_rows("minimumMatchLength=2", &rows);
 
@@ -5332,15 +5898,26 @@ mod tests {
             for input in ["foo bar", "nowhere", "1stx"] {
                 let mut dt = Datetime::new();
                 let mut pig = Pig::new(input);
-                assert!(!dt.parse_named(&mut pig), "parse_named ('{input}') --> false");
-                assert_eq!(pig.cursor(), 0, "parse_named ('{input}') restores the cursor");
+                assert!(
+                    !dt.parse_named(&mut pig),
+                    "parse_named ('{input}') --> false"
+                );
+                assert_eq!(
+                    pig.cursor(),
+                    0,
+                    "parse_named ('{input}') restores the cursor"
+                );
             }
 
             let mut dt = Datetime::new();
             let mut pig = Pig::new("xx today");
             pig.skip_n(3);
             assert!(dt.parse_named(&mut pig));
-            assert_eq!(pig.cursor(), 8, "parse_named parses from the current cursor");
+            assert_eq!(
+                pig.cursor(),
+                8,
+                "parse_named parses from the current cursor"
+            );
 
             // Phrases are tokenized but the phrase rule is disabled upstream.
             let mut pig = Pig::new("4th thursday in november");

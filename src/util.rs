@@ -128,7 +128,11 @@ pub fn uuid() -> String {
 /// Byte offset of the next `delimiter` in `haystack` at or after `from`
 /// (C++ `std::string::find (char, pos)`; `None` is `npos`).
 fn find_byte(haystack: &[u8], delimiter: u8, from: usize) -> Option<usize> {
-    haystack.get(from..)?.iter().position(|&b| b == delimiter).map(|p| p + from)
+    haystack
+        .get(from..)?
+        .iter()
+        .position(|&b| b == delimiter)
+        .map(|p| p + from)
 }
 
 /// The C++ `char` value of `delimiter`. C++ takes a single byte, so only an
@@ -263,7 +267,9 @@ pub fn set_header_underline(context: &mut Context, table: &mut Table) -> Result<
         table.intra_color_odd(alternate);
 
         if context.config.get_boolean("fontunderline") {
-            table.color_header(Color::parse(&("underline ".to_string() + &context.config.get("color.label")))?);
+            table.color_header(Color::parse(
+                &("underline ".to_string() + &context.config.get("color.label")),
+            )?);
         } else {
             table.color_header(Color::parse(&context.config.get("color.label"))?);
             table.underline_headers();
@@ -316,13 +322,17 @@ mod tests {
 
     impl UnitTest {
         fn new() -> Self {
-            UnitTest { counter: 0, failures: Vec::new() }
+            UnitTest {
+                counter: 0,
+                failures: Vec::new(),
+            }
         }
 
         fn ok(&mut self, expression: bool, name: &str) {
             self.counter += 1;
             if !expression {
-                self.failures.push(format!("not ok {} - {}", self.counter, name));
+                self.failures
+                    .push(format!("not ok {} - {}", self.counter, name));
             }
         }
 
@@ -341,12 +351,10 @@ mod tests {
         }
     }
 
-    /// Assertions of util_test.cpp ported here: 1 `Task::operator==`
-    /// ("Detected changes"), 4 `indentProject` + 9 `nontrivial`. Not ported
-    /// here (they test functions deferred to later milestones): the other 5
-    /// `Task::diff` assertions (`Task::diff` is restored by milestone 7) and
-    /// the 3 `checked_add_datetime` assertions (recur.cpp, milestone 7).
-    const UTIL_TEST_ASSERTIONS: usize = 14;
+    /// Assertions of util_test.cpp ported here: 6 `Task::diff` /
+    /// `Task::operator==`, 4 `indentProject`, 9 `nontrivial` and 3
+    /// `checked_add_datetime` (recur.cpp).
+    const UTIL_TEST_ASSERTIONS: usize = 22;
 
     #[test]
     fn util_test_cpp() {
@@ -363,15 +371,48 @@ mod tests {
         right.set_int("two", 2);
         right.set_int("three", 3);
 
-        // `left.diff (right)` (milestone 7) is not computed here; the
-        // `operator==` assertion does not depend on it.
+        let right_again = right.clone();
+
+        // The C++ test runs on a default (uninitialized) Context: no columns
+        // and an empty configuration.
+        let columns = crate::columns::column::ColumnRegistry::new();
+        let config = crate::shared::configuration::Configuration::new();
+
+        let mut output = left.diff(&right, &columns, &config);
         t.ok(!(left == right), "Detected changes");
+        t.ok(
+            output.contains("Zero will be changed from '0' to '00'"),
+            "Detected change zero:0 -> zero:00",
+        );
+        t.ok(
+            output.contains("One will be deleted"),
+            "Detected deletion one:1 ->",
+        );
+        t.ok(!output.contains("Two"), "Detected no change two:2 -> two:2");
+        t.ok(
+            output.contains("Three will be set to '3'"),
+            "Detected addition -> three:3",
+        );
+
+        output = right.diff(&right_again, &columns, &config);
+        t.ok(
+            output.contains("No changes will be made"),
+            "No changes detected",
+        );
 
         // std::vector<std::string> indentProject (const std::string&, const std::string whitespace="  ",
         // char delimiter='.');
         t.is(indent_project_default(""), "", "indentProject '' -> ''");
-        t.is(indent_project_default("one"), "one", "indentProject 'one' -> 'one'");
-        t.is(indent_project_default("one.two"), "  two", "indentProject 'one.two' -> '  two'");
+        t.is(
+            indent_project_default("one"),
+            "one",
+            "indentProject 'one' -> 'one'",
+        );
+        t.is(
+            indent_project_default("one.two"),
+            "  two",
+            "indentProject 'one.two' -> '  two'",
+        );
         t.is(
             indent_project_default("one.two.three"),
             "    three",
@@ -389,8 +430,27 @@ mod tests {
         t.ok(nontrivial("  \t\ta"), "nontrivial '  \\t\\ta' -> true");
         t.ok(nontrivial("a\t\t  "), "nontrivial 'a\\t\\t  ' -> true");
 
+        // std::optional<Datetime> checked_add_datetime (Datetime& base, time_t delta);
+        let dt = crate::shared::datetime::Datetime::from_epoch(1_234_526_400);
+        let max = crate::shared::datetime::Datetime::from_epoch(i64::MAX);
+        t.ok(
+            crate::recur::checked_add_datetime(&dt, 10).is_some(),
+            "small delta",
+        );
+        t.ok(
+            crate::recur::checked_add_datetime(&dt, 0x1_0000_0000).is_none(),
+            "delta > 32bit",
+        );
+        t.ok(
+            crate::recur::checked_add_datetime(&max, 1).is_none(),
+            "huge base time",
+        );
+
         assert!(t.failures.is_empty(), "{}", t.failures.join("\n"));
-        assert_eq!(t.counter, UTIL_TEST_ASSERTIONS, "number of assertions executed");
+        assert_eq!(
+            t.counter, UTIL_TEST_ASSERTIONS,
+            "number of assertions executed"
+        );
     }
 
     #[test]
@@ -429,7 +489,10 @@ mod tests {
         assert!(extract_parents_default("").is_empty());
         assert!(extract_parents_default("one").is_empty());
         assert_eq!(extract_parents_default("one.two"), vec!["one"]);
-        assert_eq!(extract_parents_default("one.two.three"), vec!["one", "one.two"]);
+        assert_eq!(
+            extract_parents_default("one.two.three"),
+            vec!["one", "one.two"]
+        );
         assert_eq!(extract_parents_default("one.two."), vec!["one"]);
         assert!(extract_parents_default(".one").is_empty());
         assert_eq!(extract_parents("a/b/c", '/'), vec!["a", "a/b"]);
@@ -496,13 +559,23 @@ mod tests {
         // No colour, no fontunderline: underlined headers only.
         let mut expected = Table::new();
         expected.underline_headers();
-        let table = styled(&[("color", "off"), ("_forcecolor", "off"), ("fontunderline", "off")]).unwrap();
+        let table = styled(&[
+            ("color", "off"),
+            ("_forcecolor", "off"),
+            ("fontunderline", "off"),
+        ])
+        .unwrap();
         assert_eq!(dbg(&table), dbg(&expected));
 
         // No colour, fontunderline: underline colour header.
         let mut expected = Table::new();
         expected.color_header(Color::parse("underline").unwrap());
-        let table = styled(&[("color", "off"), ("_forcecolor", "off"), ("fontunderline", "on")]).unwrap();
+        let table = styled(&[
+            ("color", "off"),
+            ("_forcecolor", "off"),
+            ("fontunderline", "on"),
+        ])
+        .unwrap();
         assert_eq!(dbg(&table), dbg(&expected));
 
         // Colour, fontunderline.
@@ -545,7 +618,10 @@ mod tests {
 
         // A bad colour name is the C++ exception text.
         let err = styled(&[("_forcecolor", "on"), ("color.alternate", "nosuchcolor")]).unwrap_err();
-        assert_eq!(err.to_string(), "The color 'nosuchcolor' is not recognized.");
+        assert_eq!(
+            err.to_string(),
+            "The color 'nosuchcolor' is not recognized."
+        );
     }
 
     /// Restores the thread-local stdout-TTY override.
@@ -575,7 +651,12 @@ mod tests {
         let _lock = env_lock();
         let _tty = TtyOverride;
         let dbg = |t: &Table| format!("{t:?}");
-        let settings = [("color", "on"), ("color.alternate", "on gray4"), ("color.label", "red"), ("fontunderline", "on")];
+        let settings = [
+            ("color", "on"),
+            ("color.alternate", "on gray4"),
+            ("color.label", "red"),
+            ("fontunderline", "on"),
+        ];
 
         // color=on but stdout is not a TTY: Context::color () is false, so
         // the no-colour branch runs (and rc.color is switched off).
@@ -593,7 +674,10 @@ mod tests {
         let mut context = context_with(&settings);
         let mut table = Table::new();
         set_header_underline(&mut context, &mut table).unwrap();
-        assert_eq!(dbg(&table), dbg(&colour_table("on gray4", "underline red", false)));
+        assert_eq!(
+            dbg(&table),
+            dbg(&colour_table("on gray4", "underline red", false))
+        );
 
         let mut settings = settings.to_vec();
         settings[3] = ("fontunderline", "off");
@@ -618,7 +702,11 @@ mod tests {
             ]);
             let mut table = Table::new();
             let err = set_header_underline(&mut context, &mut table).unwrap_err();
-            assert_eq!(err.to_string(), "The color 'nosuch' is not recognized.", "{fontunderline}");
+            assert_eq!(
+                err.to_string(),
+                "The color 'nosuch' is not recognized.",
+                "{fontunderline}"
+            );
             let mut expected = Table::new();
             let alternate = Color::parse("on gray2").unwrap();
             expected.color_odd(alternate);
@@ -682,11 +770,20 @@ mod tests {
             ("color.label", "bold"),
             ("fontunderline", "on"),
         ]);
-        assert_eq!(out, rendered(colour_table("on gray2", "underline bold", false)));
-        assert!(out.contains(&Color::parse("underline bold").unwrap().colorize("ID")), "{out:?}");
+        assert_eq!(
+            out,
+            rendered(colour_table("on gray2", "underline bold", false))
+        );
+        assert!(
+            out.contains(&Color::parse("underline bold").unwrap().colorize("ID")),
+            "{out:?}"
+        );
         assert!(!out.contains("--"), "{out:?}");
         // The odd row carries the alternate colour.
-        assert!(out.contains(&Color::parse("on gray2").unwrap().colorize("1 ")), "{out:?}");
+        assert!(
+            out.contains(&Color::parse("on gray2").unwrap().colorize("1 ")),
+            "{out:?}"
+        );
 
         // Colour, no fontunderline: label colour, then a dashed underline.
         let out = render_styled(&[
@@ -699,12 +796,23 @@ mod tests {
         assert!(out.contains("--"), "{out:?}");
 
         // No colour, fontunderline: underline escape on the header only.
-        let out = render_styled(&[("color", "off"), ("_forcecolor", "off"), ("fontunderline", "on")]);
-        assert!(out.contains(&Color::parse("underline").unwrap().colorize("ID")), "{out:?}");
+        let out = render_styled(&[
+            ("color", "off"),
+            ("_forcecolor", "off"),
+            ("fontunderline", "on"),
+        ]);
+        assert!(
+            out.contains(&Color::parse("underline").unwrap().colorize("ID")),
+            "{out:?}"
+        );
         assert!(!out.contains("--"), "{out:?}");
 
         // No colour, no fontunderline: plain text with dashes, no escapes.
-        let out = render_styled(&[("color", "off"), ("_forcecolor", "off"), ("fontunderline", "off")]);
+        let out = render_styled(&[
+            ("color", "off"),
+            ("_forcecolor", "off"),
+            ("fontunderline", "off"),
+        ]);
         assert!(!out.contains('\x1b'), "{out:?}");
         assert!(out.contains("ID Name"), "{out:?}");
         assert!(out.contains("-- ----"), "{out:?}");

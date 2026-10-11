@@ -12,7 +12,8 @@
 //! term, the user tag/project/keyword/UDA coefficients and
 //! `urgency.inherit`, in C++ `float`/`double` evaluation order), the
 //! command-line modification [`Task::modify`] / [`Task::substitute`], and
-//! the later-milestone stub [`Task::diff`] (milestone 7).
+//! the change summary [`Task::diff`] (which takes the column registry and
+//! configuration that C++ `renderAttribute` reads from the Context).
 //!
 //! API mapping:
 //! * C++ statics are thread-local getter/setter pairs on [`Task`]
@@ -45,16 +46,17 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::rc::Rc;
 
-use crate::columns::column::MODIFICATION_LABEL;
+use crate::columns::column::{ColumnRegistry, MODIFICATION_LABEL};
 use crate::context::Context;
-use crate::feedback::{feedback_reserved_tags, feedback_special_tags};
+use crate::feedback::{feedback_reserved_tags, feedback_special_tags, render_attribute};
+use crate::lexer::{Lexer, Type as LexerType};
+use crate::shared::configuration::Configuration;
 use crate::shared::datetime::Datetime;
 use crate::shared::format::{format, stream_double};
 use crate::shared::json::{self, JType, JsonValue};
-use crate::lexer::{Lexer, Type as LexerType};
-use crate::shared::rx::RX;
 use crate::shared::localtime;
-use crate::shared::shared::{find_bytes_from, join, split, str_replace};
+use crate::shared::rx::RX;
+use crate::shared::shared::{find_bytes_from, join, list_diff, split, str_replace};
 use crate::variant::VariantTask;
 use crate::{Result, TwError};
 
@@ -170,7 +172,11 @@ impl TaskEnv for Context {
     }
 
     fn uda_columns(&self) -> Vec<String> {
-        self.columns.iter().filter(|(_, col)| col.is_uda()).map(|(name, _)| name.clone()).collect()
+        self.columns
+            .iter()
+            .filter(|(_, col)| col.is_uda())
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     /// C++ `TDB2::latest_id` can throw (replica errors while loading the
@@ -217,7 +223,10 @@ pub struct TaskWithEnv<'a> {
 impl<'a> TaskWithEnv<'a> {
     /// Binds `task` to `env`.
     pub fn new(task: &'a Task, env: &'a mut dyn TaskEnv) -> Self {
-        TaskWithEnv { task, env: RefCell::new(env) }
+        TaskWithEnv {
+            task,
+            env: RefCell::new(env),
+        }
     }
 
     /// The bound task.
@@ -315,7 +324,7 @@ fn c_string(text: &str) -> CString {
 }
 
 /// C `strtol (s.c_str (), nullptr, 10)` (`long` is 64-bit on LP64).
-fn c_strtol(text: &str) -> i64 {
+pub(crate) fn c_strtol(text: &str) -> i64 {
     let text = c_string(text);
     // SAFETY: `text` is a valid NUL-terminated string and a null `endptr` is
     // permitted.
@@ -643,7 +652,10 @@ impl Task {
             }
         }
 
-        self.data.insert("uuid".to_string(), task.get_uuid().as_hyphenated().to_string());
+        self.data.insert(
+            "uuid".to_string(),
+            task.get_uuid().as_hyphenated().to_string(),
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
@@ -664,7 +676,10 @@ impl Task {
             // for compatibility, parse `w` as pending; Task::getStatus will
             // apply the virtual waiting status if appropriate
             Some(b'w') => Ok(Status::Pending),
-            _ => Err(TwError::Message(format("The status '{1}' is not valid.", &[&input]))),
+            _ => Err(TwError::Message(format(
+                "The status '{1}' is not valid.",
+                &[&input],
+            ))),
         }
     }
 
@@ -707,7 +722,11 @@ impl Task {
     pub fn set_status(&mut self, status: Status) {
         // the 'waiting' status is a virtual version of 'pending', so translate
         // that back to 'pending' here
-        let status = if status == Status::Waiting { Status::Pending } else { status };
+        let status = if status == Status::Waiting {
+            Status::Pending
+        } else {
+            status
+        };
 
         self.set("status", Task::status_to_text(status));
 
@@ -886,7 +905,8 @@ impl Task {
     pub fn is_ready(&self) -> Result<bool> {
         Ok(self.get_status()? == Status::Pending
             && !self.is_blocked
-            && (!self.has("scheduled") || named_date("now") > Datetime::from_epoch(self.get_date("scheduled"))))
+            && (!self.has("scheduled")
+                || named_date("now") > Datetime::from_epoch(self.get_date("scheduled"))))
     }
 
     /// Whether the task has a `due` and is neither completed nor deleted
@@ -906,7 +926,10 @@ impl Task {
     pub fn is_due(&self, env: &mut dyn TaskEnv) -> Result<bool> {
         if self.has_open_due()? {
             let state = self.get_date_state("due", env);
-            if state == DateState::AfterToday || state == DateState::EarlierToday || state == DateState::LaterToday {
+            if state == DateState::AfterToday
+                || state == DateState::EarlierToday
+                || state == DateState::LaterToday
+            {
                 return Ok(true);
             }
         }
@@ -916,7 +939,8 @@ impl Task {
 
     /// C++ `bool Task::is_dueyesterday () const`.
     pub fn is_dueyesterday(&self) -> Result<bool> {
-        Ok(self.has_open_due()? && named_date("yesterday").same_day(&Datetime::from_epoch(self.get_date("due"))))
+        Ok(self.has_open_due()?
+            && named_date("yesterday").same_day(&Datetime::from_epoch(self.get_date("due"))))
     }
 
     /// C++ `bool Task::is_duetoday () const`.
@@ -933,7 +957,8 @@ impl Task {
 
     /// C++ `bool Task::is_duetomorrow () const`.
     pub fn is_duetomorrow(&self) -> Result<bool> {
-        Ok(self.has_open_due()? && named_date("tomorrow").same_day(&Datetime::from_epoch(self.get_date("due"))))
+        Ok(self.has_open_due()?
+            && named_date("tomorrow").same_day(&Datetime::from_epoch(self.get_date("due"))))
     }
 
     /// `due >= Datetime (start) && due <= Datetime (end)` for an open due.
@@ -994,7 +1019,10 @@ impl Task {
         if self.has("due") {
             let status = self.get_status()?;
 
-            if status != Status::Completed && status != Status::Deleted && status != Status::Recurring {
+            if status != Status::Completed
+                && status != Status::Deleted
+                && status != Status::Recurring
+            {
                 let state = self.get_date_state("due", env);
                 if state == DateState::EarlierToday || state == DateState::BeforeToday {
                     return Ok(true);
@@ -1024,7 +1052,10 @@ impl Task {
 
     /// C++ `int Task::getAnnotationCount () const`.
     pub fn get_annotation_count(&self) -> i32 {
-        self.data.keys().filter(|name| name.starts_with("annotation_")).count() as i32
+        self.data
+            .keys()
+            .filter(|name| name.starts_with("annotation_"))
+            .count() as i32
     }
 
     /// C++ `bool Task::hasAnnotations () const`: from `annotation_count`.
@@ -1078,7 +1109,9 @@ impl Task {
         self.remove_annotations();
 
         for (name, value) in annotations {
-            self.data.entry(name.clone()).or_insert_with(|| value.clone());
+            self.data
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
         }
 
         self.annotation_count = annotations.len() as i32;
@@ -1097,7 +1130,11 @@ impl Task {
     /// C++ `std::vector<std::string> Task::getDependencyUUIDs () const`: in
     /// attribute order.
     pub fn get_dependency_uuids(&self) -> Vec<String> {
-        self.data.keys().filter(|name| Task::is_dep_attr(name)).map(|name| Task::attr2dep(name)).collect()
+        self.data
+            .keys()
+            .filter(|name| Task::is_dep_attr(name))
+            .map(|name| Task::attr2dep(name))
+            .collect()
     }
 
     /// C++ `void Task::fixDependsAttribute ()`: fix up the old `depends`
@@ -1117,7 +1154,10 @@ impl Task {
 
     /// C++ `int Task::getTagCount () const`.
     pub fn get_tag_count(&self) -> i32 {
-        self.data.keys().filter(|name| Task::is_tag_attr(name)).count() as i32
+        self.data
+            .keys()
+            .filter(|name| Task::is_tag_attr(name))
+            .count() as i32
     }
 
     /// C++ `bool Task::hasTag (const std::string&) const`: synthetic
@@ -1200,8 +1240,16 @@ impl Task {
 
         // edit in-place, determining which should be
         // added and which should be removed
-        let to_add: Vec<String> = tags.iter().filter(|tag| !existing.contains(tag)).cloned().collect();
-        let to_remove: Vec<String> = self.get_tags().into_iter().filter(|tag| !tags.contains(tag)).collect();
+        let to_add: Vec<String> = tags
+            .iter()
+            .filter(|tag| !existing.contains(tag))
+            .cloned()
+            .collect();
+        let to_remove: Vec<String> = self
+            .get_tags()
+            .into_iter()
+            .filter(|tag| !tags.contains(tag))
+            .collect();
 
         for tag in &to_remove {
             self.remove_tag(tag);
@@ -1216,7 +1264,11 @@ impl Task {
     /// C++ `std::vector<std::string> Task::getTags () const`: in attribute
     /// order.
     pub fn get_tags(&self) -> Vec<String> {
-        self.data.keys().filter(|name| Task::is_tag_attr(name)).map(|name| Task::attr2tag(name)).collect()
+        self.data
+            .keys()
+            .filter(|name| Task::is_tag_attr(name))
+            .map(|name| Task::attr2tag(name))
+            .collect()
     }
 
     /// C++ `void Task::removeTag (const std::string&)`.
@@ -1290,7 +1342,11 @@ impl Task {
         self.data
             .keys()
             .filter(|name| !env.has_column(name))
-            .filter(|name| !(Task::is_annotation_attr(name) || Task::is_tag_attr(name) || Task::is_dep_attr(name)))
+            .filter(|name| {
+                !(Task::is_annotation_attr(name)
+                    || Task::is_tag_attr(name)
+                    || Task::is_dep_attr(name))
+            })
             .cloned()
             .collect()
     }
@@ -1329,7 +1385,9 @@ impl Task {
 /// name and the call crashes; here an unregistered column validates nothing
 /// (`false`). `Context::initialize` always registers the built-in columns.
 fn column_validate(ctx: &Context, name: &str, value: &str) -> bool {
-    ctx.columns.get(name).is_some_and(|column| column.validate(value))
+    ctx.columns
+        .get(name)
+        .is_some_and(|column| column.validate(value))
 }
 
 impl Task {
@@ -1355,7 +1413,10 @@ impl Task {
         // can give an more natural error message containing the id the user
         // provided.
         if self.has_dependency(&uuid) {
-            ctx.footnote(&format("Task {1} already depends on task {2}.", &[&self.id, &depid]));
+            ctx.footnote(&format(
+                "Task {1} already depends on task {2}.",
+                &[&self.id, &depid],
+            ));
             return Ok(());
         }
 
@@ -1370,11 +1431,16 @@ impl Task {
     /// been stored when that is raised).
     pub fn add_dependency(&mut self, ctx: &mut Context, uuid: &str) -> Result<()> {
         if uuid == self.get_ref("uuid") {
-            return Err(TwError::Message("A task cannot be dependent on itself.".to_string()));
+            return Err(TwError::Message(
+                "A task cannot be dependent on itself.".to_string(),
+            ));
         }
 
         if self.has_dependency(uuid) {
-            ctx.footnote(&format("Task {1} already depends on task {2}.", &[&self.get("uuid"), &uuid]));
+            ctx.footnote(&format(
+                "Task {1} already depends on task {2}.",
+                &[&self.get("uuid"), &uuid],
+            ));
             return Ok(());
         }
 
@@ -1383,7 +1449,9 @@ impl Task {
 
         // Prevent circular dependencies.
         if crate::dependency::dependency_is_circular(&mut ctx.tdb2, self)? {
-            return Err(TwError::Message("Circular dependency detected and disallowed.".to_string()));
+            return Err(TwError::Message(
+                "Circular dependency detected and disallowed.".to_string(),
+            ));
         }
 
         self.recalc_urgency = true;
@@ -1485,7 +1553,8 @@ impl Task {
         let mut blocked = Vec::new();
         for it in tdb2.pending_tasks()? {
             let status = it.get_status()?;
-            if status != Status::Completed && status != Status::Deleted && it.has_dependency(&uuid) {
+            if status != Status::Completed && status != Status::Deleted && it.has_dependency(&uuid)
+            {
                 blocked.push(it.clone());
             }
         }
@@ -1507,14 +1576,20 @@ impl Task {
     pub fn validate_add(&self, _ctx: &mut Context) -> Result<()> {
         // There is no fixing a missing description.
         if !self.has("description") {
-            return Err(TwError::Message("A task must have a description.".to_string()));
+            return Err(TwError::Message(
+                "A task must have a description.".to_string(),
+            ));
         } else if self.get_ref("description").is_empty() {
-            return Err(TwError::Message("Cannot add a task that is blank.".to_string()));
+            return Err(TwError::Message(
+                "Cannot add a task that is blank.".to_string(),
+            ));
         }
 
         // Cannot have an old-style recur frequency with no due date - when would it recur?
         if self.has("recur") && (!self.has("due") || self.get_ref("due").is_empty()) {
-            return Err(TwError::Message("A recurring task must also have a 'due' date.".to_string()));
+            return Err(TwError::Message(
+                "A recurring task must also have a 'due' date.".to_string(),
+            ));
         }
 
         Ok(())
@@ -1571,7 +1646,8 @@ impl Task {
         // drops the `parent` condition.)
 
         // Tasks with a wait: date get a special status.
-        else if status == Status::Pending && self.has("wait") && !self.get_ref("wait").is_empty() {
+        else if status == Status::Pending && self.has("wait") && !self.get_ref("wait").is_empty()
+        {
             status = Status::Waiting;
         }
         // By default, tasks are pending.
@@ -1612,13 +1688,19 @@ impl Task {
         if apply_default && (!self.has("parent") || self.get_ref("parent").is_empty()) {
             // Override with default.project, if not specified.
             let default_project = Task::default_project();
-            if !default_project.is_empty() && !self.has("project") && column_validate(ctx, "project", &default_project) {
+            if !default_project.is_empty()
+                && !self.has("project")
+                && column_validate(ctx, "project", &default_project)
+            {
                 self.set("project", &default_project);
             }
 
             // Override with default.due, if not specified.
             let default_due = Task::default_due();
-            if !default_due.is_empty() && !self.has("due") && column_validate(ctx, "due", &default_due) {
+            if !default_due.is_empty()
+                && !self.has("due")
+                && column_validate(ctx, "due", &default_due)
+            {
                 let dur = crate::shared::duration::Duration::from_string(&default_due);
                 if dur.to_time_t() != 0 {
                     self.set_int("due", (Datetime::new() + dur.to_time_t()).to_epoch());
@@ -1629,12 +1711,18 @@ impl Task {
 
             // Override with default.scheduled, if not specified.
             let default_scheduled = Task::default_scheduled();
-            if !default_scheduled.is_empty() && !self.has("scheduled") && column_validate(ctx, "scheduled", &default_scheduled) {
+            if !default_scheduled.is_empty()
+                && !self.has("scheduled")
+                && column_validate(ctx, "scheduled", &default_scheduled)
+            {
                 let dur = crate::shared::duration::Duration::from_string(&default_scheduled);
                 if dur.to_time_t() != 0 {
                     self.set_int("scheduled", (Datetime::new() + dur.to_time_t()).to_epoch());
                 } else {
-                    self.set_int("scheduled", Datetime::from_string(&default_scheduled, "")?.to_epoch());
+                    self.set_int(
+                        "scheduled",
+                        Datetime::from_string(&default_scheduled, "")?.to_epoch(),
+                    );
                 }
             }
 
@@ -1694,7 +1782,10 @@ impl Task {
                 if !p.parse(&value, &mut i) {
                     // (C++: the ideal location to map unsupported old recurrence
                     // periods to supported values.)
-                    ctx.footnote(&format("Warning: The recurrence value '{1}' is not valid.", &[&value]));
+                    ctx.footnote(&format(
+                        "Warning: The recurrence value '{1}' is not valid.",
+                        &[&value],
+                    ));
                     self.remove("recur");
                 }
             }
@@ -1760,7 +1851,11 @@ fn cpp_substr_is(s: &str, pos: usize, lit: &str) -> bool {
 /// conditional has type `double` (because of the `0.0` literal), so the sum
 /// is formed in double and narrowed back to `float`.
 fn add_term(value: f32, term: impl FnOnce() -> f32, coefficient: f32) -> f32 {
-    let addend: f64 = if coefficient.abs() > EPSILON { (term() * coefficient) as f64 } else { 0.0 };
+    let addend: f64 = if coefficient.abs() > EPSILON {
+        (term() * coefficient) as f64
+    } else {
+        0.0
+    };
     (value as f64 + addend) as f32
 }
 
@@ -1796,16 +1891,56 @@ impl Task {
     /// status on a pending task where C++ `getStatus` throws).
     pub fn urgency_c(&self, ctx: &mut Context) -> Result<f32> {
         let mut value: f32 = 0.0;
-        value = add_term(value, || self.urgency_project(), Task::urgency_project_coefficient());
-        value = add_term(value, || self.urgency_active(), Task::urgency_active_coefficient());
-        value = add_term(value, || self.urgency_scheduled(), Task::urgency_scheduled_coefficient());
-        value = add_term(value, || self.urgency_waiting(), Task::urgency_waiting_coefficient());
-        value = add_term(value, || self.urgency_blocked(), Task::urgency_blocked_coefficient());
-        value = add_term(value, || self.urgency_annotations(), Task::urgency_annotations_coefficient());
-        value = add_term(value, || self.urgency_tags(), Task::urgency_tags_coefficient());
-        value = add_term(value, || self.urgency_due(), Task::urgency_due_coefficient());
-        value = add_term(value, || self.urgency_blocking(), Task::urgency_blocking_coefficient());
-        value = add_term(value, || self.urgency_age(), Task::urgency_age_coefficient());
+        value = add_term(
+            value,
+            || self.urgency_project(),
+            Task::urgency_project_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_active(),
+            Task::urgency_active_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_scheduled(),
+            Task::urgency_scheduled_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_waiting(),
+            Task::urgency_waiting_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_blocked(),
+            Task::urgency_blocked_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_annotations(),
+            Task::urgency_annotations_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_tags(),
+            Task::urgency_tags_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_due(),
+            Task::urgency_due_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_blocking(),
+            Task::urgency_blocking_coefficient(),
+        );
+        value = add_term(
+            value,
+            || self.urgency_age(),
+            Task::urgency_age_coefficient(),
+        );
 
         value = self.urgency_user_terms(value, ctx)?;
 
@@ -1941,8 +2076,8 @@ impl Task {
     /// As [`Task::get_blocked_tasks`].
     pub fn urgency_inherit(&self, ctx: &mut Context) -> Result<f32> {
         let mut v = f32::MIN; // -FLT_MAX
-        // Calling getBlockedTasks is rather expensive.
-        // It is called recursively for each dependency in the chain here.
+                              // Calling getBlockedTasks is rather expensive.
+                              // It is called recursively for each dependency in the chain here.
         for mut task in self.get_blocked_tasks(&mut ctx.tdb2)? {
             // Find highest urgency in all blocked tasks.
             v = cpp_max(v, task.urgency(ctx)?);
@@ -2125,7 +2260,12 @@ impl Task {
     ///   modification was made.
     /// * Whatever the column `modify`, `feedback_reserved_tags`,
     ///   `removeDependency`, [`Task::substitute`] or `getStatus` throw.
-    pub fn modify(&mut self, ctx: &mut Context, mod_type: ModType, text_required: bool) -> Result<()> {
+    pub fn modify(
+        &mut self,
+        ctx: &mut Context,
+        mod_type: ModType,
+        text_required: bool,
+    ) -> Result<()> {
         // while reading the parse tree, consider DOM references in the context of
         // this task
         let previous = ctx.current_task.replace(Rc::new(self.clone()));
@@ -2135,7 +2275,12 @@ impl Task {
     }
 
     /// The body of [`Task::modify`], run with `ctx.current_task` bound.
-    fn modify_in_context(&mut self, ctx: &mut Context, mod_type: ModType, text_required: bool) -> Result<()> {
+    fn modify_in_context(
+        &mut self,
+        ctx: &mut Context,
+        mod_type: ModType,
+        text_required: bool,
+    ) -> Result<()> {
         let label = MODIFICATION_LABEL;
 
         // Need this for later comparison.
@@ -2216,7 +2361,11 @@ impl Task {
                 // Perform description/annotation substitution.
                 else if a.lextype == LexerType::substitution {
                     ctx.debug(&format!("{label}substitute {}", a.attribute("raw")));
-                    self.substitute(&a.attribute("from"), &a.attribute("to"), &a.attribute("flags"))?;
+                    self.substitute(
+                        &a.attribute("from"),
+                        &a.attribute("to"),
+                        &a.attribute("flags"),
+                    )?;
                     mods = true;
                 }
                 // Tags need special handling because they are essentially a vector stored
@@ -2329,8 +2478,10 @@ impl Task {
         // Get the data to modify.
         let mut description = self.get("description").into_bytes();
         let annotations = self.get_annotations();
-        let mut anno_bytes: Vec<(String, Vec<u8>)> =
-            annotations.into_iter().map(|(k, v)| (k, v.into_bytes())).collect();
+        let mut anno_bytes: Vec<(String, Vec<u8>)> = annotations
+            .into_iter()
+            .map(|(k, v)| (k, v.into_bytes()))
+            .collect();
 
         // Count the changes, so we know whether to proceed to annotations, after
         // modifying description.
@@ -2404,7 +2555,12 @@ impl Task {
                     break;
                 };
                 pos = found;
-                cpp_string_replace(&mut description, pos as i64 + skew, from_b.len() as i64, to_b)?;
+                cpp_string_replace(
+                    &mut description,
+                    pos as i64 + skew,
+                    from_b.len() as i64,
+                    to_b,
+                )?;
                 skew += to_b.len() as i64 - from_b.len() as i64;
 
                 pos += to_b.len();
@@ -2452,8 +2608,10 @@ impl Task {
 
         if changes != 0 {
             self.set("description", &bytes_to_string(description));
-            let annotations: BTreeMap<String, String> =
-                anno_bytes.into_iter().map(|(k, v)| (k, bytes_to_string(v))).collect();
+            let annotations: BTreeMap<String, String> = anno_bytes
+                .into_iter()
+                .map(|(k, v)| (k, bytes_to_string(v)))
+                .collect();
             self.set_annotations(&annotations);
             self.recalc_urgency = true;
         }
@@ -2462,20 +2620,109 @@ impl Task {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // Later-milestone stubs.
+    /// C++ `std::string Task::diff (const Task& after) const`: compares this
+    /// task to `after` and summarizes the differences for display, in the
+    /// future tense ("Foo will be set to ..").
+    ///
+    /// `columns` and `config` are what C++ `renderAttribute` reads from
+    /// `Context::getContext ()` (the column registry and `rc.dateformat`).
+    pub fn diff(&self, after: &Task, columns: &ColumnRegistry, config: &Configuration) -> String {
+        // Attributes are all there is, so figure the different attribute names
+        // between this (before) and after.
+        let before_atts: Vec<String> = self.data.keys().cloned().collect();
+        let after_atts: Vec<String> = after.data.keys().cloned().collect();
 
-    /// C++ `std::string Task::diff (const Task& after) const`: summarizes the
-    /// differences to `after` for display, in the future tense.
-    ///
-    /// Restored by milestone 7. Nothing calls it yet.
-    ///
-    /// # Errors
-    /// Always `TwError::NotImplemented("Task::diff")` until milestone 7.
-    pub fn diff(&self, _after: &Task) -> Result<String> {
-        Err(TwError::NotImplemented("Task::diff".into()))
+        let (before_only, after_only) = list_diff(&before_atts, &after_atts);
+
+        // Now start generating a description of the differences.
+        let mut out = String::new();
+        for name in &before_only {
+            if Task::is_annotation_attr(name) {
+                out += "  - ";
+                out += &format("Annotation {1} will be removed.", &[name]);
+                out += "\n";
+            } else if Task::is_tag_attr(name) {
+                out += "  - ";
+                out += &format("Tag {1} will be removed.", &[&Task::attr2tag(name)]);
+                out += "\n";
+            } else if Task::is_dep_attr(name) {
+                out += "  - ";
+                out += &format(
+                    "Dependency on {1} will be removed.",
+                    &[&Task::attr2dep(name)],
+                );
+                out += "\n";
+            } else if name == "depends" || name == "tags" {
+                // do nothing for legacy attributes
+            } else {
+                out += "  - ";
+                out += &format("{1} will be deleted.", &[&Lexer::uc_first(name)]);
+                out += "\n";
+            }
+        }
+
+        for name in &after_only {
+            if Task::is_annotation_attr(name) {
+                out += &format("Annotation of {1} will be added.\n", &[&after.get(name)]);
+            } else if Task::is_tag_attr(name) {
+                out += &format("Tag {1} will be added.\n", &[&Task::attr2tag(name)]);
+            } else if Task::is_dep_attr(name) {
+                out += &format(
+                    "Dependency on {1} will be added.\n",
+                    &[&Task::attr2dep(name)],
+                );
+            } else if name == "depends" || name == "tags" {
+                // do nothing for legacy attributes
+            } else {
+                out += "  - ";
+                out += &format(
+                    "{1} will be set to '{2}'.",
+                    &[
+                        &Lexer::uc_first(name),
+                        &render_attribute(columns, config, name, &after.get(name), ""),
+                    ],
+                );
+                out += "\n";
+            }
+        }
+
+        for name in &before_atts {
+            // Ignore UUID differences, and find values that changed, but are not also
+            // in the beforeOnly and afterOnly lists, which have been handled above..
+            if name != "uuid"
+                && self.get(name) != after.get(name)
+                && !before_only.contains(name)
+                && !after_only.contains(name)
+            {
+                if name == "depends" || name == "tags" {
+                    // do nothing for legacy attributes
+                } else if Task::is_tag_attr(name) || Task::is_dep_attr(name) {
+                    // ignore new attributes
+                } else if Task::is_annotation_attr(name) {
+                    out += &format("Annotation will be changed to {1}.\n", &[&after.get(name)]);
+                } else {
+                    out += "  - ";
+                    out += &format(
+                        "{1} will be changed from '{2}' to '{3}'.",
+                        &[
+                            &Lexer::uc_first(name),
+                            &render_attribute(columns, config, name, &self.get(name), ""),
+                            &render_attribute(columns, config, name, &after.get(name), ""),
+                        ],
+                    );
+                    out += "\n";
+                }
+            }
+        }
+
+        // Shouldn't just say nothing.
+        if out.is_empty() {
+            out += "  - No changes will be made.\n";
+        }
+
+        out
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // Parsing (JSON, legacy) and JSON composition.
@@ -2499,7 +2746,9 @@ fn cpp_find(haystack: &str, needle: &str, pos: usize) -> usize {
         return NPOS;
     }
 
-    (pos..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle).unwrap_or(NPOS)
+    (pos..=hay.len() - needle.len())
+        .find(|&i| &hay[i..i + needle.len()] == needle)
+        .unwrap_or(NPOS)
 }
 
 /// C++ `i.second->dump ()` followed by `Lexer::dequote (text)`.
@@ -2638,7 +2887,11 @@ impl Task {
                 else if type_ == "date" {
                     let text = dequoted_dump(value);
                     let d = Datetime::from_string(&text, "")?;
-                    let epoch = if text.is_empty() { String::new() } else { d.to_epoch_string() };
+                    let epoch = if text.is_empty() {
+                        String::new()
+                    } else {
+                        d.to_epoch_string()
+                    };
                     self.set(name, &epoch);
                 }
                 // Tags are an array of JSON strings.
@@ -2670,7 +2923,12 @@ impl Task {
                     if deps_str.starts_with('[') && deps_str.ends_with(']') {
                         deps_str = deps_str
                             .chars()
-                            .filter(|&c| c.is_ascii_digit() || ('a'..='f').contains(&c) || c == ',' || c == '-')
+                            .filter(|&c| {
+                                c.is_ascii_digit()
+                                    || ('a'..='f').contains(&c)
+                                    || c == ','
+                                    || c == '-'
+                            })
                             .collect();
                     }
                     let uuids = split(&deps_str, ',');
@@ -2699,7 +2957,10 @@ impl Task {
 
                     // Fail if 'annotations' is not an array
                     let Some(atts) = value.as_array() else {
-                        return Err(TwError::Message(format("Annotations is malformed: {1}", &[&value.dump()])));
+                        return Err(TwError::Message(format(
+                            "Annotations is malformed: {1}",
+                            &[&value.dump()],
+                        )));
                     };
 
                     for annotation in atts {
@@ -2729,7 +2990,9 @@ impl Task {
                             key = format!("annotation_{ann_timestamp}");
                         }
 
-                        annos.entry(key).or_insert_with(|| json::decode(&raw_string(what)));
+                        annos
+                            .entry(key)
+                            .or_insert_with(|| json::decode(&raw_string(what)));
                     }
 
                     self.set_annotations(&annos);
@@ -2859,7 +3122,8 @@ impl Task {
         //   X [tags] [attributes] description\n
         //
         // Scan for the first character being either the bracket or X.
-        else if line.starts_with("X [") || (byte_at(b, 0) == b'[' && last != b']' && b.len() > 3) {
+        else if line.starts_with("X [") || (byte_at(b, 0) == b'[' && last != b']' && b.len() > 3)
+        {
             1
         }
         // Version 5?
@@ -2887,7 +3151,11 @@ impl Task {
     /// Those of [`Task::urgency`] (when decorating) and of
     /// [`Task::compose_json_plain`].
     pub fn compose_json(&mut self, ctx: &mut Context, decorate: bool) -> Result<String> {
-        let urgency = if decorate { Some(self.urgency(ctx)?) } else { None };
+        let urgency = if decorate {
+            Some(self.urgency(ctx)?)
+        } else {
+            None
+        };
         self.compose_json_impl(decorate, urgency)
     }
 
@@ -2948,7 +3216,11 @@ impl Task {
                     }
 
                     out.push('"');
-                    out.push_str(if name == "modification" { "modified" } else { name });
+                    out.push_str(if name == "modification" {
+                        "modified"
+                    } else {
+                        name
+                    });
                     out.push_str("\":\"");
                     // Date was deleted, do not export parsed empty string
                     out.push_str(&d.to_iso());
@@ -3084,7 +3356,12 @@ mod tests {
     }
 
     fn env() -> TestEnv {
-        TestEnv { due: 7, columns: Vec::new(), udas: Vec::new(), latest: 0 }
+        TestEnv {
+            due: 7,
+            columns: Vec::new(),
+            udas: Vec::new(),
+            latest: 0,
+        }
     }
 
     fn now() -> i64 {
@@ -3188,21 +3465,57 @@ mod tests {
         Task::set_search_case_sensitive(false);
         Task::set_regex(true);
         Task::set_attributes(BTreeMap::from([("due".to_string(), "date".to_string())]));
-        Task::set_coefficients(BTreeMap::from([("urgency.user.tag.x.coefficient".to_string(), 1.5f32)]));
-        Task::set_custom_order(BTreeMap::from([("priority".to_string(), vec!["L".to_string()])]));
+        Task::set_coefficients(BTreeMap::from([(
+            "urgency.user.tag.x.coefficient".to_string(),
+            1.5f32,
+        )]));
+        Task::set_custom_order(BTreeMap::from([(
+            "priority".to_string(),
+            vec!["L".to_string()],
+        )]));
         type Setter = fn(f32);
         type Getter = fn() -> f32;
         let setters: [(Setter, Getter); 11] = [
-            (Task::set_urgency_project_coefficient, Task::urgency_project_coefficient),
-            (Task::set_urgency_active_coefficient, Task::urgency_active_coefficient),
-            (Task::set_urgency_scheduled_coefficient, Task::urgency_scheduled_coefficient),
-            (Task::set_urgency_waiting_coefficient, Task::urgency_waiting_coefficient),
-            (Task::set_urgency_blocked_coefficient, Task::urgency_blocked_coefficient),
-            (Task::set_urgency_annotations_coefficient, Task::urgency_annotations_coefficient),
-            (Task::set_urgency_tags_coefficient, Task::urgency_tags_coefficient),
-            (Task::set_urgency_due_coefficient, Task::urgency_due_coefficient),
-            (Task::set_urgency_blocking_coefficient, Task::urgency_blocking_coefficient),
-            (Task::set_urgency_age_coefficient, Task::urgency_age_coefficient),
+            (
+                Task::set_urgency_project_coefficient,
+                Task::urgency_project_coefficient,
+            ),
+            (
+                Task::set_urgency_active_coefficient,
+                Task::urgency_active_coefficient,
+            ),
+            (
+                Task::set_urgency_scheduled_coefficient,
+                Task::urgency_scheduled_coefficient,
+            ),
+            (
+                Task::set_urgency_waiting_coefficient,
+                Task::urgency_waiting_coefficient,
+            ),
+            (
+                Task::set_urgency_blocked_coefficient,
+                Task::urgency_blocked_coefficient,
+            ),
+            (
+                Task::set_urgency_annotations_coefficient,
+                Task::urgency_annotations_coefficient,
+            ),
+            (
+                Task::set_urgency_tags_coefficient,
+                Task::urgency_tags_coefficient,
+            ),
+            (
+                Task::set_urgency_due_coefficient,
+                Task::urgency_due_coefficient,
+            ),
+            (
+                Task::set_urgency_blocking_coefficient,
+                Task::urgency_blocking_coefficient,
+            ),
+            (
+                Task::set_urgency_age_coefficient,
+                Task::urgency_age_coefficient,
+            ),
             (Task::set_urgency_age_max, Task::urgency_age_max),
         ];
         for (i, (set, get)) in setters.iter().enumerate() {
@@ -3214,9 +3527,15 @@ mod tests {
         assert_eq!(Task::default_scheduled(), "tomorrow");
         assert!(!Task::search_case_sensitive());
         assert!(Task::regex());
-        assert_eq!(Task::with_attributes(|a| a.get("due").cloned()), Some("date".to_string()));
+        assert_eq!(
+            Task::with_attributes(|a| a.get("due").cloned()),
+            Some("date".to_string())
+        );
         assert_eq!(Task::with_coefficients(|c| c.len()), 1);
-        assert_eq!(Task::with_custom_order(|c| c["priority"].clone()), vec!["L".to_string()]);
+        assert_eq!(
+            Task::with_custom_order(|c| c["priority"].clone()),
+            vec!["L".to_string()]
+        );
 
         Task::set_default_project("");
         Task::set_default_due("");
@@ -3234,9 +3553,15 @@ mod tests {
     #[test]
     fn status_conversion() {
         assert_eq!(Task::text_to_status("pending").unwrap(), Status::Pending);
-        assert_eq!(Task::text_to_status("completed").unwrap(), Status::Completed);
+        assert_eq!(
+            Task::text_to_status("completed").unwrap(),
+            Status::Completed
+        );
         assert_eq!(Task::text_to_status("deleted").unwrap(), Status::Deleted);
-        assert_eq!(Task::text_to_status("recurring").unwrap(), Status::Recurring);
+        assert_eq!(
+            Task::text_to_status("recurring").unwrap(),
+            Status::Recurring
+        );
         assert_eq!(Task::text_to_status("waiting").unwrap(), Status::Pending);
         // Only the first character counts.
         assert_eq!(Task::text_to_status("p").unwrap(), Status::Pending);
@@ -3404,12 +3729,18 @@ mod tests {
         assert_eq!(t.get_annotation_count(), 2);
         let annos = t.get_annotations();
         assert_eq!(annos.len(), 2);
-        let keys: Vec<i64> = annos.keys().map(|k| k["annotation_".len()..].parse().unwrap()).collect();
+        let keys: Vec<i64> = annos
+            .keys()
+            .map(|k| k["annotation_".len()..].parse().unwrap())
+            .collect();
         // Unique timestamps: the second is one second after the first (or
         // later, if the clock moved).
         assert!(keys[0] >= before);
         assert!(keys[1] > keys[0]);
-        assert_eq!(annos.values().cloned().collect::<Vec<_>>(), vec!["first", "second"]);
+        assert_eq!(
+            annos.values().cloned().collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
 
         t.set("description", "d");
         t.remove_annotations();
@@ -3711,7 +4042,10 @@ mod tests {
         let mut e = env();
         let mut t = Task::new();
         t.set("status", "pending");
-        assert_eq!(virtual_tags(&t, &mut e), vec!["UNBLOCKED", "READY", "PENDING", "ORPHAN", "LATEST"]);
+        assert_eq!(
+            virtual_tags(&t, &mut e),
+            vec!["UNBLOCKED", "READY", "PENDING", "ORPHAN", "LATEST"]
+        );
 
         t.id = 3;
         t.is_blocked = true;
@@ -3749,7 +4083,10 @@ mod tests {
         t.set("status", "recurring");
         t.set("mask", "--");
         t.id = 1;
-        assert_eq!(virtual_tags(&t, &mut e), vec!["UNBLOCKED", "PARENT", "TEMPLATE", "ORPHAN"]);
+        assert_eq!(
+            virtual_tags(&t, &mut e),
+            vec!["UNBLOCKED", "PARENT", "TEMPLATE", "ORPHAN"]
+        );
         let mut t = Task::new();
         t.set("last", "1");
         assert!(t.has_tag("TEMPLATE", &mut e).unwrap());
@@ -3850,7 +4187,10 @@ mod tests {
 
         // NullEnv: no columns, so everything but tags/annotations/deps is orphan.
         assert!(!t.is_uda_present(&mut NullEnv));
-        assert_eq!(t.get_uda_orphans(&mut NullEnv), vec!["aaa", "description", "estimate", "status", "tags", "zzz"]);
+        assert_eq!(
+            t.get_uda_orphans(&mut NullEnv),
+            vec!["aaa", "description", "estimate", "status", "tags", "zzz"]
+        );
     }
 
     #[test]
@@ -3909,10 +4249,26 @@ mod tests {
         assert_eq!(t.is_dueyear().unwrap_err().to_string(), expected);
         assert_eq!(t.is_overdue(&mut e).unwrap_err().to_string(), expected);
         for tag in [
-            "READY", "DUE", "DUETODAY", "TODAY", "YESTERDAY", "TOMORROW", "OVERDUE", "WEEK", "MONTH", "QUARTER",
-            "YEAR", "PENDING", "COMPLETED", "DELETED",
+            "READY",
+            "DUE",
+            "DUETODAY",
+            "TODAY",
+            "YESTERDAY",
+            "TOMORROW",
+            "OVERDUE",
+            "WEEK",
+            "MONTH",
+            "QUARTER",
+            "YEAR",
+            "PENDING",
+            "COMPLETED",
+            "DELETED",
         ] {
-            assert_eq!(t.has_tag(tag, &mut e).unwrap_err().to_string(), expected, "{tag}");
+            assert_eq!(
+                t.has_tag(tag, &mut e).unwrap_err().to_string(),
+                expected,
+                "{tag}"
+            );
         }
         // Virtual tags that do not read the status, and concrete tags, still work.
         assert!(!t.has_tag("BLOCKED", &mut e).unwrap());
@@ -3924,9 +4280,13 @@ mod tests {
         assert!(!t.is_overdue(&mut e).unwrap());
         // Through the Variant interface, as Eval's `_hastag_` uses it.
         let v = crate::variant::Variant::default();
-        let err = v.op_hastag(&crate::variant::Variant::from_string("PENDING"), &t).unwrap_err();
+        let err = v
+            .op_hastag(&crate::variant::Variant::from_string("PENDING"), &t)
+            .unwrap_err();
         assert_eq!(err.to_string(), expected);
-        let err = v.op_notag(&crate::variant::Variant::from_string("PENDING"), &t).unwrap_err();
+        let err = v
+            .op_notag(&crate::variant::Variant::from_string("PENDING"), &t)
+            .unwrap_err();
         assert_eq!(err.to_string(), expected);
     }
 
@@ -3951,7 +4311,12 @@ mod tests {
     #[test]
     fn latest_id_error_propagates() {
         let t = Task::new();
-        assert_eq!(t.has_tag("LATEST", &mut FailingLatest).unwrap_err().to_string(), "working set unavailable");
+        assert_eq!(
+            t.has_tag("LATEST", &mut FailingLatest)
+                .unwrap_err()
+                .to_string(),
+            "working set unavailable"
+        );
         // Only +LATEST reads latest_id.
         assert!(t.has_tag("PENDING", &mut FailingLatest).unwrap());
         let mut env = FailingLatest;
@@ -3984,24 +4349,34 @@ mod tests {
     fn context_env() {
         let mut ctx = Context::default();
         ctx.config.set("due", "3");
-        ctx.columns.insert("estimate".to_string(), Rc::new(UdaCol::new(true)));
-        ctx.columns.insert("description".to_string(), Rc::new(UdaCol::new(false)));
+        ctx.columns
+            .insert("estimate".to_string(), Rc::new(UdaCol::new(true)));
+        ctx.columns
+            .insert("description".to_string(), Rc::new(UdaCol::new(false)));
         assert_eq!(TaskEnv::due_days(&ctx), 3);
         assert!(ctx.has_column("description"));
         assert!(!ctx.has_column("project"));
         assert_eq!(ctx.uda_columns(), vec!["estimate"]);
         // No replica open: C++ `TDB2::replica ()` asserts; the error propagates
         // out of latest_id and +LATEST.
-        assert_eq!(TaskEnv::latest_id(&mut ctx).unwrap_err().to_string(), "replica not open");
+        assert_eq!(
+            TaskEnv::latest_id(&mut ctx).unwrap_err().to_string(),
+            "replica not open"
+        );
 
         let mut t = Task::new();
         t.set("estimate", "2");
         assert!(t.has_tag("UDA", &mut ctx).unwrap());
-        assert_eq!(t.has_tag("LATEST", &mut ctx).unwrap_err().to_string(), "replica not open");
+        assert_eq!(
+            t.has_tag("LATEST", &mut ctx).unwrap_err().to_string(),
+            "replica not open"
+        );
 
         // With a replica, +LATEST compares against the working set.
         let dir = tempfile::TempDir::new().unwrap();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
         assert_eq!(TaskEnv::latest_id(&mut ctx).unwrap(), 0);
         assert!(t.has_tag("LATEST", &mut ctx).unwrap());
     }
@@ -4025,7 +4400,17 @@ mod tests {
         assert_eq!(t.get("description"), "hello");
         assert_eq!(t.annotation_count, 2);
         assert_eq!(t.get_tags(), vec!["x"]);
-        assert_eq!(t.all(), vec!["annotation_1", "annotation_2", "description", "status", "tag_x", "uuid"]);
+        assert_eq!(
+            t.all(),
+            vec![
+                "annotation_1",
+                "annotation_2",
+                "description",
+                "status",
+                "tag_x",
+                "uuid"
+            ]
+        );
         assert!(t.recalc_urgency);
 
         // parse_tc replaces previous data and keeps the id.
@@ -4037,6 +4422,102 @@ mod tests {
         assert_eq!(u.id, 9);
         assert_eq!(u.get("description"), "hello");
     }
+
+    fn diff_plain(before: &Task, after: &Task) -> String {
+        before.diff(after, &ColumnRegistry::new(), &Configuration::new())
+    }
+
+    #[test]
+    fn diff_no_changes() {
+        let mut t = Task::new();
+        t.set("description", "x");
+        assert_eq!(diff_plain(&t, &t.clone()), "  - No changes will be made.\n");
+        assert_eq!(
+            diff_plain(&Task::new(), &Task::new()),
+            "  - No changes will be made.\n"
+        );
+    }
+
+    #[test]
+    fn diff_plain_attributes() {
+        let mut before = Task::new();
+        before.set("zero", "0");
+        before.set_int("one", 1);
+        before.set_int("two", 2);
+        before.set("uuid", "a");
+
+        let mut after = Task::new();
+        after.set("zero", "00");
+        after.set_int("two", 2);
+        after.set_int("three", 3);
+        after.set("uuid", "b");
+
+        // beforeOnly, then afterOnly, then changed values; uuid is ignored.
+        assert_eq!(
+            diff_plain(&before, &after),
+            "  - One will be deleted.\n  - Three will be set to '3'.\n  - Zero will be changed from '0' to '00'.\n"
+        );
+    }
+
+    #[test]
+    fn diff_tags_dependencies_annotations() {
+        let mut before = Task::new();
+        before.set("tag_old", "x");
+        before.set("dep_1111", "x");
+        before.set("annotation_100", "gone");
+        before.set("annotation_200", "first");
+        before.set("tags", "old");
+        before.set("depends", "1111");
+        before.set("tag_same", "x");
+
+        let mut after = Task::new();
+        after.set("tag_new", "x");
+        after.set("dep_2222", "x");
+        after.set("annotation_300", "added");
+        after.set("annotation_200", "second");
+        after.set("tags", "new");
+        after.set("depends", "2222");
+        after.set("tag_same", "y");
+
+        assert_eq!(
+            diff_plain(&before, &after),
+            concat!(
+                "  - Annotation annotation_100 will be removed.\n",
+                "  - Dependency on 1111 will be removed.\n",
+                "  - Tag old will be removed.\n",
+                "Annotation of added will be added.\n",
+                "Dependency on 2222 will be added.\n",
+                "Tag new will be added.\n",
+                "Annotation will be changed to second.\n",
+            )
+        );
+    }
+
+    #[test]
+    fn diff_renders_dates_with_dateformat() {
+        let mut config = Configuration::new();
+        config.set("dateformat", "Y-M-D");
+        let mut columns = ColumnRegistry::new();
+        crate::columns::column::factory_all(&mut columns, &config).unwrap();
+        let day = |epoch: i64| Datetime::from_epoch(epoch).to_string("Y-M-D");
+        let mut before = Task::new();
+        before.set("due", "1700000000");
+        let mut after = Task::new();
+        after.set("due", "1700100000");
+        after.set("scheduled", "1700000000");
+        after.set("project", "1700000000");
+        let text = before.diff(&after, &columns, &config);
+        // Date columns render with rc.dateformat; other values are verbatim.
+        assert_eq!(
+            text,
+            format!(
+                "  - Project will be set to '1700000000'.\n  - Scheduled will be set to '{}'.\n  - Due will be changed from '{}' to '{}'.\n",
+                day(1700000000),
+                day(1700000000),
+                day(1700100000)
+            )
+        );
+    }
 }
 
 /// Tests for validation and dependencies (the Context-bound part of Task)
@@ -4047,8 +4528,8 @@ mod validate_tests {
     use crate::dependency::{
         dependency_chain_on_complete_to, dependency_chain_on_start_to, dependency_is_circular,
     };
-    use crate::test_util::env_lock;
     use crate::tdb2;
+    use crate::test_util::env_lock;
     use tempfile::TempDir;
 
     /// Restores the `Task::default*`, `Datetime::standaloneDateEnabled` and
@@ -4085,8 +4566,15 @@ mod validate_tests {
         crate::shared::duration::Duration::set_standalone_seconds_enabled(false);
         // As Context::initialize does (Task::validate reads the registry).
         crate::columns::column::factory_all(&mut ctx.columns, &ctx.config).unwrap();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
-        Fixture { ctx, _dir: dir, _defaults: DefaultsGuard, _lock: lock }
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
+        Fixture {
+            ctx,
+            _dir: dir,
+            _defaults: DefaultsGuard,
+            _lock: lock,
+        }
     }
 
     fn err(r: Result<()>) -> String {
@@ -4110,14 +4598,26 @@ mod validate_tests {
     fn validate_add_errors() {
         let mut f = fixture();
         let t = Task::new();
-        assert_eq!(err(t.validate_add(&mut f.ctx)), "A task must have a description.");
+        assert_eq!(
+            err(t.validate_add(&mut f.ctx)),
+            "A task must have a description."
+        );
         let t = described("");
-        assert_eq!(err(t.validate_add(&mut f.ctx)), "Cannot add a task that is blank.");
+        assert_eq!(
+            err(t.validate_add(&mut f.ctx)),
+            "Cannot add a task that is blank."
+        );
         let mut t = described("x");
         t.set("recur", "weekly");
-        assert_eq!(err(t.validate_add(&mut f.ctx)), "A recurring task must also have a 'due' date.");
+        assert_eq!(
+            err(t.validate_add(&mut f.ctx)),
+            "A recurring task must also have a 'due' date."
+        );
         t.set("due", "");
-        assert_eq!(err(t.validate_add(&mut f.ctx)), "A recurring task must also have a 'due' date.");
+        assert_eq!(
+            err(t.validate_add(&mut f.ctx)),
+            "A recurring task must also have a 'due' date."
+        );
         t.set("due", "1700000000");
         assert!(t.validate_add(&mut f.ctx).is_ok());
     }
@@ -4127,11 +4627,17 @@ mod validate_tests {
         let mut f = fixture();
         let mut t = described("x");
         t.set("status", "bogus");
-        assert_eq!(err(t.validate(&mut f.ctx, true)), "The status 'bogus' is not valid.");
+        assert_eq!(
+            err(t.validate(&mut f.ctx, true)),
+            "The status 'bogus' is not valid."
+        );
 
         let mut t = described("x");
         t.set("uuid", "not-a-uuid");
-        assert_eq!(err(t.validate(&mut f.ctx, true)), "Not a valid UUID 'not-a-uuid'.");
+        assert_eq!(
+            err(t.validate(&mut f.ctx, true)),
+            "Not a valid UUID 'not-a-uuid'."
+        );
 
         // Missing (or empty) uuid is generated; status defaults to pending.
         let mut t = described("x");
@@ -4227,8 +4733,14 @@ mod validate_tests {
         let after = localtime::time_now();
         assert_eq!(t.get("project"), "home");
         let due = t.get_date("due");
-        assert!(due >= before + 2 * 86400 && due <= after + 2 * 86400, "{due}");
-        assert_eq!(t.get_date("scheduled"), Datetime::from_string("2030-01-01", "").unwrap().to_epoch());
+        assert!(
+            due >= before + 2 * 86400 && due <= after + 2 * 86400,
+            "{due}"
+        );
+        assert_eq!(
+            t.get_date("scheduled"),
+            Datetime::from_string("2030-01-01", "").unwrap().to_epoch()
+        );
         assert_eq!(t.get("size"), "M");
         assert_eq!(t.get("prio"), "L", "existing value is not overridden");
         assert!(!t.has("empty"), "empty default is skipped");
@@ -4271,10 +4783,14 @@ mod validate_tests {
         assert_eq!(
             f.ctx.footnotes,
             vec![
-                "Warning: You have specified that the 'wait' date is after the 'due' date.".to_string(),
-                "Warning: You have specified that the 'entry' date is after the 'start' date.".to_string(),
-                "Warning: You have specified that the 'scheduled' date is after the 'start' date.".to_string(),
-                "Warning: You have specified that the 'scheduled' date is after the 'due' date.".to_string(),
+                "Warning: You have specified that the 'wait' date is after the 'due' date."
+                    .to_string(),
+                "Warning: You have specified that the 'entry' date is after the 'start' date."
+                    .to_string(),
+                "Warning: You have specified that the 'scheduled' date is after the 'start' date."
+                    .to_string(),
+                "Warning: You have specified that the 'scheduled' date is after the 'due' date."
+                    .to_string(),
                 "Warning: task has no description.".to_string(),
             ]
         );
@@ -4292,7 +4808,10 @@ mod validate_tests {
         t.set("recur", "weekly");
         t.validate(&mut f.ctx, false).unwrap();
         assert!(!t.has("recur"));
-        assert_eq!(f.ctx.footnotes, vec!["Warning: recurring task has no due date.".to_string()]);
+        assert_eq!(
+            f.ctx.footnotes,
+            vec!["Warning: recurring task has no due date.".to_string()]
+        );
 
         // An invalid recurrence period is removed.
         f.ctx.footnotes.clear();
@@ -4301,7 +4820,10 @@ mod validate_tests {
         t.set("recur", "bogus");
         t.validate(&mut f.ctx, false).unwrap();
         assert!(!t.has("recur"));
-        assert_eq!(f.ctx.footnotes, vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]);
+        assert_eq!(
+            f.ctx.footnotes,
+            vec!["Warning: The recurrence value 'bogus' is not valid.".to_string()]
+        );
     }
 
     #[test]
@@ -4329,7 +4851,10 @@ mod validate_tests {
         // add raises validate errors before touching storage.
         let mut bad = described("x");
         bad.set("status", "zzz");
-        assert_eq!(err(tdb2::add(&mut f.ctx, &mut bad)), "The status 'zzz' is not valid.");
+        assert_eq!(
+            err(tdb2::add(&mut f.ctx, &mut bad)),
+            "The status 'zzz' is not valid."
+        );
         assert_eq!(f.ctx.tdb2.latest_id().unwrap(), 1);
     }
 
@@ -4345,7 +4870,10 @@ mod validate_tests {
             "Could not create a dependency on task 7 - not found."
         );
         let u1 = t1.get("uuid");
-        assert_eq!(err(t1.add_dependency(&mut f.ctx, &u1)), "A task cannot be dependent on itself.");
+        assert_eq!(
+            err(t1.add_dependency(&mut f.ctx, &u1)),
+            "A task cannot be dependent on itself."
+        );
 
         t1.recalc_urgency = false;
         t1.add_dependency_id(&mut f.ctx, 2).unwrap();
@@ -4354,9 +4882,15 @@ mod validate_tests {
         assert!(t1.recalc_urgency);
 
         t1.add_dependency_id(&mut f.ctx, 2).unwrap();
-        assert_eq!(f.ctx.footnotes, vec!["Task 1 already depends on task 2.".to_string()]);
+        assert_eq!(
+            f.ctx.footnotes,
+            vec!["Task 1 already depends on task 2.".to_string()]
+        );
         t1.add_dependency(&mut f.ctx, &u2).unwrap();
-        assert_eq!(f.ctx.footnotes[1], format!("Task {u1} already depends on task {u2}."));
+        assert_eq!(
+            f.ctx.footnotes[1],
+            format!("Task {u1} already depends on task {u2}.")
+        );
 
         assert_eq!(t1.get_dependency_ids(&mut f.ctx.tdb2).unwrap(), vec![2]);
         tdb2::modify(&mut f.ctx, &mut t1).unwrap();
@@ -4434,7 +4968,10 @@ mod validate_tests {
 
         f.ctx.config.set("dependency.reminder", "on");
         dependency_chain_on_start_to(&mut f.ctx, &t2, &mut out).unwrap();
-        assert_eq!(String::from_utf8(out).unwrap(), "Task 2 is blocked by:\n  3 three\n");
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "Task 2 is blocked by:\n  3 three\n"
+        );
 
         // Completing 2 breaks the chain 1 -> 2 -> 3; repaired to 1 -> 3.
         f.ctx.config.set("dependency.confirmation", "off");
@@ -4510,8 +5047,15 @@ mod urgency_tests {
         let lock = env_lock();
         let dir = TempDir::new().unwrap();
         let mut ctx = Context::new();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
-        Fixture { ctx, _dir: dir, _coefficients: CoefficientsGuard, _lock: lock }
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
+        Fixture {
+            ctx,
+            _dir: dir,
+            _coefficients: CoefficientsGuard,
+            _lock: lock,
+        }
     }
 
     fn user_terms(t: &Task) -> f32 {
@@ -4638,16 +5182,25 @@ mod urgency_tests {
         // 3.5 days overdue: (17.5 * 0.8 / 21) + 0.2 = 0.8666...
         assert_eq!(due(&mut t, n - 302_400), 0.866_666_7_f32);
         // Exactly 14 days in the future is still on the linear part.
-        assert_eq!(due(&mut t, n + 14 * DAY), ((0.0_f64 * 0.8 / 21.0) + 0.2) as f32);
+        assert_eq!(
+            due(&mut t, n + 14 * DAY),
+            ((0.0_f64 * 0.8 / 21.0) + 0.2) as f32
+        );
         // Beyond two weeks: capped at 0.2.
         assert_eq!(due(&mut t, n + 14 * DAY + 1), 0.2_f32);
         assert_eq!(due(&mut t, n + 100 * DAY), 0.2_f32);
         // One second overdue: days_overdue is narrowed to float first.
         let days = (1.0_f64 / 86400.0) as f32;
-        assert_eq!(due(&mut t, n - 1), (((days as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32);
+        assert_eq!(
+            due(&mut t, n - 1),
+            (((days as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32
+        );
         // Just under 7 days stays linear.
         let days = ((7 * DAY - 1) as f64 / 86400.0) as f32;
-        assert_eq!(due(&mut t, n - 7 * DAY + 1), (((days as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32);
+        assert_eq!(
+            due(&mut t, n - 7 * DAY + 1),
+            (((days as f64 + 14.0) * 0.8 / 21.0) + 0.2) as f32
+        );
 
         // Against the real clock.
         t.set_int("due", localtime::time_now() - 30 * DAY);
@@ -4739,9 +5292,14 @@ mod urgency_tests {
         coefficients(&[("urgency.user.project.home.coefficient", 5.0)]);
         let mut t = Task::new();
         assert_eq!(user_terms(&t), 0.0);
-        for (project, expected) in
-            [("home", 5.0), ("home.garden", 5.0), ("home.garden.shed", 5.0), ("homework", 0.0), ("work.home", 0.0), ("Home", 0.0)]
-        {
+        for (project, expected) in [
+            ("home", 5.0),
+            ("home.garden", 5.0),
+            ("home.garden.shed", 5.0),
+            ("homework", 0.0),
+            ("work.home", 0.0),
+            ("Home", 0.0),
+        ] {
             t.set("project", project);
             assert_eq!(user_terms(&t), expected, "project {project}");
         }
@@ -4913,11 +5471,31 @@ mod urgency_tests {
         type Setter = fn(f32);
         let cases: [(Setter, &str, &str, f32); 6] = [
             (Task::set_urgency_project_coefficient, "project", "p", 1.0),
-            (Task::set_urgency_active_coefficient, "start", "1700000000", 4.0),
-            (Task::set_urgency_scheduled_coefficient, "scheduled", "1", 5.0),
+            (
+                Task::set_urgency_active_coefficient,
+                "start",
+                "1700000000",
+                4.0,
+            ),
+            (
+                Task::set_urgency_scheduled_coefficient,
+                "scheduled",
+                "1",
+                5.0,
+            ),
             (Task::set_urgency_due_coefficient, "due", "1", 12.0),
-            (Task::set_urgency_tags_coefficient, "tag_a", "", 1.0 * 0.8_f32),
-            (Task::set_urgency_annotations_coefficient, "annotation_1", "a", 1.0 * 0.8_f32),
+            (
+                Task::set_urgency_tags_coefficient,
+                "tag_a",
+                "",
+                1.0 * 0.8_f32,
+            ),
+            (
+                Task::set_urgency_annotations_coefficient,
+                "annotation_1",
+                "a",
+                1.0 * 0.8_f32,
+            ),
         ];
         for (setter, attribute, value, expected) in cases {
             let mut t = Task::new();
@@ -4925,11 +5503,13 @@ mod urgency_tests {
             set_all_coefficients(0.0);
             // Without its coefficient the term does not count.
             assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), 0.0, "{attribute}");
-            setter(if attribute.starts_with("tag") || attribute.starts_with("annotation") {
-                1.0
-            } else {
-                expected
-            });
+            setter(
+                if attribute.starts_with("tag") || attribute.starts_with("annotation") {
+                    1.0
+                } else {
+                    expected
+                },
+            );
             assert_eq!(t.urgency_c(&mut f.ctx).unwrap(), expected, "{attribute}");
         }
 
@@ -5025,11 +5605,20 @@ mod urgency_tests {
         assert_eq!(t.urgency(&mut f.ctx).unwrap(), 2.0);
         let mut t = Task::new();
         t.set_int("entry", localtime::time_now() - 73 * DAY - 60);
-        assert_eq!(t.urgency(&mut f.ctx).unwrap(), (73.0_f64 / 365.0) as f32 * 2.0);
+        assert_eq!(
+            t.urgency(&mut f.ctx).unwrap(),
+            (73.0_f64 / 365.0) as f32 * 2.0
+        );
     }
 
     fn pending(ctx: &mut Context, uuid: &str) -> Task {
-        ctx.tdb2.pending_tasks().unwrap().iter().find(|t| t.get_ref("uuid") == uuid).unwrap().clone()
+        ctx.tdb2
+            .pending_tasks()
+            .unwrap()
+            .iter()
+            .find(|t| t.get_ref("uuid") == uuid)
+            .unwrap()
+            .clone()
     }
 
     #[test]
@@ -5112,12 +5701,6 @@ mod urgency_tests {
         // b is still blocked by a but no longer blocking: -5 only.
         assert_eq!(b.urgency(&mut f.ctx).unwrap(), -5.0);
     }
-
-    #[test]
-    fn later_milestone_stubs() {
-        let t = Task::new();
-        assert!(matches!(t.diff(&Task::new()), Err(TwError::NotImplemented(ref s)) if s == "Task::diff"));
-    }
 }
 
 #[cfg(test)]
@@ -5155,9 +5738,21 @@ mod json_tests {
         let lock = env_lock();
         let dir = TempDir::new().unwrap();
         let mut ctx = Context::new();
-        ctx.tdb2.open_replica_at(dir.path().to_str().unwrap(), true, true).unwrap();
-        Task::set_attributes(attributes.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
-        Fixture { ctx, _dir: dir, _statics: StaticsGuard, _lock: lock }
+        ctx.tdb2
+            .open_replica_at(dir.path().to_str().unwrap(), true, true)
+            .unwrap();
+        Task::set_attributes(
+            attributes
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+        Fixture {
+            ctx,
+            _dir: dir,
+            _statics: StaticsGuard,
+            _lock: lock,
+        }
     }
 
     /// The `t_test.cpp` / `tw_2689_test.cpp` attribute types.
@@ -5213,18 +5808,28 @@ mod json_tests {
             format!(
                 r#"{{"depends":"[\"{UUID_A}\",\"{UUID_B}\"]","uuid":"00000000-0000-0000-0000-000000000000"}}"#
             ),
-            format!(r#"{{"depends":"{UUID_A},{UUID_B}","uuid":"00000000-0000-0000-0000-000000000000"}}"#),
-            format!(r#"{{"depends":["{UUID_A}","{UUID_B}"],"uuid":"00000000-0000-0000-0000-000000000000"}}"#),
+            format!(
+                r#"{{"depends":"{UUID_A},{UUID_B}","uuid":"00000000-0000-0000-0000-000000000000"}}"#
+            ),
+            format!(
+                r#"{{"depends":["{UUID_A}","{UUID_B}"],"uuid":"00000000-0000-0000-0000-000000000000"}}"#
+            ),
         ];
         for sample in &samples {
             let t = Task::from_input(&mut f.ctx, sample).unwrap();
-            assert_eq!(t.get("uuid"), "00000000-0000-0000-0000-000000000000", "{sample}");
+            assert_eq!(
+                t.get("uuid"),
+                "00000000-0000-0000-0000-000000000000",
+                "{sample}"
+            );
             assert_eq!(t.get("depends"), format!("{UUID_A},{UUID_B}"), "{sample}");
             assert!(t.has(&format!("dep_{UUID_A}")));
             assert!(t.has(&format!("dep_{UUID_B}")));
             assert_eq!(
                 t.compose_json_plain().unwrap(),
-                format!(r#"{{"uuid":"00000000-0000-0000-0000-000000000000","depends":["{UUID_A}","{UUID_B}"]}}"#)
+                format!(
+                    r#"{{"uuid":"00000000-0000-0000-0000-000000000000","depends":["{UUID_A}","{UUID_B}"]}}"#
+                )
             );
         }
     }
@@ -5251,8 +5856,13 @@ mod json_tests {
 
     #[test]
     fn id_urgency_skipped_only_when_typed() {
-        let mut f = fixture(&[("id", "numeric"), ("urgency", "numeric"), ("description", "string")]);
-        let t = Task::from_input(&mut f.ctx, r#"{"id":4,"urgency":3.5,"description":"x"}"#).unwrap();
+        let mut f = fixture(&[
+            ("id", "numeric"),
+            ("urgency", "numeric"),
+            ("description", "string"),
+        ]);
+        let t =
+            Task::from_input(&mut f.ctx, r#"{"id":4,"urgency":3.5,"description":"x"}"#).unwrap();
         assert!(!t.has("id"));
         assert!(!t.has("urgency"));
         assert_eq!(t.get("description"), "x");
@@ -5264,7 +5874,12 @@ mod json_tests {
         assert_eq!(t.get("urgency"), "3.500000");
         assert_eq!(f.ctx.debug_messages.len(), 2);
         for (message, name) in f.ctx.debug_messages.iter().zip(["id", "urgency"]) {
-            assert!(message.starts_with(&format!("Task::parseJSON found orphan '{name}' with value '0x")), "{message}");
+            assert!(
+                message.starts_with(&format!(
+                    "Task::parseJSON found orphan '{name}' with value '0x"
+                )),
+                "{message}"
+            );
             assert!(message.ends_with("' --> preserved\n"), "{message}");
         }
     }
@@ -5298,11 +5913,23 @@ mod json_tests {
 
     #[test]
     fn dates_iso_epoch_and_modification() {
-        let mut f = fixture(&[("entry", "date"), ("due", "date"), ("modification", "date"), ("modified", "date")]);
-        let t = Task::from_input(&mut f.ctx, r#"{"due":"1370212800","entry":"20130602T224000Z"}"#).unwrap();
+        let mut f = fixture(&[
+            ("entry", "date"),
+            ("due", "date"),
+            ("modification", "date"),
+            ("modified", "date"),
+        ]);
+        let t = Task::from_input(
+            &mut f.ctx,
+            r#"{"due":"1370212800","entry":"20130602T224000Z"}"#,
+        )
+        .unwrap();
         assert_eq!(t.get("entry"), "1370212800");
         assert_eq!(t.get("due"), "1370212800");
-        assert_eq!(t.compose_json_plain().unwrap(), r#"{"due":"20130602T224000Z","entry":"20130602T224000Z"}"#);
+        assert_eq!(
+            t.compose_json_plain().unwrap(),
+            r#"{"due":"20130602T224000Z","entry":"20130602T224000Z"}"#
+        );
 
         // TW-1274: `modification` is stored as `modified`.
         let t = Task::from_input(&mut f.ctx, r#"{"modification":"20130602T224000Z"}"#).unwrap();
@@ -5312,7 +5939,10 @@ mod json_tests {
         // ..and a stored `modification` is written as `modified`.
         let mut t = Task::new();
         t.set("modification", "1370212800");
-        assert_eq!(t.compose_json_plain().unwrap(), r#"{"modified":"20130602T224000Z"}"#);
+        assert_eq!(
+            t.compose_json_plain().unwrap(),
+            r#"{"modified":"20130602T224000Z"}"#
+        );
 
         // A zero date is not written.
         let mut t = Task::new();
@@ -5330,7 +5960,10 @@ mod json_tests {
         );
         let mut t = Task::new();
         t.set("due", "12abc");
-        assert_eq!(err(t.compose_json_plain()), "'12abc' is not a valid date in the '' format.");
+        assert_eq!(
+            err(t.compose_json_plain()),
+            "'12abc' is not a valid date in the '' format."
+        );
     }
 
     #[test]
@@ -5382,11 +6015,17 @@ mod json_tests {
             r#"Annotations is malformed: {"a":1.000000}"#
         );
         assert_eq!(
-            err(Task::from_input(&mut f.ctx, r#"{"annotations":[{"entry":"20130602T224000Z"}]}"#)),
+            err(Task::from_input(
+                &mut f.ctx,
+                r#"{"annotations":[{"entry":"20130602T224000Z"}]}"#
+            )),
             r#"Annotation is missing a description: {"entry":"20130602T224000Z"}"#
         );
         assert_eq!(
-            err(Task::from_input(&mut f.ctx, r#"{"annotations":[{"entry":"bad","description":"x"}]}"#)),
+            err(Task::from_input(
+                &mut f.ctx,
+                r#"{"annotations":[{"entry":"bad","description":"x"}]}"#
+            )),
             "'bad' is not a valid date in the '' format."
         );
     }
@@ -5398,7 +6037,10 @@ mod json_tests {
             let expected = json::parse(bad).unwrap_err().to_string();
             assert_eq!(err(Task::from_input(&mut f.ctx, bad)), expected, "{bad}");
         }
-        assert_eq!(err(Task::from_input(&mut f.ctx, "x")), "Error: expected '{' or '[' at position 0");
+        assert_eq!(
+            err(Task::from_input(&mut f.ctx, "x")),
+            "Error: expected '{' or '[' at position 0"
+        );
         // A non-object root is ignored.
         let t = Task::from_input(&mut f.ctx, r#"[{"description":"x"}]"#).unwrap();
         assert!(t.is_empty());
@@ -5427,7 +6069,10 @@ mod json_tests {
         let mut t = Task::new();
         t.id = 5;
         t.set("description", "x");
-        assert_eq!(t.compose_json(&mut f.ctx, true).unwrap(), r#"{"id":5,"description":"x","urgency":0}"#);
+        assert_eq!(
+            t.compose_json(&mut f.ctx, true).unwrap(),
+            r#"{"id":5,"description":"x","urgency":0}"#
+        );
 
         // urgency_tags for one tag is 0.8 (a float): `out << float` prints 0.8.
         Task::set_urgency_tags_coefficient(1.0);
@@ -5437,31 +6082,54 @@ mod json_tests {
             r#"{"id":5,"description":"x","tags":["a"],"urgency":0.8}"#
         );
         // Undecorated output omits both.
-        assert_eq!(t.compose_json(&mut f.ctx, false).unwrap(), r#"{"description":"x","tags":["a"]}"#);
+        assert_eq!(
+            t.compose_json(&mut f.ctx, false).unwrap(),
+            r#"{"description":"x","tags":["a"]}"#
+        );
 
         // Round trip through parse.
         Task::set_attributes(
-            [("description", "string"), ("id", "numeric"), ("urgency", "numeric"), ("tags", "string")]
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
+            [
+                ("description", "string"),
+                ("id", "numeric"),
+                ("urgency", "numeric"),
+                ("tags", "string"),
+            ]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         );
         let decorated = t.compose_json(&mut f.ctx, true).unwrap();
         let mut back = Task::from_input(&mut f.ctx, &decorated).unwrap();
         assert_eq!(back.id, 0);
-        assert_eq!(back.compose_json_plain().unwrap(), r#"{"description":"x","tags":["a"]}"#);
+        assert_eq!(
+            back.compose_json_plain().unwrap(),
+            r#"{"description":"x","tags":["a"]}"#
+        );
         assert_eq!(back.urgency(&mut f.ctx).unwrap(), 0.8f32);
     }
 
     #[test]
     fn determine_version_cases() {
         let uuid = "27755d92-c5e9-4c21-bd8e-c3dd9e6d3cf7";
-        assert_eq!(Task::determine_version(&format!("{uuid} - [t] [a] desc")), 2);
-        assert_eq!(Task::determine_version(&format!("{uuid} + [t] [a] [n] desc")), 3);
-        assert_eq!(Task::determine_version(&format!("{uuid} X [] [] [] desc")), 3);
+        assert_eq!(
+            Task::determine_version(&format!("{uuid} - [t] [a] desc")),
+            2
+        );
+        assert_eq!(
+            Task::determine_version(&format!("{uuid} + [t] [a] [n] desc")),
+            3
+        );
+        assert_eq!(
+            Task::determine_version(&format!("{uuid} X [] [] [] desc")),
+            3
+        );
         assert_eq!(Task::determine_version(&format!("{uuid} r desc")), 2);
         // Status character not recognised.
-        assert_eq!(Task::determine_version(&format!("{uuid} p [t] [a] desc")), 0);
+        assert_eq!(
+            Task::determine_version(&format!("{uuid} p [t] [a] desc")),
+            0
+        );
         assert_eq!(Task::determine_version(r#"[description:"x" uuid:"u"]"#), 4);
         assert_eq!(Task::determine_version(r#"[description:"x"]"#), 0);
         assert_eq!(Task::determine_version("X [a] [b] desc"), 1);
@@ -5494,7 +6162,8 @@ mod json_tests {
         assert!(f.ctx.debug_messages.is_empty());
 
         t.recalc_urgency = false;
-        t.parse_legacy(Some(&mut f.ctx), r#"[description:"x" uuid:"u"]"#).unwrap();
+        t.parse_legacy(Some(&mut f.ctx), r#"[description:"x" uuid:"u"]"#)
+            .unwrap();
         assert!(t.recalc_urgency);
         assert!(t.is_empty());
 
@@ -5502,8 +6171,14 @@ mod json_tests {
             err(t.parse_legacy(Some(&mut f.ctx), "garbage")),
             "Unrecognized Taskwarrior file format or blank line in data."
         );
-        assert_eq!(f.ctx.debug_messages, vec!["Invalid fileformat at line 'garbage'".to_string()]);
-        assert_eq!(err(t.parse_legacy(None, "")), "Unrecognized Taskwarrior file format or blank line in data.");
+        assert_eq!(
+            f.ctx.debug_messages,
+            vec!["Invalid fileformat at line 'garbage'".to_string()]
+        );
+        assert_eq!(
+            err(t.parse_legacy(None, "")),
+            "Unrecognized Taskwarrior file format or blank line in data."
+        );
     }
 }
 

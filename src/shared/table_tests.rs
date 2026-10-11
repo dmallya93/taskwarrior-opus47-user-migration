@@ -26,13 +26,17 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        }
     }
 
     fn ok(&mut self, expression: bool, name: &str) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -40,7 +44,10 @@ impl UnitTest {
     /// assertions differs from the C++ file's.
     fn finish(self, expected: usize) {
         assert!(self.failures.is_empty(), "{}", self.failures.join("\n"));
-        assert_eq!(self.counter, expected, "assertion count differs from the C++ test");
+        assert_eq!(
+            self.counter, expected,
+            "assertion count differs from the C++ test"
+        );
     }
 }
 
@@ -104,7 +111,10 @@ fn table_t() {
     row = t3.add_row();
     t3.set_colored(row, 0, "cell with color", single_cell);
     let colored_output = t3.render();
-    t.ok(colored_output.contains("\x1b["), "Colored output contains ANSI escape codes");
+    t.ok(
+        colored_output.contains("\x1b["),
+        "Colored output contains ANSI escape codes",
+    );
 
     // Test color behavior - with color disabled
     let mut t4 = Table::new();
@@ -114,7 +124,10 @@ fn table_t() {
     row = t4.add_row();
     t4.set_colored(row, 0, "cell without color", single_cell);
     let uncolored_output = t4.render();
-    t.ok(!uncolored_output.contains("\x1b["), "Uncolored output does not contain ANSI escape codes");
+    t.ok(
+        !uncolored_output.contains("\x1b["),
+        "Uncolored output does not contain ANSI escape codes",
+    );
 
     // Chessboard example
     let mut t2 = Table::new();
@@ -207,7 +220,12 @@ fn scenarios() -> Vec<(String, Table)> {
     for row in 0..8 {
         t2.add_row();
         for col in 0..8 {
-            t2.set_colored(row, col, "  ", if (row + col) % 2 != 0 { blue } else { white });
+            t2.set_colored(
+                row,
+                col,
+                "  ",
+                if (row + col) % 2 != 0 { blue } else { white },
+            );
         }
     }
     v.push(("chessboard".into(), t2));

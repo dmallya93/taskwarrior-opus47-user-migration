@@ -111,7 +111,11 @@ pub fn dependency_chain_on_complete(ctx: &mut Context, task: &Task) -> Result<()
 
 /// [`dependency_chain_on_complete`] writing its messages to `out` (C++
 /// `std::cout`). The confirmation prompt, if any, still uses the terminal.
-pub fn dependency_chain_on_complete_to(ctx: &mut Context, task: &Task, out: &mut dyn Write) -> Result<()> {
+pub fn dependency_chain_on_complete_to(
+    ctx: &mut Context,
+    task: &Task,
+    out: &mut dyn Write,
+) -> Result<()> {
     let blocking = task.get_dependency_tasks(&mut ctx.tdb2)?;
 
     // If the task is anything but the tail end of a dependency chain.
@@ -120,7 +124,11 @@ pub fn dependency_chain_on_complete_to(ctx: &mut Context, task: &Task, out: &mut
 
         // Nag about broken chain.
         if ctx.config.get_boolean("dependency.reminder") {
-            let _ = writeln!(out, "{}", format(STRING_DEPEND_BLOCKED, &[&task.identifier(false)]));
+            let _ = writeln!(
+                out,
+                "{}",
+                format(STRING_DEPEND_BLOCKED, &[&task.identifier(false)])
+            );
 
             for b in &blocking {
                 let _ = writeln!(out, "  {} {}", b.id, b.get_ref("description"));
@@ -180,14 +188,22 @@ pub fn dependency_chain_on_start(ctx: &mut Context, task: &Task) -> Result<()> {
 
 /// [`dependency_chain_on_start`] writing its messages to `out` (C++
 /// `std::cout`).
-pub fn dependency_chain_on_start_to(ctx: &mut Context, task: &Task, out: &mut dyn Write) -> Result<()> {
+pub fn dependency_chain_on_start_to(
+    ctx: &mut Context,
+    task: &Task,
+    out: &mut dyn Write,
+) -> Result<()> {
     if ctx.config.get_boolean("dependency.reminder") {
         let blocking = task.get_dependency_tasks(&mut ctx.tdb2)?;
 
         // If the task is anything but the tail end of a dependency chain, nag about
         // broken chain.
         if !blocking.is_empty() {
-            let _ = writeln!(out, "{}", format(STRING_DEPEND_BLOCKED, &[&task.identifier(false)]));
+            let _ = writeln!(
+                out,
+                "{}",
+                format(STRING_DEPEND_BLOCKED, &[&task.identifier(false)])
+            );
 
             for b in &blocking {
                 let _ = writeln!(out, "  {} {}", b.id, b.get_ref("description"));

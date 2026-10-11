@@ -63,7 +63,9 @@ fn initialized(list: &[&str]) -> Context {
     let mut ctx = Context::new();
     let mut out = Vec::new();
     let mut err = Vec::new();
-    let rc = ctx.initialize_with(&args(list), &mut out, &mut err).unwrap();
+    let rc = ctx
+        .initialize_with(&args(list), &mut out, &mut err)
+        .unwrap();
     assert_eq!(rc, 0, "{}", String::from_utf8_lossy(&err));
     ctx
 }
@@ -98,7 +100,14 @@ impl Fixture {
         let mut full = vec!["task"];
         full.extend_from_slice(list);
         let ctx = initialized(&full);
-        Fixture { ctx, _dir: dir, _statics: SearchStatics, _mml: mml, _env: env, _lock: lock }
+        Fixture {
+            ctx,
+            _dir: dir,
+            _statics: SearchStatics,
+            _mml: mml,
+            _env: env,
+            _lock: lock,
+        }
     }
 
     fn new(list: &[&str]) -> Self {
@@ -118,7 +127,10 @@ impl Fixture {
         let mut task = self.target();
         self.ctx.debug_messages.clear();
         let result = task.modify(&mut self.ctx, mod_type, text_required);
-        assert!(self.ctx.current_task.is_none(), "current task must be restored");
+        assert!(
+            self.ctx.current_task.is_none(),
+            "current task must be restored"
+        );
         (task, result)
     }
 
@@ -162,11 +174,22 @@ fn pairs_delegate_to_the_column() {
     // The abbreviation is canonicalized by CLI2.
     assert_eq!(t.get("project"), "work");
     assert_eq!(t.get("priority"), "H");
-    assert_eq!(t.get_date("due"), Datetime::from_string("2030-01-02", "Y-M-D").unwrap().to_epoch());
+    assert_eq!(
+        t.get_date("due"),
+        Datetime::from_string("2030-01-02", "Y-M-D")
+            .unwrap()
+            .to_epoch()
+    );
     assert_eq!(t.get("description"), "one");
     let labelled = f.labelled();
-    assert!(labelled.iter().any(|m| m.starts_with("project <-- 'work'")), "{labelled:?}");
-    assert!(labelled.iter().any(|m| m.starts_with("priority <-- 'H'")), "{labelled:?}");
+    assert!(
+        labelled.iter().any(|m| m.starts_with("project <-- 'work'")),
+        "{labelled:?}"
+    );
+    assert!(
+        labelled.iter().any(|m| m.starts_with("priority <-- 'H'")),
+        "{labelled:?}"
+    );
 }
 
 #[test]
@@ -188,10 +211,18 @@ fn pair_dom_references_see_earlier_modifications() {
 
 #[test]
 fn tags_and_depends_pairs() {
-    let mut f = Fixture::new(&["2", "modify", "tags:x,y", "depends:aaaaaaaa-0000-4000-8000-000000000003"]);
+    let mut f = Fixture::new(&[
+        "2",
+        "modify",
+        "tags:x,y",
+        "depends:aaaaaaaa-0000-4000-8000-000000000003",
+    ]);
     let t = f.modified(ModType::Replace);
     assert_eq!(t.get_tags(), ["x", "y"]);
-    assert_eq!(t.get_dependency_uuids(), ["aaaaaaaa-0000-4000-8000-000000000003"]);
+    assert_eq!(
+        t.get_dependency_uuids(),
+        ["aaaaaaaa-0000-4000-8000-000000000003"]
+    );
 }
 
 #[test]
@@ -218,10 +249,16 @@ fn empty_value_of_absent_attribute_is_not_a_modification() {
 
 #[test]
 fn empty_value_with_configured_default_is_kept_blank() {
-    for (setting, name) in
-        [("default.due", "due"), ("default.scheduled", "scheduled"), ("default.project", "project")]
-    {
-        let value = if name == "project" { "dflt" } else { "2030-01-01" };
+    for (setting, name) in [
+        ("default.due", "due"),
+        ("default.scheduled", "scheduled"),
+        ("default.project", "project"),
+    ] {
+        let value = if name == "project" {
+            "dflt"
+        } else {
+            "2030-01-01"
+        };
         let rc = format!("{setting}={value}\n");
         let arg = format!("{name}:");
         let mut f = Fixture::with_rc(&rc, &["2", "modify", &arg]);
@@ -249,7 +286,10 @@ fn empty_tags_and_depends_remove_all() {
 fn non_modifiable_column_is_rejected() {
     let mut f = Fixture::new(&["1", "modify", "urgency:5"]);
     let (_, result) = f.modify(ModType::Replace, false);
-    assert_eq!(message(result), "The 'urgency' attribute does not allow a value of '5'.");
+    assert_eq!(
+        message(result),
+        "The 'urgency' attribute does not allow a value of '5'."
+    );
 }
 
 #[test]
@@ -258,7 +298,10 @@ fn unknown_column_is_rejected() {
     // A canonical name with no column (C++ `columns[name]` is null).
     f.ctx.columns.remove("project");
     let (t, result) = f.modify(ModType::Replace, false);
-    assert_eq!(message(result), "The 'project' attribute does not allow a value of 'x'.");
+    assert_eq!(
+        message(result),
+        "The 'project' attribute does not allow a value of 'x'."
+    );
     assert_eq!(t.get("project"), "home");
 }
 
@@ -278,9 +321,14 @@ fn unrecognized_column_type_is_rejected() {
     base.name = "project".into();
     base.type_ = "bogus".into();
     base.modifiable = true;
-    f.ctx.columns.insert("project".into(), Rc::new(BogusColumn { base }));
+    f.ctx
+        .columns
+        .insert("project".into(), Rc::new(BogusColumn { base }));
     let (_, result) = f.modify(ModType::Replace, false);
-    assert_eq!(message(result), "Unrecognized column type 'bogus' for column 'project'");
+    assert_eq!(
+        message(result),
+        "Unrecognized column type 'bogus' for column 'project'"
+    );
 }
 
 #[test]
@@ -315,7 +363,10 @@ fn tag_arguments() {
     let (t, result) = f.modify(ModType::Replace, true);
     result.unwrap();
     assert_eq!(t.get_tags(), ["beta", "gamma"]);
-    assert_eq!(f.labelled(), ["tags <-- add 'gamma'", "tags <-- remove 'alpha'"]);
+    assert_eq!(
+        f.labelled(),
+        ["tags <-- add 'gamma'", "tags <-- remove 'alpha'"]
+    );
 }
 
 #[test]
@@ -331,10 +382,13 @@ fn reserved_tags_are_rejected() {
         let mut f = Fixture::new(&["1", "modify", arg]);
         let (_, result) = f.modify(ModType::Replace, false);
         let tag = &arg[1..];
-        assert_eq!(message(result), format(
-            "Virtual tags (including '{1}') are reserved and may not be added or removed.",
-            &[&tag]
-        ));
+        assert_eq!(
+            message(result),
+            format(
+                "Virtual tags (including '{1}') are reserved and may not be added or removed.",
+                &[&tag]
+            )
+        );
     }
 }
 
@@ -386,8 +440,14 @@ fn mixed_arguments_in_order() {
     assert_eq!(t.get("description"), "word more");
     assert_eq!(t.get("project"), "p");
     let labelled = f.labelled();
-    assert_eq!(labelled.first().map(String::as_str), Some("tags <-- add 'x'"));
-    assert_eq!(labelled.last().map(String::as_str), Some("description <-- 'word more'"));
+    assert_eq!(
+        labelled.first().map(String::as_str),
+        Some("tags <-- add 'x'")
+    );
+    assert_eq!(
+        labelled.last().map(String::as_str),
+        Some("description <-- 'word more'")
+    );
 }
 
 #[test]
@@ -416,22 +476,38 @@ fn modifying_a_completed_task_footnotes() {
     let mut f = Fixture::new(&["aaaaaaaa-0000-4000-8000-000000000003", "modify", "new"]);
     let t = f.modified(ModType::Replace);
     assert_eq!(t.get("description"), "new");
-    assert!(f.ctx.footnotes.iter().any(|n| n == NOTE), "{:?}", f.ctx.footnotes);
+    assert!(
+        f.ctx.footnotes.iter().any(|n| n == NOTE),
+        "{:?}",
+        f.ctx.footnotes
+    );
 }
 
 #[test]
 fn status_change_does_not_footnote() {
-    let mut f = Fixture::new(&["aaaaaaaa-0000-4000-8000-000000000003", "modify", "status:pending"]);
+    let mut f = Fixture::new(&[
+        "aaaaaaaa-0000-4000-8000-000000000003",
+        "modify",
+        "status:pending",
+    ]);
     let t = f.modified(ModType::Replace);
     assert_eq!(t.get("status"), "pending");
-    assert!(!f.ctx.footnotes.iter().any(|n| n.starts_with("Note: Modified task")));
+    assert!(!f
+        .ctx
+        .footnotes
+        .iter()
+        .any(|n| n.starts_with("Note: Modified task")));
 
     // Fixture holds the env lock: release it before taking it again.
     drop(f);
     let mut f = Fixture::new(&["2", "modify", "status:completed"]);
     let t = f.modified(ModType::Replace);
     assert_eq!(t.get("status"), "completed");
-    assert!(!f.ctx.footnotes.iter().any(|n| n.starts_with("Note: Modified task")));
+    assert!(!f
+        .ctx
+        .footnotes
+        .iter()
+        .any(|n| n.starts_with("Note: Modified task")));
 }
 
 #[test]
@@ -507,7 +583,10 @@ fn literal_annotations() {
         // A description match ends a non-global substitution.
         let mut t = task("bar", &["bar bar", "bar"]);
         t.substitute("bar", "X", "").unwrap();
-        assert_eq!((t.get("description"), annotations(&t)), ("X".into(), vec!["bar bar".into(), "bar".into()]));
+        assert_eq!(
+            (t.get("description"), annotations(&t)),
+            ("X".into(), vec!["bar bar".into(), "bar".into()])
+        );
 
         // Otherwise the first annotation match.
         let mut t = task("foo", &["bar bar", "bar"]);
@@ -520,7 +599,10 @@ fn literal_annotations() {
         // Global: the description and every annotation.
         let mut t = task("bar", &["bar bar", "bar"]);
         t.substitute("bar", "BAR", "g").unwrap();
-        assert_eq!((t.get("description"), annotations(&t)), ("BAR".into(), vec!["BAR BAR".into(), "BAR".into()]));
+        assert_eq!(
+            (t.get("description"), annotations(&t)),
+            ("BAR".into(), vec!["BAR BAR".into(), "BAR".into()])
+        );
     });
 }
 
@@ -543,7 +625,10 @@ fn literal_offset_quirks() {
 
         // The same in an annotation.
         let mut t = task("x", &["abcabc"]);
-        assert!(matches!(t.substitute("abc", "", "g"), Err(TwError::Runtime(_))));
+        assert!(matches!(
+            t.substitute("abc", "", "g"),
+            Err(TwError::Runtime(_))
+        ));
     });
 }
 
@@ -613,7 +698,10 @@ fn regex_annotation_index_quirk() {
         // replacement the second uses start[2] (the third match), the third
         // reads past the vector (undefined behaviour in C++, an error here).
         let mut t = task("x", &["a b a c a"]);
-        assert!(matches!(t.substitute("a", "XY", "g"), Err(TwError::Runtime(_))));
+        assert!(matches!(
+            t.substitute("a", "XY", "g"),
+            Err(TwError::Runtime(_))
+        ));
         // Nothing was written back.
         assert_eq!(annotations(&t), ["a b a c a"]);
     });
@@ -623,7 +711,10 @@ fn regex_annotation_index_quirk() {
 fn regex_invalid_pattern() {
     with_statics(true, true, || {
         let mut t = task("abc", &[]);
-        assert!(matches!(t.substitute("(", "x", ""), Err(TwError::Runtime(_))));
+        assert!(matches!(
+            t.substitute("(", "x", ""),
+            Err(TwError::Runtime(_))
+        ));
     });
 }
 

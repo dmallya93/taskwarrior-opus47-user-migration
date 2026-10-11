@@ -103,7 +103,9 @@ use super::cmd_aliases::CmdCompletionAliases;
 use super::cmd_annotate::CmdAnnotate;
 use super::cmd_append::CmdAppend;
 use super::cmd_attributes::CmdZshAttributes;
-use super::cmd_burndown::{CmdBurndownAnnual, CmdBurndownDaily, CmdBurndownMonthly, CmdBurndownWeekly};
+use super::cmd_burndown::{
+    CmdBurndownAnnual, CmdBurndownDaily, CmdBurndownMonthly, CmdBurndownWeekly,
+};
 use super::cmd_calc::CmdCalc;
 use super::cmd_calendar::CmdCalendar;
 use super::cmd_color::CmdColor;
@@ -123,8 +125,14 @@ use super::cmd_exec::CmdExec;
 use super::cmd_export::CmdExport;
 use super::cmd_get::CmdGet;
 use super::cmd_help::CmdHelp;
-use super::cmd_history::{CmdGHistoryAnnual, CmdGHistoryDaily, CmdGHistoryMonthly, CmdGHistoryWeekly, CmdHistoryAnnual, CmdHistoryDaily, CmdHistoryMonthly, CmdHistoryWeekly};
-use super::cmd_ids::{CmdCompletionIds, CmdCompletionUuids, CmdIDs, CmdUUIDs, CmdZshCompletionIds, CmdZshCompletionUuids};
+use super::cmd_history::{
+    CmdGHistoryAnnual, CmdGHistoryDaily, CmdGHistoryMonthly, CmdGHistoryWeekly, CmdHistoryAnnual,
+    CmdHistoryDaily, CmdHistoryMonthly, CmdHistoryWeekly,
+};
+use super::cmd_ids::{
+    CmdCompletionIds, CmdCompletionUuids, CmdIDs, CmdUUIDs, CmdZshCompletionIds,
+    CmdZshCompletionUuids,
+};
 use super::cmd_import::CmdImport;
 use super::cmd_import_v2::CmdImportV2;
 use super::cmd_info::CmdInfo;
@@ -719,10 +727,19 @@ mod tests {
     fn permission_single_task_asks_yes_no() {
         let mut context = confirming_context();
         let probe = write_probe(true);
-        assert_eq!(ask(&probe, &mut context, "yes\n", 1), (true, "Change it? (yes/no) ".to_string()));
-        assert_eq!(ask(&probe, &mut context, "  NO \n", 1), (false, "Change it? (yes/no) ".to_string()));
+        assert_eq!(
+            ask(&probe, &mut context, "yes\n", 1),
+            (true, "Change it? (yes/no) ".to_string())
+        );
+        assert_eq!(
+            ask(&probe, &mut context, "  NO \n", 1),
+            (false, "Change it? (yes/no) ".to_string())
+        );
         // End of input means no; 'all' is not an option for a single task.
-        assert_eq!(ask(&probe, &mut context, "", 1), (false, "Change it? (yes/no) ".to_string()));
+        assert_eq!(
+            ask(&probe, &mut context, "", 1),
+            (false, "Change it? (yes/no) ".to_string())
+        );
         assert_eq!(
             ask(&probe, &mut context, "all\ny\n", 1),
             (true, "Change it? (yes/no) Change it? (yes/no) ".to_string())
@@ -735,7 +752,10 @@ mod tests {
         context.config.set("confirmation", "off");
         assert_eq!(ask(&probe, &mut context, "no\n", 1), (true, String::new()));
         context.config.set("confirmation", "on");
-        assert_eq!(ask(&write_probe(false), &mut context, "no\n", 1), (true, String::new()));
+        assert_eq!(
+            ask(&write_probe(false), &mut context, "no\n", 1),
+            (true, String::new())
+        );
     }
 
     #[test]
@@ -748,7 +768,10 @@ mod tests {
 
         // At bulk the (yes/no/all/quit) prompt appears even without needs_confirm.
         let prompt = "Change it? (yes/no/all/quit) ";
-        assert_eq!(ask(&probe, &mut context, "y\n", 3), (true, prompt.to_string()));
+        assert_eq!(
+            ask(&probe, &mut context, "y\n", 3),
+            (true, prompt.to_string())
+        );
         assert!(!probe.meta.first_iteration.get());
         // Later prompts are preceded by a blank line (verbose=blank); unknown
         // and ambiguous-free retries re-ask; 'Yes' lower-cases to 'yes'.
@@ -756,11 +779,17 @@ mod tests {
             ask(&probe, &mut context, "maybe\n\nYes\n", 3),
             (true, format!("\n{prompt}{prompt}{prompt}"))
         );
-        assert_eq!(ask(&probe, &mut context, "n\n", 3), (false, format!("\n{prompt}")));
+        assert_eq!(
+            ask(&probe, &mut context, "n\n", 3),
+            (false, format!("\n{prompt}"))
+        );
         assert!(!probe.meta.permission_all.get() && !probe.meta.permission_quit.get());
 
         // 'all': granted now and for every later call, without asking.
-        assert_eq!(ask(&probe, &mut context, "a\n", 3), (true, format!("\n{prompt}")));
+        assert_eq!(
+            ask(&probe, &mut context, "a\n", 3),
+            (true, format!("\n{prompt}"))
+        );
         assert!(probe.meta.permission_all.get());
         assert_eq!(ask(&probe, &mut context, "no\n", 5), (true, String::new()));
         assert_eq!(ask(&probe, &mut context, "no\n", 1), (true, String::new()));
@@ -779,16 +808,31 @@ mod tests {
         let prompt = "Change it? (yes/no/all/quit) ";
 
         // needs_confirm + confirmation: even 1 < quantity < bulk asks.
-        assert_eq!(ask(&probe, &mut context, "quit\n", 2), (false, prompt.to_string()));
+        assert_eq!(
+            ask(&probe, &mut context, "quit\n", 2),
+            (false, prompt.to_string())
+        );
         assert!(probe.meta.permission_quit.get());
         // 'quit' refuses every later call without asking.
-        assert_eq!(ask(&probe, &mut context, "yes\n", 2), (false, String::new()));
-        assert_eq!(ask(&probe, &mut context, "yes\n", 1), (false, String::new()));
+        assert_eq!(
+            ask(&probe, &mut context, "yes\n", 2),
+            (false, String::new())
+        );
+        assert_eq!(
+            ask(&probe, &mut context, "yes\n", 1),
+            (false, String::new())
+        );
 
         // End of input means 'quit'; no blank line without verbose=blank.
         let fresh = write_probe(true);
-        assert_eq!(ask(&fresh, &mut context, "y\n", 4), (true, prompt.to_string()));
-        assert_eq!(ask(&fresh, &mut context, "", 4), (false, prompt.to_string()));
+        assert_eq!(
+            ask(&fresh, &mut context, "y\n", 4),
+            (true, prompt.to_string())
+        );
+        assert_eq!(
+            ask(&fresh, &mut context, "", 4),
+            (false, prompt.to_string())
+        );
         assert!(fresh.meta.permission_quit.get());
     }
 
@@ -806,7 +850,11 @@ mod tests {
         delete.meta().permission_all.set(true);
         delete.meta().first_iteration.set(false);
         let other = second["delete"].meta();
-        assert!(!other.permission_quit.get() && !other.permission_all.get() && other.first_iteration.get());
+        assert!(
+            !other.permission_quit.get()
+                && !other.permission_all.get()
+                && other.first_iteration.get()
+        );
     }
 
     #[test]
@@ -951,7 +999,7 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 25] = [
+    const PORTED: [&str; 40] = [
         "_columns",
         "_config",
         "_get",
@@ -965,16 +1013,31 @@ mod tests {
         "_zshids",
         "_zshuuids",
         "add",
+        "annotate",
+        "append",
         "calc",
         "colors",
         "columns",
         "config",
         "count",
+        "delete",
+        "denotate",
+        "duplicate",
+        "done",
         "export",
         "ids",
+        "import",
+        "import-v2",
         "information",
         "log",
+        "modify",
+        "prepend",
+        "purge",
         "reports",
+        "start",
+        "stop",
+        "synchronize",
+        "undo",
         "uuids",
         "version",
     ];
@@ -1008,7 +1071,10 @@ mod tests {
         let config = default_config();
         let mut all = Registry::new();
         factory(&mut all, &config).unwrap();
-        assert_eq!(all.len(), CPP_BUILTIN_KEYWORDS.len() + CPP_DEFAULT_REPORTS.len());
+        assert_eq!(
+            all.len(),
+            CPP_BUILTIN_KEYWORDS.len() + CPP_DEFAULT_REPORTS.len()
+        );
 
         let mut expected: Vec<&str> = CPP_BUILTIN_KEYWORDS.to_vec();
         expected.extend(CPP_DEFAULT_REPORTS.iter().map(|(name, _)| *name));
@@ -1043,13 +1109,7 @@ mod tests {
     /// accepts_modifications, accepts_miscellaneous, category), as set by
     /// the C++ constructors (or left at the `Command::Command` defaults).
     #[allow(clippy::type_complexity)]
-    const SPOT_CHECKS: [(
-        &str,
-        &str,
-        &str,
-        [bool; 9],
-        Category,
-    ); 10] = [
+    const SPOT_CHECKS: [(&str, &str, &str, [bool; 9], Category); 10] = [
         (
             "add",
             "task          add <mods>",
@@ -1166,8 +1226,14 @@ mod tests {
             }
             let mut output = String::new();
             let err = command.execute(&mut context, &mut output).unwrap_err();
-            assert!(matches!(&err, TwError::NotImplemented(k) if k == keyword), "{keyword}");
-            assert_eq!(err.to_string(), format!("Command '{keyword}' is not yet implemented."));
+            assert!(
+                matches!(&err, TwError::NotImplemented(k) if k == keyword),
+                "{keyword}"
+            );
+            assert_eq!(
+                err.to_string(),
+                format!("Command '{keyword}' is not yet implemented.")
+            );
             assert_eq!(output, "");
             stubs += 1;
         }
@@ -1186,7 +1252,10 @@ mod tests {
             if keyword == "config" {
                 // Without a name to modify, `config` fails like C++.
                 let err = all[keyword].execute(&mut context, &mut output).unwrap_err();
-                assert_eq!(err.to_string(), "Specify the name of a config variable to modify.");
+                assert_eq!(
+                    err.to_string(),
+                    "Specify the name of a config variable to modify."
+                );
                 assert_eq!(output, "");
                 continue;
             }
@@ -1225,6 +1294,21 @@ mod tests {
                     | "information"
                     | "_zshattributes"
                     | "_columns"
+                    | "modify"
+                    | "done"
+                    | "delete"
+                    | "start"
+                    | "stop"
+                    | "annotate"
+                    | "denotate"
+                    | "append"
+                    | "prepend"
+                    | "duplicate"
+                    | "import"
+                    | "import-v2"
+                    | "undo"
+                    | "synchronize"
+                    | "purge"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);
@@ -1236,7 +1320,10 @@ mod tests {
                 let rc = all[keyword].execute(&mut context, &mut output).unwrap();
                 if !context.color() {
                     assert_eq!(rc, 1);
-                    assert!(output.starts_with("Color is currently turned off"), "{output:?}");
+                    assert!(
+                        output.starts_with("Color is currently turned off"),
+                        "{output:?}"
+                    );
                 } else {
                     assert_eq!(rc, 0);
                     assert!(output.contains("Basic colors"), "{output:?}");
@@ -1245,7 +1332,10 @@ mod tests {
             }
             let rc = all[keyword].execute(&mut context, &mut output).unwrap();
             assert_eq!(rc, 0, "{keyword}");
-            assert!(output.ends_with('\n') && output.len() > 1, "{keyword}: {output:?}");
+            assert!(
+                output.ends_with('\n') && output.len() > 1,
+                "{keyword}: {output:?}"
+            );
         }
     }
 }

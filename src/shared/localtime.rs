@@ -157,7 +157,12 @@ pub fn strftime(format: &str, t: &Tm) -> String {
     let mut buffer = [0u8; 256];
     // SAFETY: the buffer and its length match; format is NUL-terminated.
     let written = unsafe {
-        libc::strftime(buffer.as_mut_ptr() as *mut libc::c_char, buffer.len(), format.as_ptr(), &c)
+        libc::strftime(
+            buffer.as_mut_ptr() as *mut libc::c_char,
+            buffer.len(),
+            format.as_ptr(),
+            &c,
+        )
     };
     String::from_utf8_lossy(&buffer[..written]).into_owned()
 }
@@ -194,7 +199,12 @@ mod tests {
         assert_eq!(timegm(&mut t), 2_147_483_650);
 
         // 2009-02-30 normalizes to 2009-03-02.
-        let mut t = Tm { tm_year: 109, tm_mon: 1, tm_mday: 30, ..Tm::default() };
+        let mut t = Tm {
+            tm_year: 109,
+            tm_mon: 1,
+            tm_mday: 30,
+            ..Tm::default()
+        };
         let epoch = timegm(&mut t);
         assert_eq!((t.tm_mon, t.tm_mday), (2, 2));
         assert_eq!(epoch, 1_235_952_000);
@@ -213,7 +223,13 @@ mod tests {
             assert_eq!(t.tm_isdst, 1);
             assert_eq!(t.tm_gmtoff, -4 * 3600);
 
-            let mut t = Tm { tm_year: 110, tm_mon: 0, tm_mday: 1, tm_isdst: -1, ..Tm::default() };
+            let mut t = Tm {
+                tm_year: 110,
+                tm_mon: 0,
+                tm_mday: 1,
+                tm_isdst: -1,
+                ..Tm::default()
+            };
             assert_eq!(mktime(&mut t), 1_262_322_000);
             assert_eq!(t.tm_isdst, 0);
             assert_eq!(t.tm_wday, 5);

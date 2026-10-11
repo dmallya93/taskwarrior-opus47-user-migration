@@ -105,7 +105,11 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v33.get_bool(), false, "'foo' != 'foo' --> false");
 
     let v34 = Variant::from_bool(v3.op_ne(&v4)?);
-    t.is(v34.type_(), Type::Boolean, "'foo' != 1234567890 --> boolean");
+    t.is(
+        v34.type_(),
+        Type::Boolean,
+        "'foo' != 1234567890 --> boolean",
+    );
     t.is(v34.get_bool(), true, "'foo' != 1234567890 --> true");
 
     let v35 = Variant::from_bool(v3.op_ne(&v5)?);
@@ -125,11 +129,19 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     t.is(v42.get_bool(), true, "1234567890 != 3.14 --> true");
 
     let v43 = Variant::from_bool(v4.op_ne(&v3)?);
-    t.is(v43.type_(), Type::Boolean, "1234567890 != 'foo' --> boolean");
+    t.is(
+        v43.type_(),
+        Type::Boolean,
+        "1234567890 != 'foo' --> boolean",
+    );
     t.is(v43.get_bool(), true, "1234567890 != 'foo' --> true");
 
     let v44 = Variant::from_bool(v4.op_ne(&v4)?);
-    t.is(v44.type_(), Type::Boolean, "1234567890 != 1234567890 --> boolean");
+    t.is(
+        v44.type_(),
+        Type::Boolean,
+        "1234567890 != 1234567890 --> boolean",
+    );
     t.is(v44.get_bool(), false, "1234567890 != 1234567890 --> false");
 
     let v45 = Variant::from_bool(v4.op_ne(&v5)?);

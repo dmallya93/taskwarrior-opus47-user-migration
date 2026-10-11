@@ -90,7 +90,12 @@ pub struct SortData<'a> {
 ///   [`TwError::Runtime`].
 /// - Errors from `Task::urgency` and `TDB2::id` (C++ throws out of the
 ///   comparator). As in C++, `order` may then be partially permuted.
-pub fn sort_tasks(ctx: &mut Context, data: &mut [Task], order: &mut [usize], keys: &str) -> Result<()> {
+pub fn sort_tasks(
+    ctx: &mut Context,
+    data: &mut [Task],
+    order: &mut [usize],
+    keys: &str,
+) -> Result<()> {
     let timer = Timer::new();
 
     // Split the key defs.
@@ -109,7 +114,11 @@ pub fn sort_tasks(ctx: &mut Context, data: &mut [Task], order: &mut [usize], key
         }
     }
 
-    let mut sd = SortData { data, keys, seed: sort_random_seed() };
+    let mut sd = SortData {
+        data,
+        keys,
+        seed: sort_random_seed(),
+    };
 
     // Only sort if necessary.
     if !order.is_empty() {
@@ -162,8 +171,14 @@ fn cpp_stoul(text: &str) -> Result<u64> {
     if digits.is_empty() {
         return Err(TwError::Runtime("stoul".to_string()));
     }
-    let value: u64 = digits.parse().map_err(|_| TwError::Runtime("stoul".to_string()))?;
-    Ok(if negative { value.wrapping_neg() } else { value })
+    let value: u64 = digits
+        .parse()
+        .map_err(|_| TwError::Runtime("stoul".to_string()))?;
+    Ok(if negative {
+        value.wrapping_neg()
+    } else {
+        value
+    })
 }
 
 /// libstdc++ `std::hash<std::string>{} (s)` on LP64:
@@ -242,8 +257,10 @@ pub fn sort_projects(sorted: &mut Vec<(String, i32)>, all_projects: &BTreeMap<St
 /// std::map<std::string, bool>& allProjects)`: as [`sort_projects`] with
 /// the flags as 0/1 counts.
 pub fn sort_projects_bool(sorted: &mut Vec<(String, i32)>, all_projects: &BTreeMap<String, bool>) {
-    let all_projects_int: BTreeMap<String, i32> =
-        all_projects.iter().map(|(name, flag)| (name.clone(), i32::from(*flag))).collect();
+    let all_projects_int: BTreeMap<String, i32> = all_projects
+        .iter()
+        .map(|(name, flag)| (name.clone(), i32::from(*flag)))
+        .collect();
 
     sort_projects(sorted, &all_projects_int);
 }
@@ -252,7 +269,12 @@ pub fn sort_projects_bool(sorted: &mut Vec<(String, i32)>, all_projects: &BTreeM
 /// C++ `static bool sort_compare (int left, int right)`: "is `left` before
 /// `right`" over the sort keys; a key on which the two tasks are equal moves
 /// on to the next key, and `false` when all keys are equal.
-fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: usize) -> Result<bool> {
+fn sort_compare(
+    ctx: &mut Context,
+    sd: &mut SortData<'_>,
+    left: usize,
+    right: usize,
+) -> Result<bool> {
     for k in &sd.keys {
         let (field, ascending, _break_indicator) = Context::decompose_sort_field(k);
         let field = field.as_str();
@@ -269,7 +291,11 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                 continue;
             }
 
-            return Ok(if ascending { left_scrambled < right_scrambled } else { left_scrambled > right_scrambled });
+            return Ok(if ascending {
+                left_scrambled < right_scrambled
+            } else {
+                left_scrambled > right_scrambled
+            });
         }
         // Urgency.
         else if field == "urgency" {
@@ -280,7 +306,11 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                 continue;
             }
 
-            return Ok(if ascending { left_real < right_real } else { left_real > right_real });
+            return Ok(if ascending {
+                left_real < right_real
+            } else {
+                left_real > right_real
+            });
         }
         // Number.
         else if field == "id" {
@@ -291,11 +321,17 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                 continue;
             }
 
-            return Ok(if ascending { left_number < right_number } else { left_number > right_number });
+            return Ok(if ascending {
+                left_number < right_number
+            } else {
+                left_number > right_number
+            });
         }
         // String.
-        else if matches!(field, "description" | "project" | "status" | "tags" | "uuid" | "parent" | "imask" | "mask")
-        {
+        else if matches!(
+            field,
+            "description" | "project" | "status" | "tags" | "uuid" | "parent" | "imask" | "mask"
+        ) {
             let left_string = sd.data[left].get_ref(field);
             let right_string = sd.data[right].get_ref(field);
 
@@ -303,11 +339,22 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                 continue;
             }
 
-            return Ok(if ascending { left_string < right_string } else { left_string > right_string });
+            return Ok(if ascending {
+                left_string < right_string
+            } else {
+                left_string > right_string
+            });
         }
         // Due Date.
-        else if matches!(field, "due" | "end" | "entry" | "start" | "until" | "wait" | "modified" | "scheduled") {
-            match compare_dates(sd.data[left].get_ref(field), sd.data[right].get_ref(field), ascending) {
+        else if matches!(
+            field,
+            "due" | "end" | "entry" | "start" | "until" | "wait" | "modified" | "scheduled"
+        ) {
+            match compare_dates(
+                sd.data[left].get_ref(field),
+                sd.data[right].get_ref(field),
+                ascending,
+            ) {
                 Some(less) => return Ok(less),
                 None => continue,
             }
@@ -341,11 +388,19 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                 continue;
             }
 
-            return Ok(if ascending { left_number < right_number } else { left_number > right_number });
+            return Ok(if ascending {
+                left_number < right_number
+            } else {
+                left_number > right_number
+            });
         }
         // Duration.
         else if field == "recur" {
-            match compare_durations(sd.data[left].get_ref(field), sd.data[right].get_ref(field), ascending) {
+            match compare_durations(
+                sd.data[left].get_ref(field),
+                sd.data[right].get_ref(field),
+                ascending,
+            ) {
                 Some(less) => return Ok(less),
                 None => continue,
             }
@@ -361,7 +416,11 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                     continue;
                 }
 
-                return Ok(if ascending { left_real < right_real } else { left_real > right_real });
+                return Ok(if ascending {
+                    left_real < right_real
+                } else {
+                    left_real > right_real
+                });
             } else if type_ == "string" {
                 let left_string = sd.data[left].get_ref(field);
                 let right_string = sd.data[right].get_ref(field);
@@ -375,8 +434,14 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                     orders.get(field).map(|order| {
                         // Guaranteed to be found, because of ColUDA::validate ().
                         // (`std::find` returns `end ()` when not found.)
-                        let pos_left = order.iter().position(|v| v == left_string).unwrap_or(order.len());
-                        let pos_right = order.iter().position(|v| v == right_string).unwrap_or(order.len());
+                        let pos_left = order
+                            .iter()
+                            .position(|v| v == left_string)
+                            .unwrap_or(order.len());
+                        let pos_right = order
+                            .iter()
+                            .position(|v| v == right_string)
+                            .unwrap_or(order.len());
                         if ascending {
                             pos_left < pos_right
                         } else {
@@ -395,14 +460,26 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
                     return Ok(true);
                 }
 
-                return Ok(if ascending { left_string < right_string } else { left_string > right_string });
+                return Ok(if ascending {
+                    left_string < right_string
+                } else {
+                    left_string > right_string
+                });
             } else if type_ == "date" {
-                match compare_dates(sd.data[left].get_ref(field), sd.data[right].get_ref(field), ascending) {
+                match compare_dates(
+                    sd.data[left].get_ref(field),
+                    sd.data[right].get_ref(field),
+                    ascending,
+                ) {
                     Some(less) => return Ok(less),
                     None => continue,
                 }
             } else if type_ == "duration" {
-                match compare_durations(sd.data[left].get_ref(field), sd.data[right].get_ref(field), ascending) {
+                match compare_durations(
+                    sd.data[left].get_ref(field),
+                    sd.data[right].get_ref(field),
+                    ascending,
+                ) {
                     Some(less) => return Ok(less),
                     None => continue,
                 }
@@ -410,7 +487,10 @@ fn sort_compare(ctx: &mut Context, sd: &mut SortData<'_>, left: usize, right: us
             // Any other column type: C++ falls out of the if-chain and moves
             // on to the next key.
         } else {
-            return Err(TwError::Message(format("The '{1}' column is not a valid sort field.", &[&field])));
+            return Err(TwError::Message(format(
+                "The '{1}' column is not a valid sort field.",
+                &[&field],
+            )));
         }
     }
 
@@ -433,7 +513,11 @@ fn compare_dates(left_string: &str, right_string: &str, ascending: bool) -> Opti
         return None;
     }
 
-    Some(if ascending { left_string < right_string } else { left_string > right_string })
+    Some(if ascending {
+        left_string < right_string
+    } else {
+        left_string > right_string
+    })
 }
 
 /// The C++ duration branches (`recur` and `duration` UDAs): equal strings
@@ -447,7 +531,11 @@ fn compare_durations(left_string: &str, right_string: &str, ascending: bool) -> 
 
     let left_duration = Duration::from_string(left_string);
     let right_duration = Duration::from_string(right_string);
-    Some(if ascending { left_duration < right_duration } else { left_duration > right_duration })
+    Some(if ascending {
+        left_duration < right_duration
+    } else {
+        left_duration > right_duration
+    })
 }
 
 /// C `strtof (s.c_str (), nullptr)` (the process never calls `setlocale`, so
@@ -504,7 +592,11 @@ fn insertion_sort(v: &mut [usize], less: &mut dyn FnMut(usize, usize) -> bool) {
 }
 
 /// libstdc++ `__chunk_insertion_sort`.
-fn chunk_insertion_sort(v: &mut [usize], chunk_size: usize, less: &mut dyn FnMut(usize, usize) -> bool) {
+fn chunk_insertion_sort(
+    v: &mut [usize],
+    chunk_size: usize,
+    less: &mut dyn FnMut(usize, usize) -> bool,
+) {
     let mut first = 0;
     while v.len() - first >= chunk_size {
         insertion_sort(&mut v[first..first + chunk_size], less);
@@ -515,7 +607,12 @@ fn chunk_insertion_sort(v: &mut [usize], chunk_size: usize, less: &mut dyn FnMut
 
 /// libstdc++ `__move_merge`: merges `a` and `b` into `out`, taking from `b`
 /// only when `less (b, a)`.
-fn move_merge(a: &[usize], b: &[usize], out: &mut [usize], less: &mut dyn FnMut(usize, usize) -> bool) {
+fn move_merge(
+    a: &[usize],
+    b: &[usize],
+    out: &mut [usize],
+    less: &mut dyn FnMut(usize, usize) -> bool,
+) {
     let (mut i, mut j, mut o) = (0, 0, 0);
     while i < a.len() && j < b.len() {
         if less(b[j], a[i]) {
@@ -535,7 +632,12 @@ fn move_merge(a: &[usize], b: &[usize], out: &mut [usize], less: &mut dyn FnMut(
 
 /// libstdc++ `__merge_sort_loop`: merges runs of `step` from `src` into
 /// `dst`.
-fn merge_sort_loop(src: &[usize], dst: &mut [usize], step: usize, less: &mut dyn FnMut(usize, usize) -> bool) {
+fn merge_sort_loop(
+    src: &[usize],
+    dst: &mut [usize],
+    step: usize,
+    less: &mut dyn FnMut(usize, usize) -> bool,
+) {
     let len = src.len();
     let two_step = 2 * step;
     let mut first = 0;
@@ -550,11 +652,20 @@ fn merge_sort_loop(src: &[usize], dst: &mut [usize], step: usize, less: &mut dyn
     }
 
     let step = (len - first).min(step);
-    move_merge(&src[first..first + step], &src[first + step..], &mut dst[first..], less);
+    move_merge(
+        &src[first..first + step],
+        &src[first + step..],
+        &mut dst[first..],
+        less,
+    );
 }
 
 /// libstdc++ `__merge_sort_with_buffer`.
-fn merge_sort_with_buffer(v: &mut [usize], buffer: &mut [usize], less: &mut dyn FnMut(usize, usize) -> bool) {
+fn merge_sort_with_buffer(
+    v: &mut [usize],
+    buffer: &mut [usize],
+    less: &mut dyn FnMut(usize, usize) -> bool,
+) {
     let len = v.len();
     let buffer = &mut buffer[..len];
     let mut step = CHUNK_SIZE;
@@ -571,7 +682,12 @@ fn merge_sort_with_buffer(v: &mut [usize], buffer: &mut [usize], less: &mut dyn 
 /// libstdc++ `__merge_adaptive` when the buffer holds the shorter run:
 /// `__move_merge_adaptive` (first run buffered) or
 /// `__move_merge_adaptive_backward` (second run buffered).
-fn merge_adaptive(v: &mut [usize], middle: usize, buffer: &mut [usize], less: &mut dyn FnMut(usize, usize) -> bool) {
+fn merge_adaptive(
+    v: &mut [usize],
+    middle: usize,
+    buffer: &mut [usize],
+    less: &mut dyn FnMut(usize, usize) -> bool,
+) {
     let len = v.len();
     let len1 = middle;
     let len2 = len - middle;
@@ -724,7 +840,13 @@ mod report_sort_tests {
             }
 
             let ctx = initialized(&full);
-            Report { ctx, _dir: dir, _statics: statics, _env: env, _lock: lock }
+            Report {
+                ctx,
+                _dir: dir,
+                _statics: statics,
+                _env: env,
+                _lock: lock,
+            }
         }
 
         /// CmdCustom steps 3: `Filter::subset` with no filter.
@@ -755,7 +877,10 @@ mod report_sort_tests {
         /// Descriptions of the sorted `filtered` tasks.
         fn sorted(&mut self, filtered: &mut [Task], sort: &str) -> Vec<String> {
             let sequence = self.sequence(filtered, sort).unwrap();
-            sequence.iter().map(|&i| filtered[i].get("description")).collect()
+            sequence
+                .iter()
+                .map(|&i| filtered[i].get("description"))
+                .collect()
         }
 
         /// The full CmdCustom path: load, then sort.
@@ -788,7 +913,9 @@ mod report_sort_tests {
         let mut seed: Vec<String> = (1..=12)
             .map(|i| format!(r#"{{"description":"t{i}","status":"pending",{ENTRY}}}"#))
             .collect();
-        seed.push(format!(r#"{{"description":"done","status":"completed","end":"20210102T000000Z",{ENTRY}}}"#));
+        seed.push(format!(
+            r#"{{"description":"done","status":"completed","end":"20210102T000000Z",{ENTRY}}}"#
+        ));
         let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
         let mut r = Report::new(&[], &seed);
         let mut filtered = r.load();
@@ -831,8 +958,14 @@ mod report_sort_tests {
         assert_eq!(r.report("description"), names(&["B", "a", "c", "d"]));
         assert_eq!(r.report("description-"), names(&["d", "c", "a", "B"]));
         // completed < deleted < pending, ties on the next key.
-        assert_eq!(r.report("status+,description+"), names(&["c", "d", "B", "a"]));
-        assert_eq!(r.report("status-,description-"), names(&["a", "B", "d", "c"]));
+        assert_eq!(
+            r.report("status+,description+"),
+            names(&["c", "d", "B", "a"])
+        );
+        assert_eq!(
+            r.report("status-,description-"),
+            names(&["a", "B", "d", "c"])
+        );
         // The "tags" attribute is rebuilt in key order ("a,b").
         assert_eq!(r.report("tags+,description+"), names(&["c", "d", "B", "a"]));
         assert_eq!(r.report("tags-,description+"), names(&["a", "B", "c", "d"]));
@@ -862,16 +995,37 @@ mod report_sort_tests {
         let seed: Vec<&str> = seed.iter().map(String::as_str).collect();
         let mut r = Report::new(&[], &seed);
         // imask is in the string branch: "1" < "10" < "2"; "" first.
-        assert_eq!(r.report("imask+,description+"), names(&["plain", "tmplA", "tmplB", "c1", "c10", "c2"]));
-        assert_eq!(r.report("imask-,description+"), names(&["c2", "c10", "c1", "plain", "tmplA", "tmplB"]));
-        assert_eq!(r.report("parent+,description+"), names(&["plain", "tmplA", "tmplB", "c1", "c2", "c10"]));
-        assert_eq!(r.report("parent-,description+"), names(&["c10", "c1", "c2", "plain", "tmplA", "tmplB"]));
+        assert_eq!(
+            r.report("imask+,description+"),
+            names(&["plain", "tmplA", "tmplB", "c1", "c10", "c2"])
+        );
+        assert_eq!(
+            r.report("imask-,description+"),
+            names(&["c2", "c10", "c1", "plain", "tmplA", "tmplB"])
+        );
+        assert_eq!(
+            r.report("parent+,description+"),
+            names(&["plain", "tmplA", "tmplB", "c1", "c2", "c10"])
+        );
+        assert_eq!(
+            r.report("parent-,description+"),
+            names(&["c10", "c1", "c2", "plain", "tmplA", "tmplB"])
+        );
         // '+' (43) < '-' (45).
-        assert_eq!(r.report("mask+,description+"), names(&["c1", "c10", "c2", "plain", "tmplB", "tmplA"]));
+        assert_eq!(
+            r.report("mask+,description+"),
+            names(&["c1", "c10", "c2", "plain", "tmplB", "tmplA"])
+        );
         // recur: parsed durations (unset = 0); identical strings go on to the
         // next key.
-        assert_eq!(r.report("recur+,description+"), names(&["plain", "c10", "tmplB", "c1", "c2", "tmplA"]));
-        assert_eq!(r.report("recur-,description+"), names(&["c1", "c2", "tmplA", "c10", "tmplB", "plain"]));
+        assert_eq!(
+            r.report("recur+,description+"),
+            names(&["plain", "c10", "tmplB", "c1", "c2", "tmplA"])
+        );
+        assert_eq!(
+            r.report("recur-,description+"),
+            names(&["c1", "c2", "tmplA", "c10", "tmplB", "plain"])
+        );
     }
 
     /// Every built-in date attribute plus a date UDA, as stored epochs.
@@ -882,7 +1036,10 @@ mod report_sort_tests {
         const FIELDS: [&str; 7] = ["due", "end", "start", "until", "wait", "scheduled", "when"];
         let all_dates = |d: &str, iso: &str, entry: &str| {
             let dates: Vec<String> = FIELDS.iter().map(|f| format!(r#""{f}":"{iso}""#)).collect();
-            format!(r#"{{"description":"{d}","status":"completed",{},"entry":"{entry}"}}"#, dates.join(","))
+            format!(
+                r#"{{"description":"{d}","status":"completed",{},"entry":"{entry}"}}"#,
+                dates.join(",")
+            )
         };
         let seed = [
             all_dates("late", "20210102T000000Z", "20210102T000000Z"),
@@ -926,8 +1083,14 @@ mod report_sort_tests {
                 "{field}"
             );
         }
-        assert_eq!(r.report("entry+,description+"), names(&["early", "late", "lex10", "lex9", "none"]));
-        assert_eq!(r.report("entry-,description+"), names(&["none", "lex10", "lex9", "late", "early"]));
+        assert_eq!(
+            r.report("entry+,description+"),
+            names(&["early", "late", "lex10", "lex9", "none"])
+        );
+        assert_eq!(
+            r.report("entry-,description+"),
+            names(&["none", "lex10", "lex9", "late", "early"])
+        );
 
         // `modified` is stamped by tdb2::add; set it on the loaded tasks
         // (CmdCustom sorts exactly what Filter::subset returned).
@@ -941,8 +1104,14 @@ mod report_sort_tests {
                 _ => task.remove("modified"),
             }
         }
-        assert_eq!(r.sorted(&mut filtered, "modified+,description+"), names(&["lex10", "early", "late", "lex9", "none"]));
-        assert_eq!(r.sorted(&mut filtered, "modified-,description+"), names(&["lex9", "late", "early", "lex10", "none"]));
+        assert_eq!(
+            r.sorted(&mut filtered, "modified+,description+"),
+            names(&["lex10", "early", "late", "lex9", "none"])
+        );
+        assert_eq!(
+            r.sorted(&mut filtered, "modified-,description+"),
+            names(&["lex9", "late", "early", "lex10", "none"])
+        );
     }
 
     #[test]
@@ -950,10 +1119,15 @@ mod report_sort_tests {
         const U1: &str = "cccccccc-0000-4000-8000-000000000001";
         const U2: &str = "cccccccc-0000-4000-8000-000000000002";
         const U3: &str = "cccccccc-0000-4000-8000-000000000003";
-        let plain = |d: &str, u: &str| format!(r#"{{"uuid":"{u}","description":"{d}","status":"pending",{ENTRY}}}"#);
+        let plain = |d: &str, u: &str| {
+            format!(r#"{{"uuid":"{u}","description":"{d}","status":"pending",{ENTRY}}}"#)
+        };
         let dep = |d: &str, uuids: &[&str]| {
             let list: Vec<String> = uuids.iter().map(|u| format!("\"{u}\"")).collect();
-            format!(r#"{{"description":"{d}","status":"pending","depends":[{}],{ENTRY}}}"#, list.join(","))
+            format!(
+                r#"{{"description":"{d}","status":"pending","depends":[{}],{ENTRY}}}"#,
+                list.join(",")
+            )
         };
         let seed = [
             plain("u1", U1),
@@ -1015,16 +1189,31 @@ mod report_sort_tests {
         assert_eq!(plain, names(&["n", "h1", "w2", "w1"]));
         assert_eq!(r.report("project+/,description-"), plain);
         assert_eq!(r.report("project+/,description-/"), plain);
-        assert_eq!(r.report("project-/,description+"), names(&["w1", "w2", "h1", "n"]));
+        assert_eq!(
+            r.report("project-/,description+"),
+            names(&["w1", "w2", "h1", "n"])
+        );
 
         // C++ decomposeSortField: '/' without '+'/'-' stays part of the key.
-        assert_eq!(r.report_err("project/"), "The 'project/' column is not a valid sort field.");
-        assert_eq!(r.report_err("bogus+"), "The 'bogus' column is not a valid sort field.");
+        assert_eq!(
+            r.report_err("project/"),
+            "The 'project/' column is not a valid sort field."
+        );
+        assert_eq!(
+            r.report_err("bogus+"),
+            "The 'bogus' column is not a valid sort field."
+        );
         // Reached only when earlier keys tie.
-        assert_eq!(r.report_err("project,bogus-"), "The 'bogus' column is not a valid sort field.");
+        assert_eq!(
+            r.report_err("project,bogus-"),
+            "The 'bogus' column is not a valid sort field."
+        );
         // The legacy map does not rewrite the string passed to sort_tasks
         // (and removed names are not mapped at all).
-        assert_eq!(r.report_err("entry_time"), "The 'entry_time' column is not a valid sort field.");
+        assert_eq!(
+            r.report_err("entry_time"),
+            "The 'entry_time' column is not a valid sort field."
+        );
         assert!(!r.ctx.columns.contains_key("bogus"));
     }
 
@@ -1052,8 +1241,14 @@ mod report_sort_tests {
         // `Task::customOrder` is appended to by every Context initialization
         // on the thread (C++: once per process; the seeding Context ran it
         // too). `std::find` takes the first match, so only the prefix counts.
-        assert!(Task::custom_order().get("size").unwrap().starts_with(&names(&["L", "M", "H"])));
-        assert!(Task::custom_order().get("sizee").unwrap().starts_with(&names(&["", "L", "M", "H"])));
+        assert!(Task::custom_order()
+            .get("size")
+            .unwrap()
+            .starts_with(&names(&["L", "M", "H"])));
+        assert!(Task::custom_order()
+            .get("sizee")
+            .unwrap()
+            .starts_with(&names(&["", "L", "M", "H"])));
         // customOrder is the reversed value list; "" is not in it (end ()).
         assert_eq!(r.report("size+"), names(&["l", "m", "h", "none"]));
         assert_eq!(r.report("size-"), names(&["none", "h", "m", "l"]));
@@ -1075,8 +1270,14 @@ mod report_sort_tests {
         );
         assert!(!Task::custom_order().contains_key("plain"));
         // Empty values are last in both directions; two empties tie.
-        assert_eq!(r.report("plain+,description-"), names(&["a", "b", "none2", "none1"]));
-        assert_eq!(r.report("plain-,description+"), names(&["b", "a", "none1", "none2"]));
+        assert_eq!(
+            r.report("plain+,description-"),
+            names(&["a", "b", "none2", "none1"])
+        );
+        assert_eq!(
+            r.report("plain-,description+"),
+            names(&["b", "a", "none1", "none2"])
+        );
     }
 
     #[test]
@@ -1100,7 +1301,9 @@ mod report_sort_tests {
 
     #[test]
     fn random_is_deterministic_with_seed() {
-        let uuids: Vec<String> = (0..10).map(|i| format!("dddddddd-0000-4000-8000-{i:012}")).collect();
+        let uuids: Vec<String> = (0..10)
+            .map(|i| format!("dddddddd-0000-4000-8000-{i:012}"))
+            .collect();
         let seed: Vec<String> = uuids
             .iter()
             .map(|u| format!(r#"{{"uuid":"{u}","description":"{u}","status":"pending",{ENTRY}}}"#))
@@ -1140,7 +1343,9 @@ mod report_sort_tests {
         }
         let mut sorted = Vec::new();
         sort_projects(&mut sorted, &unique);
-        let pairs = |l: &[(&str, i32)]| -> Vec<(String, i32)> { l.iter().map(|(n, c)| (n.to_string(), *c)).collect() };
+        let pairs = |l: &[(&str, i32)]| -> Vec<(String, i32)> {
+            l.iter().map(|(n, c)| (n.to_string(), *c)).collect()
+        };
         assert_eq!(
             sorted,
             pairs(&[

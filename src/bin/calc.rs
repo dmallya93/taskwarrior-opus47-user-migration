@@ -134,7 +134,10 @@ fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 
         // catch (const std::string& error)
         Ok(Err(
-            error @ (TwError::Message(_) | TwError::Io(_) | TwError::NotImplemented(_) | TwError::TaskChampion(_)),
+            error @ (TwError::Message(_)
+            | TwError::Io(_)
+            | TwError::NotImplemented(_)
+            | TwError::TaskChampion(_)),
         )) => {
             let _ = writeln!(err, "{error}");
             -1
@@ -151,7 +154,9 @@ fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
 /// Deviation: arguments that are not valid UTF-8 are converted lossily
 /// (the evaluator works on `&str`); C++ passes the raw bytes through.
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args_os().map(|a| a.to_string_lossy().into_owned()).collect();
+    let args: Vec<String> = std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     let mut stdout = std::io::stdout();
     let mut stderr = std::io::stderr();
     let status = run(&args, &mut stdout, &mut stderr);
@@ -165,18 +170,31 @@ mod tests {
     use super::*;
 
     fn calc(list: &[&str]) -> (i32, String, String) {
-        let args: Vec<String> = std::iter::once("calc").chain(list.iter().copied()).map(String::from).collect();
+        let args: Vec<String> = std::iter::once("calc")
+            .chain(list.iter().copied())
+            .map(String::from)
+            .collect();
         let mut out = Vec::new();
         let mut err = Vec::new();
         let status = run(&args, &mut out, &mut err);
-        (status, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
+        (
+            status,
+            String::from_utf8(out).unwrap(),
+            String::from_utf8(err).unwrap(),
+        )
     }
 
     #[test]
     fn regular_math() {
-        assert_eq!(calc(&["12 * 3600 + 34 * 60 + 56"]), (0, "45296\n".into(), String::new()));
+        assert_eq!(
+            calc(&["12 * 3600 + 34 * 60 + 56"]),
+            (0, "45296\n".into(), String::new())
+        );
         // Arguments are joined with spaces.
-        assert_eq!(calc(&["12", "*", "3600"]), (0, "43200\n".into(), String::new()));
+        assert_eq!(
+            calc(&["12", "*", "3600"]),
+            (0, "43200\n".into(), String::new())
+        );
     }
 
     #[test]
@@ -188,8 +206,15 @@ mod tests {
 
     #[test]
     fn postfix_math() {
-        assert_eq!(calc(&["--postfix", "12 3600 * 34 60 * 56 + +"]), (0, "45296\n".into(), String::new()));
-        assert_eq!(calc(&["-p", "-i", "1+2"]), (0, "3\n".into(), String::new()), "last option wins");
+        assert_eq!(
+            calc(&["--postfix", "12 3600 * 34 60 * 56 + +"]),
+            (0, "45296\n".into(), String::new())
+        );
+        assert_eq!(
+            calc(&["-p", "-i", "1+2"]),
+            (0, "3\n".into(), String::new()),
+            "last option wins"
+        );
     }
 
     #[test]
@@ -199,7 +224,10 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines.contains(&"Eval literal number ↑'2'"), "{out}");
         assert!(lines.contains(&"Eval _neg_ ↓'3' → ↑'-3'"), "{out}");
-        assert!(lines[0].starts_with("\x1b[1;37;42mFILTER\x1b[0m Infix        "), "{out}");
+        assert!(
+            lines[0].starts_with("\x1b[1;37;42mFILTER\x1b[0m Infix        "),
+            "{out}"
+        );
         assert_eq!(lines.last(), Some(&"5"));
         assert_eq!(calc(&["-d", "1"]).1.lines().last(), Some("1"));
     }
@@ -216,7 +244,10 @@ mod tests {
     fn help() {
         let expected = "\nUsage: calc [options] '<expression>'\n\nOptions:\n  -h|--help         Display this usage\n  -d|--debug        Debug mode\n  -i|--infix        Infix expression (default)\n  -p|--postfix      Postfix expression\n\n";
         assert_eq!(calc(&["--help"]), (1, expected.into(), String::new()));
-        assert_eq!(calc(&["1+1", "-h", "--bogus"]), (1, expected.into(), String::new()));
+        assert_eq!(
+            calc(&["1+1", "-h", "--bogus"]),
+            (1, expected.into(), String::new())
+        );
     }
 
     #[test]
@@ -231,9 +262,15 @@ mod tests {
 
     #[test]
     fn errors() {
-        assert_eq!(calc(&[]), (-1, String::new(), "No expression to evaluate.\n".into()));
+        assert_eq!(
+            calc(&[]),
+            (-1, String::new(), "No expression to evaluate.\n".into())
+        );
         // Debug messages are not shown when evaluation throws.
         let (status, out, err) = calc(&["-d"]);
-        assert_eq!((status, out.as_str(), err.as_str()), (-1, "", "No expression to evaluate.\n"));
+        assert_eq!(
+            (status, out.as_str(), err.as_str()),
+            (-1, "", "No expression to evaluate.\n")
+        );
     }
 }

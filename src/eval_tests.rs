@@ -17,14 +17,18 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        }
     }
 
     /// C++ `UnitTest::ok`.
     fn ok(&mut self, expression: bool, name: &str) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -48,7 +52,8 @@ impl UnitTest {
     fn is_tol(&mut self, actual: f64, expected: f64, tolerance: f64, name: &str) {
         self.counter += 1;
         if (actual - expected).abs() > tolerance {
-            self.failures.push(format!("not ok {} - {}", self.counter, name));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name));
         }
     }
 
@@ -95,99 +100,188 @@ fn eval_test_cpp() {
     let e = Eval::new();
     let mut r = FnResolver::new(get);
     let result = e.evaluate_postfix_expression("x", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix 'x' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix 'x' --> boolean",
+    );
     t.is(result.get_bool(), true, "postfix 'x' --> true");
 
     let result = e.evaluate_postfix_expression("pi", &mut r).unwrap();
     t.is(result.type_(), VariantType::Real, "postfix 'pi' --> real");
-    t.is_tol(result.get_real(), 3.141592, 0.00001, "postfix 'pi' --> 3.14159265");
+    t.is_tol(
+        result.get_real(),
+        3.141592,
+        0.00001,
+        "postfix 'pi' --> 3.14159265",
+    );
 
     let result = e.evaluate_postfix_expression("foo", &mut r).unwrap();
-    t.is(result.type_(), VariantType::String, "postfix 'foo' --> string");
+    t.is(
+        result.type_(),
+        VariantType::String,
+        "postfix 'foo' --> string",
+    );
     t.is(result.get_string(), "foo", "postfix 'foo' --> 'foo'");
 
     // Simple infix arithmetic.
     let result = e.evaluate_infix_expression("1+2", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "infix '1 + 2' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "infix '1 + 2' --> integer",
+    );
     t.is(result.get_integer(), 3, "infix '1 + 2' --> 3");
 
     // Simple postfix arithmetic.
     let result = e.evaluate_postfix_expression("1 2 +", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "postfix '1 2 +' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "postfix '1 2 +' --> integer",
+    );
     t.is(result.get_integer(), 3, "postfix '1 2 +' --> 3");
 
     let result = e.evaluate_postfix_expression("1 2 -", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "postfix '1 2 -' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "postfix '1 2 -' --> integer",
+    );
     t.is(result.get_integer(), -1, "postfix '1 2 -' --> -1");
 
     let result = e.evaluate_postfix_expression("2 3 *", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "postfix '2 3 *' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "postfix '2 3 *' --> integer",
+    );
     t.is(result.get_integer(), 6, "postfix '2 3 *' --> 6");
 
     let result = e.evaluate_postfix_expression("5 2 /", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "postfix '5 2 /' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "postfix '5 2 /' --> integer",
+    );
     t.is(result.get_integer(), 2, "postfix '5 2 /' --> 2");
 
     let result = e.evaluate_postfix_expression("5 2 /", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "postfix '5 2 *' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "postfix '5 2 *' --> integer",
+    );
     t.is(result.get_integer(), 2, "postfix '5 2 *' --> 2");
 
     // Simple postfix unary operator.
     let result = e.evaluate_postfix_expression("0 !", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix '0 !' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix '0 !' --> boolean",
+    );
     t.is(result.get_bool(), true, "postfix '0 !' --> true");
 
     let result = e.evaluate_postfix_expression("1 !", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix '1 !' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix '1 !' --> boolean",
+    );
     t.is(result.get_bool(), false, "postfix '1 !' --> false");
 
     // Type promotion simple postfix arithmetic.
     let result = e.evaluate_postfix_expression("1 2.3 +", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Real, "postfix '1 2.3 +' --> real");
+    t.is(
+        result.type_(),
+        VariantType::Real,
+        "postfix '1 2.3 +' --> real",
+    );
     t.is(result.get_real(), 3.3, "postfix '1 2.3 +' --> 3.3");
 
     let result = e.evaluate_postfix_expression("5 2.0 /", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Real, "postfix '5 2.0 /' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Real,
+        "postfix '5 2.0 /' --> integer",
+    );
     t.is(result.get_real(), 2.5, "postfix '5 2.0 /' --> 2.5");
 
     // Simple logic.
     let result = e.evaluate_postfix_expression("0 0 ||", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix '0 0 ||' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix '0 0 ||' --> boolean",
+    );
     t.is(result.get_bool(), false, "postfix '0 0 ||' --> false");
 
     let result = e.evaluate_postfix_expression("0 1 ||", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix '0 1 ||' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix '0 1 ||' --> boolean",
+    );
     t.is(result.get_bool(), true, "postfix '0 1 ||' --> true");
 
     let result = e.evaluate_postfix_expression("1 0 ||", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix '1 0 ||' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix '1 0 ||' --> boolean",
+    );
     t.is(result.get_bool(), true, "postfix '1 0 ||' --> true");
 
     let result = e.evaluate_postfix_expression("1 1 ||", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "postfix '1 1 ||' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "postfix '1 1 ||' --> boolean",
+    );
     t.is(result.get_bool(), true, "postfix '1 1 ||' --> true");
 
     let result = e.evaluate_infix_expression("2*3+1", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "infix '2*3+1' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "infix '2*3+1' --> integer",
+    );
     t.is(result.get_integer(), 7, "infix '2*3+1' --> 7");
 
     // TW-1254 - Unary minus support.
     let result = e.evaluate_infix_expression("2- -3", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "infix '2- -3' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "infix '2- -3' --> integer",
+    );
     t.is(result.get_integer(), 5, "infix '2- -3' --> 5");
 
     // e.debug ();
     let result = e.evaluate_infix_expression("!false", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "infix '!false' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "infix '!false' --> boolean",
+    );
     t.is(result.get_bool(), true, "infix '!false' --> true");
 
     let result = e.evaluate_infix_expression("!true", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Boolean, "infix '!true' --> boolean");
+    t.is(
+        result.type_(),
+        VariantType::Boolean,
+        "infix '!true' --> boolean",
+    );
     t.is(result.get_bool(), false, "infix '!true' --> false");
 
     // _neg_
     let result = e.evaluate_infix_expression("- 1", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Integer, "infix '- 1' --> integer");
+    t.is(
+        result.type_(),
+        VariantType::Integer,
+        "infix '- 1' --> integer",
+    );
     t.is(result.get_integer(), -1, "infix '- 1' --> -1");
 
     let result = e.evaluate_infix_expression("- 1.2", &mut r).unwrap();
@@ -195,8 +289,16 @@ fn eval_test_cpp() {
     t.is(result.get_real(), -1.2, "infix '- 1.2' --> -1.2");
 
     let result = e.evaluate_infix_expression("- 2days", &mut r).unwrap();
-    t.is(result.type_(), VariantType::Duration, "infix '- 2days' --> duration");
-    t.is(result.get_duration(), -86400 * 2, "infix '- 2days' --> -86400 * 2");
+    t.is(
+        result.type_(),
+        VariantType::Duration,
+        "infix '- 2days' --> duration",
+    );
+    t.is(
+        result.get_duration(),
+        -86400 * 2,
+        "infix '- 2days' --> -86400 * 2",
+    );
 
     t.check(52);
 }
@@ -236,7 +338,10 @@ impl VariantTask for TagTask {
 }
 
 fn tag_task(tags: &[&'static str]) -> TagTask {
-    TagTask { tags: tags.to_vec(), annotations: BTreeMap::new() }
+    TagTask {
+        tags: tags.to_vec(),
+        annotations: BTreeMap::new(),
+    }
 }
 
 /// The C++ `Lexer` token vector for `expression`.
@@ -258,15 +363,15 @@ fn operator_tables() {
     assert_eq!(
         all,
         [
-            "^", "!", "_neg_", "_pos_", "_hastag_", "_notag_", "*", "/", "%", "+", "-", "<=", ">=", ">", "<", "=",
-            "==", "!=", "!==", "~", "!~", "and", "or", "xor", "(", ")"
+            "^", "!", "_neg_", "_pos_", "_hastag_", "_notag_", "*", "/", "%", "+", "-", "<=", ">=",
+            ">", "<", "=", "==", "!=", "!==", "~", "!~", "and", "or", "xor", "(", ")"
         ]
     );
     assert_eq!(
         Eval::get_binary_operators(),
         [
-            "^", "_hastag_", "_notag_", "*", "/", "%", "+", "-", "<=", ">=", ">", "<", "=", "==", "!=", "!==", "~",
-            "!~", "and", "or", "xor"
+            "^", "_hastag_", "_notag_", "*", "/", "%", "+", "-", "<=", ">=", ">", "<", "=", "==",
+            "!=", "!==", "~", "!~", "and", "or", "xor"
         ]
     );
 
@@ -312,7 +417,10 @@ fn precedence_and_associativity() {
     let mut tokens = lex("1 + 2 * 3 ^ 2 ^ 2 - 4");
     e.infix_parse(&mut tokens, &mut NoDom::new()).unwrap();
     e.infix_to_postfix(&mut tokens).unwrap();
-    assert_eq!(texts(&tokens), ["1", "2", "3", "2", "2", "^", "^", "*", "+", "4", "-"]);
+    assert_eq!(
+        texts(&tokens),
+        ["1", "2", "3", "2", "2", "^", "^", "*", "+", "4", "-"]
+    );
 
     let mut tokens = lex("( 1 + 2 ) * 3");
     e.infix_to_postfix(&mut tokens).unwrap();
@@ -349,9 +457,15 @@ fn unary_operators() {
     let e = Eval::new();
     let mut tokens = lex("- 1 + + 2 - - 3");
     e.infix_parse(&mut tokens, &mut NoDom::new()).unwrap();
-    assert_eq!(texts(&tokens), ["_neg_", "1", "+", "_pos_", "2", "-", "_neg_", "3"]);
+    assert_eq!(
+        texts(&tokens),
+        ["_neg_", "1", "+", "_pos_", "2", "-", "_neg_", "3"]
+    );
     e.infix_to_postfix(&mut tokens).unwrap();
-    assert_eq!(texts(&tokens), ["1", "_neg_", "2", "_pos_", "+", "3", "_neg_", "-"]);
+    assert_eq!(
+        texts(&tokens),
+        ["1", "_neg_", "2", "_pos_", "+", "3", "_neg_", "-"]
+    );
 
     // Postfix spellings.
     assert_eq!(postfix("4 _neg_").unwrap().get_integer(), -4);
@@ -366,18 +480,39 @@ fn errors() {
     let _lock = env_lock();
     assert_eq!(message(postfix("")), "No expression to evaluate.");
     assert_eq!(message(infix("")), "No expression to evaluate.");
-    assert_eq!(message(postfix("!")), "The expression could not be evaluated.");
-    assert_eq!(message(postfix("_neg_")), "The expression could not be evaluated.");
-    assert_eq!(message(postfix("1 +")), "The expression could not be evaluated.");
+    assert_eq!(
+        message(postfix("!")),
+        "The expression could not be evaluated."
+    );
+    assert_eq!(
+        message(postfix("_neg_")),
+        "The expression could not be evaluated."
+    );
+    assert_eq!(
+        message(postfix("1 +")),
+        "The expression could not be evaluated."
+    );
     assert_eq!(message(postfix("1 2")), "The value is not an expression.");
-    assert_eq!(message(infix("(1+2")), "Mismatched parentheses in expression");
-    assert_eq!(message(infix("1+2)")), "Mismatched parentheses in expression");
+    assert_eq!(
+        message(infix("(1+2")),
+        "Mismatched parentheses in expression"
+    );
+    assert_eq!(
+        message(infix("1+2)")),
+        "Mismatched parentheses in expression"
+    );
     assert_eq!(message(infix("1 2")), "The value is not an expression.");
     // Without a current task the task operators are unsupported.
     assert_eq!(message(postfix("a b ~")), "Unsupported operator '~'.");
     assert_eq!(message(postfix("a b !~")), "Unsupported operator '!~'.");
-    assert_eq!(message(postfix("a b _hastag_")), "Unsupported operator '_hastag_'.");
-    assert_eq!(message(postfix("a b _notag_")), "Unsupported operator '_notag_'.");
+    assert_eq!(
+        message(postfix("a b _hastag_")),
+        "Unsupported operator '_hastag_'."
+    );
+    assert_eq!(
+        message(postfix("a b _notag_")),
+        "Unsupported operator '_notag_'."
+    );
     // Not in the table: '(' reaches the binary evaluator.
     assert_eq!(message(postfix("1 2 (")), "Unsupported operator '('.");
     // `_pos_` is a NOP even on an empty stack, leaving nothing to return.
@@ -450,16 +585,37 @@ fn task_operators_use_the_current_task() {
     let task = tag_task(&["home", "next"]);
     let mut r = FnResolver::with_task(get, &task);
 
-    assert!(e.evaluate_postfix_expression("tags home _hastag_", &mut r).unwrap().get_bool());
-    assert!(!e.evaluate_postfix_expression("tags work _hastag_", &mut r).unwrap().get_bool());
-    assert!(e.evaluate_postfix_expression("tags work _notag_", &mut r).unwrap().get_bool());
-    assert!(!e.evaluate_postfix_expression("tags next _notag_", &mut r).unwrap().get_bool());
+    assert!(e
+        .evaluate_postfix_expression("tags home _hastag_", &mut r)
+        .unwrap()
+        .get_bool());
+    assert!(!e
+        .evaluate_postfix_expression("tags work _hastag_", &mut r)
+        .unwrap()
+        .get_bool());
+    assert!(e
+        .evaluate_postfix_expression("tags work _notag_", &mut r)
+        .unwrap()
+        .get_bool());
+    assert!(!e
+        .evaluate_postfix_expression("tags next _notag_", &mut r)
+        .unwrap()
+        .get_bool());
     // Infix: _hastag_ binds tighter than `and`.
-    assert!(e.evaluate_infix_expression("tags _hastag_ home and tags _notag_ work", &mut r).unwrap().get_bool());
+    assert!(e
+        .evaluate_infix_expression("tags _hastag_ home and tags _notag_ work", &mut r)
+        .unwrap()
+        .get_bool());
 
     // Regex match through the current task.
-    assert!(e.evaluate_infix_expression("'foobar' ~ 'oba'", &mut r).unwrap().get_bool());
-    assert!(!e.evaluate_infix_expression("'foobar' !~ 'oba'", &mut r).unwrap().get_bool());
+    assert!(e
+        .evaluate_infix_expression("'foobar' ~ 'oba'", &mut r)
+        .unwrap()
+        .get_bool());
+    assert!(!e
+        .evaluate_infix_expression("'foobar' !~ 'oba'", &mut r)
+        .unwrap()
+        .get_bool());
 }
 
 #[test]
@@ -467,10 +623,19 @@ fn compiled_expression_in_a_task_loop() {
     let _lock = env_lock();
     let precompiled = lex("tags _hastag_ home or tags _hastag_ next");
     let mut e = Eval::new();
-    e.compile_expression(&precompiled, &mut NoDom::new()).unwrap();
-    assert_eq!(texts(&e._compiled), ["tags", "home", "_hastag_", "tags", "next", "_hastag_", "or"]);
+    e.compile_expression(&precompiled, &mut NoDom::new())
+        .unwrap();
+    assert_eq!(
+        texts(&e._compiled),
+        ["tags", "home", "_hastag_", "tags", "next", "_hastag_", "or"]
+    );
 
-    let tasks = [tag_task(&["home"]), tag_task(&["work"]), tag_task(&[]), tag_task(&["next", "x"])];
+    let tasks = [
+        tag_task(&["home"]),
+        tag_task(&["work"]),
+        tag_task(&[]),
+        tag_task(&["next", "x"]),
+    ];
     let mut selected = Vec::new();
     for (index, task) in tasks.iter().enumerate() {
         let mut r = FnResolver::with_task(|_: &str| None, task);
@@ -482,7 +647,9 @@ fn compiled_expression_in_a_task_loop() {
 
     // Compilation errors propagate.
     let mut bad = Eval::new();
-    assert!(bad.compile_expression(&lex("( 1"), &mut NoDom::new()).is_err());
+    assert!(bad
+        .compile_expression(&lex("( 1"), &mut NoDom::new())
+        .is_err());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -529,7 +696,9 @@ fn debug_messages_infix() {
     let mut e = Eval::new();
     e.debug(true);
     let mut r = FnResolver::new(get);
-    let v = e.evaluate_infix_expression("x and -2 < 1 + foo", &mut r).unwrap();
+    let v = e
+        .evaluate_infix_expression("x and -2 < 1 + foo", &mut r)
+        .unwrap();
     assert!(v.get_bool());
 
     let id = |s: &str| col(39, s);
@@ -587,7 +756,8 @@ fn debug_messages_postfix_literals() {
     let mut e = Eval::new();
     e.debug(true);
     let mut r = NoDom::new();
-    e.evaluate_postfix_expression("1.5 'a' ! _pos_ ==", &mut r).unwrap();
+    e.evaluate_postfix_expression("1.5 'a' ! _pos_ ==", &mut r)
+        .unwrap();
     assert_eq!(
         r.debug_messages,
         [
@@ -624,14 +794,34 @@ fn debug_messages_compile() {
     assert_eq!(
         r.debug_messages,
         [
-            format!("\x1b[1;37;42mFILTER\x1b[0m Infix        {} {} {}", col(214, "1"), col(246, "-"), col(214, "2")),
-            format!("\x1b[1;37;42mFILTER\x1b[0m Infix parsed {} {} {}", col(214, "1"), col(246, "-"), col(214, "2")),
-            format!("\x1b[1;37;42mFILTER\x1b[0m Postfix      {} {} {}", col(214, "1"), col(214, "2"), col(246, "-")),
+            format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Infix        {} {} {}",
+                col(214, "1"),
+                col(246, "-"),
+                col(214, "2")
+            ),
+            format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Infix parsed {} {} {}",
+                col(214, "1"),
+                col(246, "-"),
+                col(214, "2")
+            ),
+            format!(
+                "\x1b[1;37;42mFILTER\x1b[0m Postfix      {} {} {}",
+                col(214, "1"),
+                col(214, "2"),
+                col(246, "-")
+            ),
         ]
     );
 
     let mut r = NoDom::new();
-    assert_eq!(e.evaluate_compiled_expression(&mut r).unwrap().get_integer(), -1);
+    assert_eq!(
+        e.evaluate_compiled_expression(&mut r)
+            .unwrap()
+            .get_integer(),
+        -1
+    );
     assert_eq!(r.debug_messages.len(), 3);
     assert_eq!(r.debug_messages[2], "Eval ↓'1' - ↓'2' → ↑'-1'");
 }

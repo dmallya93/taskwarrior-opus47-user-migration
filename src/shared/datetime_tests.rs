@@ -64,13 +64,17 @@ struct UnitTest {
 
 impl UnitTest {
     fn new() -> Self {
-        UnitTest { counter: 0, failures: Vec::new() }
+        UnitTest {
+            counter: 0,
+            failures: Vec::new(),
+        }
     }
 
     fn ok(&mut self, expression: bool, name: impl AsRef<str>) {
         self.counter += 1;
         if !expression {
-            self.failures.push(format!("not ok {} - {}", self.counter, name.as_ref()));
+            self.failures
+                .push(format!("not ok {} - {}", self.counter, name.as_ref()));
         }
     }
 
@@ -78,7 +82,12 @@ impl UnitTest {
         self.ok(!expression, name);
     }
 
-    fn is<A: PartialEq<E> + Debug, E: Debug>(&mut self, actual: A, expected: E, name: impl AsRef<str>) {
+    fn is<A: PartialEq<E> + Debug, E: Debug>(
+        &mut self,
+        actual: A,
+        expected: E,
+        name: impl AsRef<str>,
+    ) {
         self.counter += 1;
         if actual != expected {
             self.failures.push(format!(
@@ -161,7 +170,11 @@ fn run(tz: &str, planned: usize, suite: fn(&mut UnitTest)) {
     let env = EnvGuard::save(&["TZ"]);
     std::env::set_var("TZ", tz);
     localtime::tzset();
-    if !std::path::Path::new("/usr/share/zoneinfo").join(tz).exists() && tz != "UTC" {
+    if !std::path::Path::new("/usr/share/zoneinfo")
+        .join(tz)
+        .exists()
+        && tz != "UTC"
+    {
         println!("# zoneinfo for {tz} not found; libc falls back to UTC");
     }
 
@@ -446,239 +459,3297 @@ fn parse_table(t: &mut UnitTest, r: &Reference) {
         // Aggregated, time-ext, datetime-ext, datetime-ext in the future, the
         // only non-extended forms, non-extended time/datetime (and future).
         // Columns: input, i, Year, Mo, Wk, WD, Jul, Da, Secs, TZ, UTC, time_t
-        p(t, "12:34:56  ", 8, 0, 0, 0, wks, 0, 0, hms, 0, false, lt(hms));
-        p(t, "12:34:56Z", 9, 0, 0, 0, wks, 0, 0, hms, 0, true, utc+hms+ud(hms));
-        p(t, "12:34Z", 6, 0, 0, 0, wks, 0, 0, hm, 0, true, utc+hm+ud(hm));
-        p(t, "12:34:56+01:00", 14, 0, 0, 0, wks, 0, 0, hms, 3600, false, utc+hms-z+ud(hms));
-        p(t, "12:34:56+01", 11, 0, 0, 0, wks, 0, 0, hms, 3600, false, utc+hms-z+ud(hms));
-        p(t, "12:34+01:00", 11, 0, 0, 0, wks, 0, 0, hm, 3600, false, utc+hm-z+ud(hm));
-        p(t, "12:34+01", 8, 0, 0, 0, wks, 0, 0, hm, 3600, false, utc+hm-z+ud(hm));
+        p(
+            t,
+            "12:34:56  ",
+            8,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            lt(hms),
+        );
+        p(
+            t,
+            "12:34:56Z",
+            9,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            utc + hms + ud(hms),
+        );
+        p(
+            t,
+            "12:34Z",
+            6,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            utc + hm + ud(hm),
+        );
+        p(
+            t,
+            "12:34:56+01:00",
+            14,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc + hms - z + ud(hms),
+        );
+        p(
+            t,
+            "12:34:56+01",
+            11,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc + hms - z + ud(hms),
+        );
+        p(
+            t,
+            "12:34+01:00",
+            11,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc + hm - z + ud(hm),
+        );
+        p(
+            t,
+            "12:34+01",
+            8,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc + hm - z + ud(hm),
+        );
         p(t, "12:34:56", 8, 0, 0, 0, wks, 0, 0, hms, 0, false, lt(hms));
         p(t, "12:34", 5, 0, 0, 0, wks, 0, 0, hm, 0, false, lt(hm));
-        p(t, "2013-12-06", 10, year, mo, 0, wks, 0, 6, 0, 0, false, local6);
-        p(t, "2013-340", 8, year, 0, 0, wks, 340, 0, 0, 0, false, local6);
-        p(t, "2013-W49-5", 10, year, 0, 49, 5, 0, 0, 0, 0, false, local6);
-        p(t, "2013-W49", 8, year, 0, 49, wks, 0, 0, 0, 0, false, local1);
-        p(t, "2013-12", 7, year, mo, 0, wks, 0, 1, 0, 0, false, local1 - 86400 * wks);
-        p(t, "2013-12-06T12:34:56", 19, year, mo, 0, wks, 0, 6, hms, 0, false, local6+hms);
-        p(t, "2013-12-06T12:34", 16, year, mo, 0, wks, 0, 6, hm, 0, false, local6+hm);
-        p(t, "2013-340T12:34:56", 17, year, 0, 0, wks, 340, 0, hms, 0, false, local6+hms);
-        p(t, "2013-340T12:34", 14, year, 0, 0, wks, 340, 0, hm, 0, false, local6+hm);
-        p(t, "2013-W49-5T12:34:56", 19, year, 0, 49, 5, 0, 0, hms, 0, false, local6+hms);
-        p(t, "2013-W49-5T12:34", 16, year, 0, 49, 5, 0, 0, hm, 0, false, local6+hm);
-        p(t, "2013-W49T12:34:56", 17, year, 0, 49, wks, 0, 0, hms, 0, false, local1+hms);
-        p(t, "2013-W49T12:34", 14, year, 0, 49, wks, 0, 0, hm, 0, false, local1+hm);
-        p(t, "2013-12-06T12:34:56Z", 20, year, mo, 0, wks, 0, 6, hms, 0, true, utc6+hms);
-        p(t, "2013-12-06T12:34Z", 17, year, mo, 0, wks, 0, 6, hm, 0, true, utc6+hm);
-        p(t, "2013-340T12:34:56Z", 18, year, 0, 0, wks, 340, 0, hms, 0, true, utc6+hms);
-        p(t, "2013-340T12:34Z", 15, year, 0, 0, wks, 340, 0, hm, 0, true, utc6+hm);
-        p(t, "2013-W49-5T12:34:56Z", 20, year, 0, 49, 5, 0, 0, hms, 0, true, utc6+hms);
-        p(t, "2013-W49-5T12:34Z", 17, year, 0, 49, 5, 0, 0, hm, 0, true, utc6+hm);
-        p(t, "2013-W49T12:34:56Z", 18, year, 0, 49, wks, 0, 0, hms, 0, true, utc1+hms);
-        p(t, "2013-W49T12:34Z", 15, year, 0, 49, wks, 0, 0, hm, 0, true, utc1+hm);
-        p(t, "2013-12-06T12:34:56+01:00", 25, year, mo, 0, wks, 0, 6, hms, 3600, false, utc6+hms-z);
-        p(t, "2013-12-06T12:34:56+01", 22, year, mo, 0, wks, 0, 6, hms, 3600, false, utc6+hms-z);
-        p(t, "2013-12-06T12:34:56-01:00", 25, year, mo, 0, wks, 0, 6, hms, -3600, false, utc6+hms+z);
-        p(t, "2013-12-06T12:34:56-01", 22, year, mo, 0, wks, 0, 6, hms, -3600, false, utc6+hms+z);
-        p(t, "2013-12-06T12:34+01:00", 22, year, mo, 0, wks, 0, 6, hm, 3600, false, utc6+hm-z);
-        p(t, "2013-12-06T12:34+01", 19, year, mo, 0, wks, 0, 6, hm, 3600, false, utc6+hm-z);
-        p(t, "2013-12-06T12:34-01:00", 22, year, mo, 0, wks, 0, 6, hm, -3600, false, utc6+hm+z);
-        p(t, "2013-12-06T12:34-01", 19, year, mo, 0, wks, 0, 6, hm, -3600, false, utc6+hm+z);
-        p(t, "2013-340T12:34:56+01:00", 23, year, 0, 0, wks, 340, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013-340T12:34:56+01", 20, year, 0, 0, wks, 340, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013-340T12:34:56-01:00", 23, year, 0, 0, wks, 340, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013-340T12:34:56-01", 20, year, 0, 0, wks, 340, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013-340T12:34+01:00", 20, year, 0, 0, wks, 340, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013-340T12:34+01", 17, year, 0, 0, wks, 340, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013-340T12:34-01:00", 20, year, 0, 0, wks, 340, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013-340T12:34-01", 17, year, 0, 0, wks, 340, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013-W49-5T12:34:56+01:00", 25, year, 0, 49, 5, 0, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013-W49-5T12:34:56+01", 22, year, 0, 49, 5, 0, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013-W49-5T12:34:56-01:00", 25, year, 0, 49, 5, 0, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013-W49-5T12:34:56-01", 22, year, 0, 49, 5, 0, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013-W49-5T12:34+01:00", 22, year, 0, 49, 5, 0, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013-W49-5T12:34+01", 19, year, 0, 49, 5, 0, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013-W49-5T12:34-01:00", 22, year, 0, 49, 5, 0, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013-W49-5T12:34-01", 19, year, 0, 49, 5, 0, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013-W49T12:34:56+01:00", 23, year, 0, 49, wks, 0, 0, hms, 3600, false, utc1+hms-z);
-        p(t, "2013-W49T12:34:56+01", 20, year, 0, 49, wks, 0, 0, hms, 3600, false, utc1+hms-z);
-        p(t, "2013-W49T12:34:56-01:00", 23, year, 0, 49, wks, 0, 0, hms, -3600, false, utc1+hms+z);
-        p(t, "2013-W49T12:34:56-01", 20, year, 0, 49, wks, 0, 0, hms, -3600, false, utc1+hms+z);
-        p(t, "2013-W49T12:34+01:00", 20, year, 0, 49, wks, 0, 0, hm, 3600, false, utc1+hm-z);
-        p(t, "2013-W49T12:34+01", 17, year, 0, 49, wks, 0, 0, hm, 3600, false, utc1+hm-z);
-        p(t, "2013-W49T12:34-01:00", 20, year, 0, 49, wks, 0, 0, hm, -3600, false, utc1+hm+z);
-        p(t, "2013-W49T12:34-01", 17, year, 0, 49, wks, 0, 0, hm, -3600, false, utc1+hm+z);
-        p(t, "9850-12-06", 10, f_yr, mo, 0, wks, 0, 6, 0, 0, false, f_local6);
-        p(t, "9850-340", 8, f_yr, 0, 0, wks, 340, 0, 0, 0, false, f_local6);
-        p(t, "9850-W49-5", 10, f_yr, 0, 49, 5, 0, 0, 0, 0, false, f_local6);
-        p(t, "9850-W49", 8, f_yr, 0, 49, wks, 0, 0, 0, 0, false, f_local1);
-        p(t, "9850-12", 7, f_yr, mo, 0, wks, 0, 1, 0, 0, false, f_local1 - 86400 * wks);
-        p(t, "9850-12-06T12:34:56", 19, f_yr, mo, 0, wks, 0, 6, hms, 0, false, f_local6+hms);
-        p(t, "9850-12-06T12:34", 16, f_yr, mo, 0, wks, 0, 6, hm, 0, false, f_local6+hm);
-        p(t, "9850-340T12:34:56", 17, f_yr, 0, 0, wks, 340, 0, hms, 0, false, f_local6+hms);
-        p(t, "9850-340T12:34", 14, f_yr, 0, 0, wks, 340, 0, hm, 0, false, f_local6+hm);
-        p(t, "9850-W49-5T12:34:56", 19, f_yr, 0, 49, 5, 0, 0, hms, 0, false, f_local6+hms);
-        p(t, "9850-W49-5T12:34", 16, f_yr, 0, 49, 5, 0, 0, hm, 0, false, f_local6+hm);
-        p(t, "9850-W49T12:34:56", 17, f_yr, 0, 49, wks, 0, 0, hms, 0, false, f_local1+hms);
-        p(t, "9850-W49T12:34", 14, f_yr, 0, 49, wks, 0, 0, hm, 0, false, f_local1+hm);
-        p(t, "9850-12-06T12:34:56Z", 20, f_yr, mo, 0, wks, 0, 6, hms, 0, true, f_utc6+hms);
-        p(t, "9850-12-06T12:34Z", 17, f_yr, mo, 0, wks, 0, 6, hm, 0, true, f_utc6+hm);
-        p(t, "9850-340T12:34:56Z", 18, f_yr, 0, 0, wks, 340, 0, hms, 0, true, f_utc6+hms);
-        p(t, "9850-340T12:34Z", 15, f_yr, 0, 0, wks, 340, 0, hm, 0, true, f_utc6+hm);
-        p(t, "9850-W49-5T12:34:56Z", 20, f_yr, 0, 49, 5, 0, 0, hms, 0, true, f_utc6+hms);
-        p(t, "9850-W49-5T12:34Z", 17, f_yr, 0, 49, 5, 0, 0, hm, 0, true, f_utc6+hm);
-        p(t, "9850-W49T12:34:56Z", 18, f_yr, 0, 49, wks, 0, 0, hms, 0, true, f_utc1+hms);
-        p(t, "9850-W49T12:34Z", 15, f_yr, 0, 49, wks, 0, 0, hm, 0, true, f_utc1+hm);
-        p(t, "9850-12-06T12:34:56+01:00", 25, f_yr, mo, 0, wks, 0, 6, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850-12-06T12:34:56+01", 22, f_yr, mo, 0, wks, 0, 6, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850-12-06T12:34:56-01:00", 25, f_yr, mo, 0, wks, 0, 6, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850-12-06T12:34:56-01", 22, f_yr, mo, 0, wks, 0, 6, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850-12-06T12:34+01:00", 22, f_yr, mo, 0, wks, 0, 6, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850-12-06T12:34+01", 19, f_yr, mo, 0, wks, 0, 6, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850-12-06T12:34-01:00", 22, f_yr, mo, 0, wks, 0, 6, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850-12-06T12:34-01", 19, f_yr, mo, 0, wks, 0, 6, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850-340T12:34:56+01:00", 23, f_yr, 0, 0, wks, 340, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850-340T12:34:56+01", 20, f_yr, 0, 0, wks, 340, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850-340T12:34:56-01:00", 23, f_yr, 0, 0, wks, 340, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850-340T12:34:56-01", 20, f_yr, 0, 0, wks, 340, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850-340T12:34+01:00", 20, f_yr, 0, 0, wks, 340, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850-340T12:34+01", 17, f_yr, 0, 0, wks, 340, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850-340T12:34-01:00", 20, f_yr, 0, 0, wks, 340, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850-340T12:34-01", 17, f_yr, 0, 0, wks, 340, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850-W49-5T12:34:56+01:00", 25, f_yr, 0, 49, 5, 0, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850-W49-5T12:34:56+01", 22, f_yr, 0, 49, 5, 0, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850-W49-5T12:34:56-01:00", 25, f_yr, 0, 49, 5, 0, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850-W49-5T12:34:56-01", 22, f_yr, 0, 49, 5, 0, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850-W49-5T12:34+01:00", 22, f_yr, 0, 49, 5, 0, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850-W49-5T12:34+01", 19, f_yr, 0, 49, 5, 0, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850-W49-5T12:34-01:00", 22, f_yr, 0, 49, 5, 0, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850-W49-5T12:34-01", 19, f_yr, 0, 49, 5, 0, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850-W49T12:34:56+01:00", 23, f_yr, 0, 49, wks, 0, 0, hms, 3600, false, f_utc1+hms-z);
-        p(t, "9850-W49T12:34:56+01", 20, f_yr, 0, 49, wks, 0, 0, hms, 3600, false, f_utc1+hms-z);
-        p(t, "9850-W49T12:34:56-01:00", 23, f_yr, 0, 49, wks, 0, 0, hms, -3600, false, f_utc1+hms+z);
-        p(t, "9850-W49T12:34:56-01", 20, f_yr, 0, 49, wks, 0, 0, hms, -3600, false, f_utc1+hms+z);
-        p(t, "9850-W49T12:34+01:00", 20, f_yr, 0, 49, wks, 0, 0, hm, 3600, false, f_utc1+hm-z);
-        p(t, "9850-W49T12:34+01", 17, f_yr, 0, 49, wks, 0, 0, hm, 3600, false, f_utc1+hm-z);
-        p(t, "9850-W49T12:34-01:00", 20, f_yr, 0, 49, wks, 0, 0, hm, -3600, false, f_utc1+hm+z);
-        p(t, "9850-W49T12:34-01", 17, f_yr, 0, 49, wks, 0, 0, hm, -3600, false, f_utc1+hm+z);
-        p(t, "20131206T123456Z", 16, year, mo, 0, wks, 0, 6, hms, 0, true, utc6+hms);
-        p(t, "20131206T123456", 15, year, mo, 0, wks, 0, 6, hms, 0, false, local6+hms);
-        p(t, "98501206T123456Z", 16, f_yr, mo, 0, wks, 0, 6, hms, 0, true, f_utc6+hms);
-        p(t, "98501206T123456", 15, f_yr, mo, 0, wks, 0, 6, hms, 0, false, f_local6+hms);
-        p(t, "123456Z", 7, 0, 0, 0, wks, 0, 0, hms, 0, true, utc+hms+ud(hms));
-        p(t, "1234Z", 5, 0, 0, 0, wks, 0, 0, hm, 0, true, utc+hm+ud(hm));
-        p(t, "123456+0100", 11, 0, 0, 0, wks, 0, 0, hms, 3600, false, utc+hms-z+ud(hms));
-        p(t, "123456+01", 9, 0, 0, 0, wks, 0, 0, hms, 3600, false, utc+hms-z+ud(hms));
-        p(t, "1234+0100", 9, 0, 0, 0, wks, 0, 0, hm, 3600, false, utc+hm-z+ud(hm));
-        p(t, "1234+01", 7, 0, 0, 0, wks, 0, 0, hm, 3600, false, utc+hm-z+ud(hm));
+        p(
+            t,
+            "2013-12-06",
+            10,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            0,
+            0,
+            false,
+            local6,
+        );
+        p(
+            t, "2013-340", 8, year, 0, 0, wks, 340, 0, 0, 0, false, local6,
+        );
+        p(
+            t,
+            "2013-W49-5",
+            10,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local6,
+        );
+        p(
+            t, "2013-W49", 8, year, 0, 49, wks, 0, 0, 0, 0, false, local1,
+        );
+        p(
+            t,
+            "2013-12",
+            7,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            1,
+            0,
+            0,
+            false,
+            local1 - 86400 * wks,
+        );
+        p(
+            t,
+            "2013-12-06T12:34:56",
+            19,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "2013-12-06T12:34",
+            16,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            false,
+            local6 + hm,
+        );
+        p(
+            t,
+            "2013-340T12:34:56",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "2013-340T12:34",
+            14,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            false,
+            local6 + hm,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34:56",
+            19,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34",
+            16,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            local6 + hm,
+        );
+        p(
+            t,
+            "2013-W49T12:34:56",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            local1 + hms,
+        );
+        p(
+            t,
+            "2013-W49T12:34",
+            14,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            local1 + hm,
+        );
+        p(
+            t,
+            "2013-12-06T12:34:56Z",
+            20,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "2013-12-06T12:34Z",
+            17,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            true,
+            utc6 + hm,
+        );
+        p(
+            t,
+            "2013-340T12:34:56Z",
+            18,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "2013-340T12:34Z",
+            15,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            true,
+            utc6 + hm,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34:56Z",
+            20,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34Z",
+            17,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            utc6 + hm,
+        );
+        p(
+            t,
+            "2013-W49T12:34:56Z",
+            18,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            utc1 + hms,
+        );
+        p(
+            t,
+            "2013-W49T12:34Z",
+            15,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            utc1 + hm,
+        );
+        p(
+            t,
+            "2013-12-06T12:34:56+01:00",
+            25,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34:56+01",
+            22,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34:56-01:00",
+            25,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34:56-01",
+            22,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34+01:00",
+            22,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34+01",
+            19,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34-01:00",
+            22,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013-12-06T12:34-01",
+            19,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013-340T12:34:56+01:00",
+            23,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013-340T12:34:56+01",
+            20,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013-340T12:34:56-01:00",
+            23,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013-340T12:34:56-01",
+            20,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013-340T12:34+01:00",
+            20,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013-340T12:34+01",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013-340T12:34-01:00",
+            20,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013-340T12:34-01",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34:56+01:00",
+            25,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34:56+01",
+            22,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34:56-01:00",
+            25,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34:56-01",
+            22,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34+01:00",
+            22,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34+01",
+            19,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34-01:00",
+            22,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013-W49-5T12:34-01",
+            19,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013-W49T12:34:56+01:00",
+            23,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc1 + hms - z,
+        );
+        p(
+            t,
+            "2013-W49T12:34:56+01",
+            20,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc1 + hms - z,
+        );
+        p(
+            t,
+            "2013-W49T12:34:56-01:00",
+            23,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc1 + hms + z,
+        );
+        p(
+            t,
+            "2013-W49T12:34:56-01",
+            20,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc1 + hms + z,
+        );
+        p(
+            t,
+            "2013-W49T12:34+01:00",
+            20,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc1 + hm - z,
+        );
+        p(
+            t,
+            "2013-W49T12:34+01",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc1 + hm - z,
+        );
+        p(
+            t,
+            "2013-W49T12:34-01:00",
+            20,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc1 + hm + z,
+        );
+        p(
+            t,
+            "2013-W49T12:34-01",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc1 + hm + z,
+        );
+        p(
+            t,
+            "9850-12-06",
+            10,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            0,
+            0,
+            false,
+            f_local6,
+        );
+        p(
+            t, "9850-340", 8, f_yr, 0, 0, wks, 340, 0, 0, 0, false, f_local6,
+        );
+        p(
+            t,
+            "9850-W49-5",
+            10,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            0,
+            0,
+            false,
+            f_local6,
+        );
+        p(
+            t, "9850-W49", 8, f_yr, 0, 49, wks, 0, 0, 0, 0, false, f_local1,
+        );
+        p(
+            t,
+            "9850-12",
+            7,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            1,
+            0,
+            0,
+            false,
+            f_local1 - 86400 * wks,
+        );
+        p(
+            t,
+            "9850-12-06T12:34:56",
+            19,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "9850-12-06T12:34",
+            16,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            false,
+            f_local6 + hm,
+        );
+        p(
+            t,
+            "9850-340T12:34:56",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "9850-340T12:34",
+            14,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            false,
+            f_local6 + hm,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34:56",
+            19,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34",
+            16,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            f_local6 + hm,
+        );
+        p(
+            t,
+            "9850-W49T12:34:56",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            f_local1 + hms,
+        );
+        p(
+            t,
+            "9850-W49T12:34",
+            14,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            f_local1 + hm,
+        );
+        p(
+            t,
+            "9850-12-06T12:34:56Z",
+            20,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "9850-12-06T12:34Z",
+            17,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            true,
+            f_utc6 + hm,
+        );
+        p(
+            t,
+            "9850-340T12:34:56Z",
+            18,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "9850-340T12:34Z",
+            15,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            true,
+            f_utc6 + hm,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34:56Z",
+            20,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34Z",
+            17,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            f_utc6 + hm,
+        );
+        p(
+            t,
+            "9850-W49T12:34:56Z",
+            18,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            f_utc1 + hms,
+        );
+        p(
+            t,
+            "9850-W49T12:34Z",
+            15,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            f_utc1 + hm,
+        );
+        p(
+            t,
+            "9850-12-06T12:34:56+01:00",
+            25,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34:56+01",
+            22,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34:56-01:00",
+            25,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34:56-01",
+            22,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34+01:00",
+            22,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34+01",
+            19,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34-01:00",
+            22,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850-12-06T12:34-01",
+            19,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850-340T12:34:56+01:00",
+            23,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850-340T12:34:56+01",
+            20,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850-340T12:34:56-01:00",
+            23,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850-340T12:34:56-01",
+            20,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850-340T12:34+01:00",
+            20,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850-340T12:34+01",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850-340T12:34-01:00",
+            20,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850-340T12:34-01",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34:56+01:00",
+            25,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34:56+01",
+            22,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34:56-01:00",
+            25,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34:56-01",
+            22,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34+01:00",
+            22,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34+01",
+            19,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34-01:00",
+            22,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850-W49-5T12:34-01",
+            19,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850-W49T12:34:56+01:00",
+            23,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc1 + hms - z,
+        );
+        p(
+            t,
+            "9850-W49T12:34:56+01",
+            20,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc1 + hms - z,
+        );
+        p(
+            t,
+            "9850-W49T12:34:56-01:00",
+            23,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc1 + hms + z,
+        );
+        p(
+            t,
+            "9850-W49T12:34:56-01",
+            20,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc1 + hms + z,
+        );
+        p(
+            t,
+            "9850-W49T12:34+01:00",
+            20,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc1 + hm - z,
+        );
+        p(
+            t,
+            "9850-W49T12:34+01",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc1 + hm - z,
+        );
+        p(
+            t,
+            "9850-W49T12:34-01:00",
+            20,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc1 + hm + z,
+        );
+        p(
+            t,
+            "9850-W49T12:34-01",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc1 + hm + z,
+        );
+        p(
+            t,
+            "20131206T123456Z",
+            16,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "20131206T123456",
+            15,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "98501206T123456Z",
+            16,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "98501206T123456",
+            15,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "123456Z",
+            7,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            utc + hms + ud(hms),
+        );
+        p(
+            t,
+            "1234Z",
+            5,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            utc + hm + ud(hm),
+        );
+        p(
+            t,
+            "123456+0100",
+            11,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc + hms - z + ud(hms),
+        );
+        p(
+            t,
+            "123456+01",
+            9,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc + hms - z + ud(hms),
+        );
+        p(
+            t,
+            "1234+0100",
+            9,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc + hm - z + ud(hm),
+        );
+        p(
+            t,
+            "1234+01",
+            7,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc + hm - z + ud(hm),
+        );
         p(t, "123456", 6, 0, 0, 0, wks, 0, 0, hms, 0, false, lt(hms));
         p(t, "1234", 4, 0, 0, 0, wks, 0, 0, hm, 0, false, lt(hm));
-        p(t, "20131206", 8, year, mo, 0, wks, 0, 6, 0, 0, false, local6);
-        p(t, "2013340", 7, year, 0, 0, wks, 340, 0, 0, 0, false, local6);
+        p(
+            t, "20131206", 8, year, mo, 0, wks, 0, 6, 0, 0, false, local6,
+        );
+        p(
+            t, "2013340", 7, year, 0, 0, wks, 340, 0, 0, 0, false, local6,
+        );
         p(t, "2013W495", 8, year, 0, 49, 5, 0, 0, 0, 0, false, local6);
         p(t, "2013W49", 7, year, 0, 49, wks, 0, 0, 0, 0, false, local1);
-        p(t, "201312", 6, year, mo, 0, wks, 0, 1, 0, 0, false, local1 - 86400 * wks);
-        p(t, "20131206T123456", 15, year, mo, 0, wks, 0, 6, hms, 0, false, local6+hms);
-        p(t, "20131206T1234", 13, year, mo, 0, wks, 0, 6, hm, 0, false, local6+hm);
-        p(t, "2013340T123456", 14, year, 0, 0, wks, 340, 0, hms, 0, false, local6+hms);
-        p(t, "2013340T1234", 12, year, 0, 0, wks, 340, 0, hm, 0, false, local6+hm);
-        p(t, "2013W495T123456", 15, year, 0, 49, 5, 0, 0, hms, 0, false, local6+hms);
-        p(t, "2013W495T1234", 13, year, 0, 49, 5, 0, 0, hm, 0, false, local6+hm);
-        p(t, "2013W49T123456", 14, year, 0, 49, wks, 0, 0, hms, 0, false, local1+hms);
-        p(t, "2013W49T1234", 12, year, 0, 49, wks, 0, 0, hm, 0, false, local1+hm);
-        p(t, "20131206T123456Z", 16, year, mo, 0, wks, 0, 6, hms, 0, true, utc6+hms);
-        p(t, "20131206T1234Z", 14, year, mo, 0, wks, 0, 6, hm, 0, true, utc6+hm);
-        p(t, "2013340T123456Z", 15, year, 0, 0, wks, 340, 0, hms, 0, true, utc6+hms);
-        p(t, "2013340T1234Z", 13, year, 0, 0, wks, 340, 0, hm, 0, true, utc6+hm);
-        p(t, "2013W495T123456Z", 16, year, 0, 49, 5, 0, 0, hms, 0, true, utc6+hms);
-        p(t, "2013W495T1234Z", 14, year, 0, 49, 5, 0, 0, hm, 0, true, utc6+hm);
-        p(t, "2013W49T123456Z", 15, year, 0, 49, wks, 0, 0, hms, 0, true, utc1+hms);
-        p(t, "2013W49T1234Z", 13, year, 0, 49, wks, 0, 0, hm, 0, true, utc1+hm);
-        p(t, "20131206T123456+0100", 20, year, mo, 0, wks, 0, 6, hms, 3600, false, utc6+hms-z);
-        p(t, "20131206T123456+01", 18, year, mo, 0, wks, 0, 6, hms, 3600, false, utc6+hms-z);
-        p(t, "20131206T123456-0100", 20, year, mo, 0, wks, 0, 6, hms, -3600, false, utc6+hms+z);
-        p(t, "20131206T123456-01", 18, year, mo, 0, wks, 0, 6, hms, -3600, false, utc6+hms+z);
-        p(t, "20131206T1234+0100", 18, year, mo, 0, wks, 0, 6, hm, 3600, false, utc6+hm-z);
-        p(t, "20131206T1234+01", 16, year, mo, 0, wks, 0, 6, hm, 3600, false, utc6+hm-z);
-        p(t, "20131206T1234-0100", 18, year, mo, 0, wks, 0, 6, hm, -3600, false, utc6+hm+z);
-        p(t, "20131206T1234-01", 16, year, mo, 0, wks, 0, 6, hm, -3600, false, utc6+hm+z);
-        p(t, "2013340T123456+0100", 19, year, 0, 0, wks, 340, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013340T123456+01", 17, year, 0, 0, wks, 340, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013340T123456-0100", 19, year, 0, 0, wks, 340, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013340T123456-01", 17, year, 0, 0, wks, 340, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013340T1234+0100", 17, year, 0, 0, wks, 340, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013340T1234+01", 15, year, 0, 0, wks, 340, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013340T1234-0100", 17, year, 0, 0, wks, 340, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013340T1234-01", 15, year, 0, 0, wks, 340, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013W495T123456+0100", 20, year, 0, 49, 5, 0, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013W495T123456+01", 18, year, 0, 49, 5, 0, 0, hms, 3600, false, utc6+hms-z);
-        p(t, "2013W495T123456-0100", 20, year, 0, 49, 5, 0, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013W495T123456-01", 18, year, 0, 49, 5, 0, 0, hms, -3600, false, utc6+hms+z);
-        p(t, "2013W495T1234+0100", 18, year, 0, 49, 5, 0, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013W495T1234+01", 16, year, 0, 49, 5, 0, 0, hm, 3600, false, utc6+hm-z);
-        p(t, "2013W495T1234-0100", 18, year, 0, 49, 5, 0, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013W495T1234-01", 16, year, 0, 49, 5, 0, 0, hm, -3600, false, utc6+hm+z);
-        p(t, "2013W49T123456+0100", 19, year, 0, 49, wks, 0, 0, hms, 3600, false, utc1+hms-z);
-        p(t, "2013W49T123456+01", 17, year, 0, 49, wks, 0, 0, hms, 3600, false, utc1+hms-z);
-        p(t, "2013W49T123456-0100", 19, year, 0, 49, wks, 0, 0, hms, -3600, false, utc1+hms+z);
-        p(t, "2013W49T123456-01", 17, year, 0, 49, wks, 0, 0, hms, -3600, false, utc1+hms+z);
-        p(t, "2013W49T1234+0100", 17, year, 0, 49, wks, 0, 0, hm, 3600, false, utc1+hm-z);
-        p(t, "2013W49T1234+01", 15, year, 0, 49, wks, 0, 0, hm, 3600, false, utc1+hm-z);
-        p(t, "2013W49T1234-0100", 17, year, 0, 49, wks, 0, 0, hm, -3600, false, utc1+hm+z);
-        p(t, "2013W49T1234-01", 15, year, 0, 49, wks, 0, 0, hm, -3600, false, utc1+hm+z);
-        p(t, "98501206", 8, f_yr, mo, 0, wks, 0, 6, 0, 0, false, f_local6);
-        p(t, "9850340", 7, f_yr, 0, 0, wks, 340, 0, 0, 0, false, f_local6);
-        p(t, "9850W495", 8, f_yr, 0, 49, 5, 0, 0, 0, 0, false, f_local6);
-        p(t, "9850W49", 7, f_yr, 0, 49, wks, 0, 0, 0, 0, false, f_local1);
-        p(t, "985012", 6, f_yr, mo, 0, wks, 0, 1, 0, 0, false, f_local1 - 86400 * wks);
-        p(t, "98501206T123456", 15, f_yr, mo, 0, wks, 0, 6, hms, 0, false, f_local6+hms);
-        p(t, "98501206T1234", 13, f_yr, mo, 0, wks, 0, 6, hm, 0, false, f_local6+hm);
-        p(t, "9850340T123456", 14, f_yr, 0, 0, wks, 340, 0, hms, 0, false, f_local6+hms);
-        p(t, "9850340T1234", 12, f_yr, 0, 0, wks, 340, 0, hm, 0, false, f_local6+hm);
-        p(t, "9850W495T123456", 15, f_yr, 0, 49, 5, 0, 0, hms, 0, false, f_local6+hms);
-        p(t, "9850W495T1234", 13, f_yr, 0, 49, 5, 0, 0, hm, 0, false, f_local6+hm);
-        p(t, "9850W49T123456", 14, f_yr, 0, 49, wks, 0, 0, hms, 0, false, f_local1+hms);
-        p(t, "9850W49T1234", 12, f_yr, 0, 49, wks, 0, 0, hm, 0, false, f_local1+hm);
-        p(t, "98501206T123456Z", 16, f_yr, mo, 0, wks, 0, 6, hms, 0, true, f_utc6+hms);
-        p(t, "98501206T1234Z", 14, f_yr, mo, 0, wks, 0, 6, hm, 0, true, f_utc6+hm);
-        p(t, "9850340T123456Z", 15, f_yr, 0, 0, wks, 340, 0, hms, 0, true, f_utc6+hms);
-        p(t, "9850340T1234Z", 13, f_yr, 0, 0, wks, 340, 0, hm, 0, true, f_utc6+hm);
-        p(t, "9850W495T123456Z", 16, f_yr, 0, 49, 5, 0, 0, hms, 0, true, f_utc6+hms);
-        p(t, "9850W495T1234Z", 14, f_yr, 0, 49, 5, 0, 0, hm, 0, true, f_utc6+hm);
-        p(t, "9850W49T123456Z", 15, f_yr, 0, 49, wks, 0, 0, hms, 0, true, f_utc1+hms);
-        p(t, "9850W49T1234Z", 13, f_yr, 0, 49, wks, 0, 0, hm, 0, true, f_utc1+hm);
-        p(t, "98501206T123456+0100", 20, f_yr, mo, 0, wks, 0, 6, hms, 3600, false, f_utc6+hms-z);
-        p(t, "98501206T123456+01", 18, f_yr, mo, 0, wks, 0, 6, hms, 3600, false, f_utc6+hms-z);
-        p(t, "98501206T123456-0100", 20, f_yr, mo, 0, wks, 0, 6, hms, -3600, false, f_utc6+hms+z);
-        p(t, "98501206T123456-01", 18, f_yr, mo, 0, wks, 0, 6, hms, -3600, false, f_utc6+hms+z);
-        p(t, "98501206T1234+0100", 18, f_yr, mo, 0, wks, 0, 6, hm, 3600, false, f_utc6+hm-z);
-        p(t, "98501206T1234+01", 16, f_yr, mo, 0, wks, 0, 6, hm, 3600, false, f_utc6+hm-z);
-        p(t, "98501206T1234-0100", 18, f_yr, mo, 0, wks, 0, 6, hm, -3600, false, f_utc6+hm+z);
-        p(t, "98501206T1234-01", 16, f_yr, mo, 0, wks, 0, 6, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850340T123456+0100", 19, f_yr, 0, 0, wks, 340, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850340T123456+01", 17, f_yr, 0, 0, wks, 340, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850340T123456-0100", 19, f_yr, 0, 0, wks, 340, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850340T123456-01", 17, f_yr, 0, 0, wks, 340, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850340T1234+0100", 17, f_yr, 0, 0, wks, 340, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850340T1234+01", 15, f_yr, 0, 0, wks, 340, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850340T1234-0100", 17, f_yr, 0, 0, wks, 340, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850340T1234-01", 15, f_yr, 0, 0, wks, 340, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850W495T123456+0100", 20, f_yr, 0, 49, 5, 0, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850W495T123456+01", 18, f_yr, 0, 49, 5, 0, 0, hms, 3600, false, f_utc6+hms-z);
-        p(t, "9850W495T123456-0100", 20, f_yr, 0, 49, 5, 0, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850W495T123456-01", 18, f_yr, 0, 49, 5, 0, 0, hms, -3600, false, f_utc6+hms+z);
-        p(t, "9850W495T1234+0100", 18, f_yr, 0, 49, 5, 0, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850W495T1234+01", 16, f_yr, 0, 49, 5, 0, 0, hm, 3600, false, f_utc6+hm-z);
-        p(t, "9850W495T1234-0100", 18, f_yr, 0, 49, 5, 0, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850W495T1234-01", 16, f_yr, 0, 49, 5, 0, 0, hm, -3600, false, f_utc6+hm+z);
-        p(t, "9850W49T123456+0100", 19, f_yr, 0, 49, wks, 0, 0, hms, 3600, false, f_utc1+hms-z);
-        p(t, "9850W49T123456+01", 17, f_yr, 0, 49, wks, 0, 0, hms, 3600, false, f_utc1+hms-z);
-        p(t, "9850W49T123456-0100", 19, f_yr, 0, 49, wks, 0, 0, hms, -3600, false, f_utc1+hms+z);
-        p(t, "9850W49T123456-01", 17, f_yr, 0, 49, wks, 0, 0, hms, -3600, false, f_utc1+hms+z);
-        p(t, "9850W49T1234+0100", 17, f_yr, 0, 49, wks, 0, 0, hm, 3600, false, f_utc1+hm-z);
-        p(t, "9850W49T1234+01", 15, f_yr, 0, 49, wks, 0, 0, hm, 3600, false, f_utc1+hm-z);
-        p(t, "9850W49T1234-0100", 17, f_yr, 0, 49, wks, 0, 0, hm, -3600, false, f_utc1+hm+z);
-        p(t, "9850W49T1234-01", 15, f_yr, 0, 49, wks, 0, 0, hm, -3600, false, f_utc1+hm+z);
+        p(
+            t,
+            "201312",
+            6,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            1,
+            0,
+            0,
+            false,
+            local1 - 86400 * wks,
+        );
+        p(
+            t,
+            "20131206T123456",
+            15,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "20131206T1234",
+            13,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            false,
+            local6 + hm,
+        );
+        p(
+            t,
+            "2013340T123456",
+            14,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "2013340T1234",
+            12,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            false,
+            local6 + hm,
+        );
+        p(
+            t,
+            "2013W495T123456",
+            15,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            local6 + hms,
+        );
+        p(
+            t,
+            "2013W495T1234",
+            13,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            local6 + hm,
+        );
+        p(
+            t,
+            "2013W49T123456",
+            14,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            local1 + hms,
+        );
+        p(
+            t,
+            "2013W49T1234",
+            12,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            local1 + hm,
+        );
+        p(
+            t,
+            "20131206T123456Z",
+            16,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "20131206T1234Z",
+            14,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            true,
+            utc6 + hm,
+        );
+        p(
+            t,
+            "2013340T123456Z",
+            15,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "2013340T1234Z",
+            13,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            true,
+            utc6 + hm,
+        );
+        p(
+            t,
+            "2013W495T123456Z",
+            16,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            utc6 + hms,
+        );
+        p(
+            t,
+            "2013W495T1234Z",
+            14,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            utc6 + hm,
+        );
+        p(
+            t,
+            "2013W49T123456Z",
+            15,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            utc1 + hms,
+        );
+        p(
+            t,
+            "2013W49T1234Z",
+            13,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            utc1 + hm,
+        );
+        p(
+            t,
+            "20131206T123456+0100",
+            20,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "20131206T123456+01",
+            18,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "20131206T123456-0100",
+            20,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "20131206T123456-01",
+            18,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "20131206T1234+0100",
+            18,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "20131206T1234+01",
+            16,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "20131206T1234-0100",
+            18,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "20131206T1234-01",
+            16,
+            year,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013340T123456+0100",
+            19,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013340T123456+01",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013340T123456-0100",
+            19,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013340T123456-01",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013340T1234+0100",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013340T1234+01",
+            15,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013340T1234-0100",
+            17,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013340T1234-01",
+            15,
+            year,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013W495T123456+0100",
+            20,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013W495T123456+01",
+            18,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc6 + hms - z,
+        );
+        p(
+            t,
+            "2013W495T123456-0100",
+            20,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013W495T123456-01",
+            18,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc6 + hms + z,
+        );
+        p(
+            t,
+            "2013W495T1234+0100",
+            18,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013W495T1234+01",
+            16,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc6 + hm - z,
+        );
+        p(
+            t,
+            "2013W495T1234-0100",
+            18,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013W495T1234-01",
+            16,
+            year,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc6 + hm + z,
+        );
+        p(
+            t,
+            "2013W49T123456+0100",
+            19,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc1 + hms - z,
+        );
+        p(
+            t,
+            "2013W49T123456+01",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            utc1 + hms - z,
+        );
+        p(
+            t,
+            "2013W49T123456-0100",
+            19,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc1 + hms + z,
+        );
+        p(
+            t,
+            "2013W49T123456-01",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            utc1 + hms + z,
+        );
+        p(
+            t,
+            "2013W49T1234+0100",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc1 + hm - z,
+        );
+        p(
+            t,
+            "2013W49T1234+01",
+            15,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            utc1 + hm - z,
+        );
+        p(
+            t,
+            "2013W49T1234-0100",
+            17,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc1 + hm + z,
+        );
+        p(
+            t,
+            "2013W49T1234-01",
+            15,
+            year,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            utc1 + hm + z,
+        );
+        p(
+            t, "98501206", 8, f_yr, mo, 0, wks, 0, 6, 0, 0, false, f_local6,
+        );
+        p(
+            t, "9850340", 7, f_yr, 0, 0, wks, 340, 0, 0, 0, false, f_local6,
+        );
+        p(
+            t, "9850W495", 8, f_yr, 0, 49, 5, 0, 0, 0, 0, false, f_local6,
+        );
+        p(
+            t, "9850W49", 7, f_yr, 0, 49, wks, 0, 0, 0, 0, false, f_local1,
+        );
+        p(
+            t,
+            "985012",
+            6,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            1,
+            0,
+            0,
+            false,
+            f_local1 - 86400 * wks,
+        );
+        p(
+            t,
+            "98501206T123456",
+            15,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "98501206T1234",
+            13,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            false,
+            f_local6 + hm,
+        );
+        p(
+            t,
+            "9850340T123456",
+            14,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "9850340T1234",
+            12,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            false,
+            f_local6 + hm,
+        );
+        p(
+            t,
+            "9850W495T123456",
+            15,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            f_local6 + hms,
+        );
+        p(
+            t,
+            "9850W495T1234",
+            13,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            f_local6 + hm,
+        );
+        p(
+            t,
+            "9850W49T123456",
+            14,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            false,
+            f_local1 + hms,
+        );
+        p(
+            t,
+            "9850W49T1234",
+            12,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            false,
+            f_local1 + hm,
+        );
+        p(
+            t,
+            "98501206T123456Z",
+            16,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "98501206T1234Z",
+            14,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            0,
+            true,
+            f_utc6 + hm,
+        );
+        p(
+            t,
+            "9850340T123456Z",
+            15,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "9850340T1234Z",
+            13,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            0,
+            true,
+            f_utc6 + hm,
+        );
+        p(
+            t,
+            "9850W495T123456Z",
+            16,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            f_utc6 + hms,
+        );
+        p(
+            t,
+            "9850W495T1234Z",
+            14,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            f_utc6 + hm,
+        );
+        p(
+            t,
+            "9850W49T123456Z",
+            15,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            0,
+            true,
+            f_utc1 + hms,
+        );
+        p(
+            t,
+            "9850W49T1234Z",
+            13,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            0,
+            true,
+            f_utc1 + hm,
+        );
+        p(
+            t,
+            "98501206T123456+0100",
+            20,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "98501206T123456+01",
+            18,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "98501206T123456-0100",
+            20,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "98501206T123456-01",
+            18,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "98501206T1234+0100",
+            18,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "98501206T1234+01",
+            16,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "98501206T1234-0100",
+            18,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "98501206T1234-01",
+            16,
+            f_yr,
+            mo,
+            0,
+            wks,
+            0,
+            6,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850340T123456+0100",
+            19,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850340T123456+01",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850340T123456-0100",
+            19,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850340T123456-01",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850340T1234+0100",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850340T1234+01",
+            15,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850340T1234-0100",
+            17,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850340T1234-01",
+            15,
+            f_yr,
+            0,
+            0,
+            wks,
+            340,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850W495T123456+0100",
+            20,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850W495T123456+01",
+            18,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc6 + hms - z,
+        );
+        p(
+            t,
+            "9850W495T123456-0100",
+            20,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850W495T123456-01",
+            18,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc6 + hms + z,
+        );
+        p(
+            t,
+            "9850W495T1234+0100",
+            18,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850W495T1234+01",
+            16,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc6 + hm - z,
+        );
+        p(
+            t,
+            "9850W495T1234-0100",
+            18,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850W495T1234-01",
+            16,
+            f_yr,
+            0,
+            49,
+            5,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc6 + hm + z,
+        );
+        p(
+            t,
+            "9850W49T123456+0100",
+            19,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc1 + hms - z,
+        );
+        p(
+            t,
+            "9850W49T123456+01",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            3600,
+            false,
+            f_utc1 + hms - z,
+        );
+        p(
+            t,
+            "9850W49T123456-0100",
+            19,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc1 + hms + z,
+        );
+        p(
+            t,
+            "9850W49T123456-01",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hms,
+            -3600,
+            false,
+            f_utc1 + hms + z,
+        );
+        p(
+            t,
+            "9850W49T1234+0100",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc1 + hm - z,
+        );
+        p(
+            t,
+            "9850W49T1234+01",
+            15,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            3600,
+            false,
+            f_utc1 + hm - z,
+        );
+        p(
+            t,
+            "9850W49T1234-0100",
+            17,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc1 + hm + z,
+        );
+        p(
+            t,
+            "9850W49T1234-01",
+            15,
+            f_yr,
+            0,
+            49,
+            wks,
+            0,
+            0,
+            hm,
+            -3600,
+            false,
+            f_utc1 + hm + z,
+        );
 
         // Informal time.
         let t8a: i64 = 8 * 3600;
@@ -696,24 +3767,192 @@ fn parse_table(t: &mut UnitTest, r: &Reference) {
         let adjust = |calc: i64| if now_s > calc { 86400 } else { 0 };
         let local_plus = |secs: i64| r.local_plus(secs);
 
-        p(t, "10:30am", 7, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t830a + adjust(t830a + 2 * 3600) + (2 * 3600)));
+        p(
+            t,
+            "10:30am",
+            7,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t830a + adjust(t830a + 2 * 3600) + (2 * 3600)),
+        );
 
-        p(t, "8:30am", 6, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t830a + adjust(t830a)));
-        p(t, "8:30a", 5, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t830a + adjust(t830a)));
-        p(t, "8:30", 4, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t830a + adjust(t830a)));
+        p(
+            t,
+            "8:30am",
+            6,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t830a + adjust(t830a)),
+        );
+        p(
+            t,
+            "8:30a",
+            5,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t830a + adjust(t830a)),
+        );
+        p(
+            t,
+            "8:30",
+            4,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t830a + adjust(t830a)),
+        );
 
-        p(t, "8am", 3, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t8a + adjust(t8a)));
-        p(t, "8a", 2, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t8a + adjust(t8a)));
+        p(
+            t,
+            "8am",
+            3,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t8a + adjust(t8a)),
+        );
+        p(
+            t,
+            "8a",
+            2,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t8a + adjust(t8a)),
+        );
 
-        p(t, "8:30pm", 6, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t830p + adjust(t830p)));
-        p(t, "8:30p", 5, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t830p + adjust(t830p)));
+        p(
+            t,
+            "8:30pm",
+            6,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t830p + adjust(t830p)),
+        );
+        p(
+            t,
+            "8:30p",
+            5,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t830p + adjust(t830p)),
+        );
 
-        p(t, "8pm", 3, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t8p + adjust(t8p)));
-        p(t, "8p", 2, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t8p + adjust(t8p)));
+        p(
+            t,
+            "8pm",
+            3,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t8p + adjust(t8p)),
+        );
+        p(
+            t,
+            "8p",
+            2,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t8p + adjust(t8p)),
+        );
 
-        p(t, "12pm", 4, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t12p + adjust(t12p)));
+        p(
+            t,
+            "12pm",
+            4,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t12p + adjust(t12p)),
+        );
 
-        p(t, "1pm", 3, 0, 0, 0, wks, 0, 0, 0, 0, false, local_plus(t1p + adjust(t1p)));
+        p(
+            t,
+            "1pm",
+            3,
+            0,
+            0,
+            0,
+            wks,
+            0,
+            0,
+            0,
+            0,
+            false,
+            local_plus(t1p + adjust(t1p)),
+        );
     }
 }
 
@@ -766,56 +4005,146 @@ fn datetime_t(t: &mut UnitTest) {
     // ctor ("now")
     Datetime::set_weekstart(1);
     let relative_now = Datetime::new();
-    t.ok(relative_now.same_hour(&now), "Datetime ().sameHour (Datetime (now))");
-    t.ok(relative_now.same_day(&now), "Datetime ().sameDay (Datetime (now))");
-    t.ok(relative_now.same_week(&now), "Datetime ().sameWeek (Datetime (now))");
-    t.ok(relative_now.same_month(&now), "Datetime ().sameMonth (Datetime (now))");
-    t.ok(relative_now.same_year(&now), "Datetime ().sameYear (Datetime (now))");
+    t.ok(
+        relative_now.same_hour(&now),
+        "Datetime ().sameHour (Datetime (now))",
+    );
+    t.ok(
+        relative_now.same_day(&now),
+        "Datetime ().sameDay (Datetime (now))",
+    );
+    t.ok(
+        relative_now.same_week(&now),
+        "Datetime ().sameWeek (Datetime (now))",
+    );
+    t.ok(
+        relative_now.same_month(&now),
+        "Datetime ().sameMonth (Datetime (now))",
+    );
+    t.ok(
+        relative_now.same_year(&now),
+        "Datetime ().sameYear (Datetime (now))",
+    );
 
     // Loose comparisons.
     let left = dt(t, "7/4/2008", "m/d/Y");
     let comp1 = dt(t, "7/4/2008", "m/d/Y");
-    t.ok(left.same_day(&comp1), "7/4/2008 is on the same day as 7/4/2008");
-    t.ok(left.same_week(&comp1), "7/4/2008 is on the same week as 7/4/2008");
-    t.ok(left.same_month(&comp1), "7/4/2008 is in the same month as 7/4/2008");
-    t.ok(left.same_quarter(&comp1), "7/4/2008 is in the same quarter as 7/4/2008");
-    t.ok(left.same_year(&comp1), "7/4/2008 is in the same year as 7/4/2008");
+    t.ok(
+        left.same_day(&comp1),
+        "7/4/2008 is on the same day as 7/4/2008",
+    );
+    t.ok(
+        left.same_week(&comp1),
+        "7/4/2008 is on the same week as 7/4/2008",
+    );
+    t.ok(
+        left.same_month(&comp1),
+        "7/4/2008 is in the same month as 7/4/2008",
+    );
+    t.ok(
+        left.same_quarter(&comp1),
+        "7/4/2008 is in the same quarter as 7/4/2008",
+    );
+    t.ok(
+        left.same_year(&comp1),
+        "7/4/2008 is in the same year as 7/4/2008",
+    );
 
     let comp2 = dt(t, "7/5/2008", "m/d/Y");
-    t.notok(left.same_day(&comp2), "7/4/2008 is not on the same day as 7/5/2008");
-    t.ok(left.same_month(&comp2), "7/4/2008 is in the same month as 7/5/2008");
-    t.ok(left.same_quarter(&comp2), "7/4/2008 is in the same quarter as 7/5/2008");
-    t.ok(left.same_year(&comp2), "7/4/2008 is in the same year as 7/5/2008");
+    t.notok(
+        left.same_day(&comp2),
+        "7/4/2008 is not on the same day as 7/5/2008",
+    );
+    t.ok(
+        left.same_month(&comp2),
+        "7/4/2008 is in the same month as 7/5/2008",
+    );
+    t.ok(
+        left.same_quarter(&comp2),
+        "7/4/2008 is in the same quarter as 7/5/2008",
+    );
+    t.ok(
+        left.same_year(&comp2),
+        "7/4/2008 is in the same year as 7/5/2008",
+    );
 
     let comp3 = dt(t, "8/4/2008", "m/d/Y");
-    t.notok(left.same_day(&comp3), "7/4/2008 is not on the same day as 8/4/2008");
-    t.notok(left.same_week(&comp3), "7/4/2008 is not on the same week as 8/4/2008");
-    t.notok(left.same_month(&comp3), "7/4/2008 is not in the same month as 8/4/2008");
-    t.ok(left.same_quarter(&comp3), "7/4/2008 is in the same quarter as 8/4/2008");
-    t.ok(left.same_year(&comp3), "7/4/2008 is in the same year as 8/4/2008");
+    t.notok(
+        left.same_day(&comp3),
+        "7/4/2008 is not on the same day as 8/4/2008",
+    );
+    t.notok(
+        left.same_week(&comp3),
+        "7/4/2008 is not on the same week as 8/4/2008",
+    );
+    t.notok(
+        left.same_month(&comp3),
+        "7/4/2008 is not in the same month as 8/4/2008",
+    );
+    t.ok(
+        left.same_quarter(&comp3),
+        "7/4/2008 is in the same quarter as 8/4/2008",
+    );
+    t.ok(
+        left.same_year(&comp3),
+        "7/4/2008 is in the same year as 8/4/2008",
+    );
 
     let comp4 = dt(t, "7/4/2009", "m/d/Y");
-    t.notok(left.same_day(&comp4), "7/4/2008 is not on the same day as 7/4/2009");
-    t.notok(left.same_week(&comp4), "7/4/2008 is not on the same week as 7/4/2009");
-    t.notok(left.same_month(&comp4), "7/4/2008 is not in the same month as 7/4/2009");
-    t.notok(left.same_quarter(&comp4), "7/4/2008 is not in the same quarter as 7/4/2009");
-    t.notok(left.same_year(&comp4), "7/4/2008 is not in the same year as 7/4/2009");
+    t.notok(
+        left.same_day(&comp4),
+        "7/4/2008 is not on the same day as 7/4/2009",
+    );
+    t.notok(
+        left.same_week(&comp4),
+        "7/4/2008 is not on the same week as 7/4/2009",
+    );
+    t.notok(
+        left.same_month(&comp4),
+        "7/4/2008 is not in the same month as 7/4/2009",
+    );
+    t.notok(
+        left.same_quarter(&comp4),
+        "7/4/2008 is not in the same quarter as 7/4/2009",
+    );
+    t.notok(
+        left.same_year(&comp4),
+        "7/4/2008 is not in the same year as 7/4/2009",
+    );
 
     // Validity.
     t.ok(Datetime::valid_ymd(2008, 2, 29), "valid: 2/29/2008");
     t.notok(Datetime::valid_ymd(2007, 2, 29), "invalid: 2/29/2007");
 
-    t.ok(Datetime::valid_str("2/29/2008", "m/d/Y"), "valid: 2/29/2008");
-    t.notok(Datetime::valid_str("2/29/2007", "m/d/Y"), "invalid: 2/29/2007");
+    t.ok(
+        Datetime::valid_str("2/29/2008", "m/d/Y"),
+        "valid: 2/29/2008",
+    );
+    t.notok(
+        Datetime::valid_str("2/29/2007", "m/d/Y"),
+        "invalid: 2/29/2007",
+    );
 
     t.ok(Datetime::valid_yd(2008, 366), "valid: 366 days in 2008");
     t.notok(Datetime::valid_yd(2007, 366), "invalid: 366 days in 2007");
 
     // Time validity.
-    t.ok(Datetime::valid_ymdhms(2010, 2, 28, 0, 0, 0), "valid 2/28/2010 0:00:00");
-    t.ok(Datetime::valid_ymdhms(2010, 2, 28, 23, 59, 59), "valid 2/28/2010 23:59:59");
-    t.notok(Datetime::valid_ymdhms(2010, 2, 28, 24, 59, 59), "valid 2/28/2010 24:59:59");
-    t.notok(Datetime::valid_ymdhms(2010, 2, 28, -1, 0, 0), "valid 2/28/2010 -1:00:00");
+    t.ok(
+        Datetime::valid_ymdhms(2010, 2, 28, 0, 0, 0),
+        "valid 2/28/2010 0:00:00",
+    );
+    t.ok(
+        Datetime::valid_ymdhms(2010, 2, 28, 23, 59, 59),
+        "valid 2/28/2010 23:59:59",
+    );
+    t.notok(
+        Datetime::valid_ymdhms(2010, 2, 28, 24, 59, 59),
+        "valid 2/28/2010 24:59:59",
+    );
+    t.notok(
+        Datetime::valid_ymdhms(2010, 2, 28, -1, 0, 0),
+        "valid 2/28/2010 -1:00:00",
+    );
 
     // Leap year.
     t.ok(Datetime::leap_year(2008), "2008 is a leap year");
@@ -828,8 +4157,16 @@ fn datetime_t(t: &mut UnitTest) {
     t.is(Datetime::days_in_year(2015), 365, "365 days in 2015");
 
     // Days in month.
-    t.is(Datetime::days_in_month(2008, 2), 29, "29 days in February 2008");
-    t.is(Datetime::days_in_month(2007, 2), 28, "28 days in February 2007");
+    t.is(
+        Datetime::days_in_month(2008, 2),
+        29,
+        "29 days in February 2008",
+    );
+    t.is(
+        Datetime::days_in_month(2007, 2),
+        28,
+        "28 days in February 2007",
+    );
 
     // Names.
     t.is(Datetime::month_name(1), "January", "1 = January");
@@ -904,7 +4241,11 @@ fn datetime_t(t: &mut UnitTest) {
     t.is(happy_new_year.month(), 1, "1/1/2008 == January");
     t.is(happy_new_year.day(), 1, "1/1/2008 == 1");
     t.is(happy_new_year.year(), 2008, "1/1/2008 == 2008");
-    t.is(happy_new_year.to_string("Y-M-D"), "2008-01-01", "toString 2008-01-01");
+    t.is(
+        happy_new_year.to_string("Y-M-D"),
+        "2008-01-01",
+        "toString 2008-01-01",
+    );
 
     let (mut m, mut d, mut y) = (0, 0, 0);
     happy_new_year.to_ymd(&mut y, &mut m, &mut d);
@@ -913,15 +4254,29 @@ fn datetime_t(t: &mut UnitTest) {
     t.is(y, 2008, "1/1/2008 == 2008");
 
     let mut epoch = Datetime::from_ymd(2001, 9, 8);
-    t.ok((epoch.to_epoch() as i32) < 1000000000, "9/8/2001 < 1,000,000,000");
+    t.ok(
+        (epoch.to_epoch() as i32) < 1000000000,
+        "9/8/2001 < 1,000,000,000",
+    );
     epoch += 172800;
-    t.ok((epoch.to_epoch() as i32) > 1000000000, "9/10/2001 > 1,000,000,000");
+    t.ok(
+        (epoch.to_epoch() as i32) > 1000000000,
+        "9/10/2001 > 1,000,000,000",
+    );
 
     let from_epoch = Datetime::from_epoch(epoch.to_epoch());
-    t.is(from_epoch.to_string("Y-M-D"), epoch.to_string("Y-M-D"), "ctor (time_t)");
+    t.is(
+        from_epoch.to_string("Y-M-D"),
+        epoch.to_string("Y-M-D"),
+        "ctor (time_t)",
+    );
 
     let iso = Datetime::from_epoch(1000000000);
-    t.is(iso.to_iso(), "20010909T014640Z", "1,000,000,000 -> 20010909T014640Z");
+    t.is(
+        iso.to_iso(),
+        "20010909T014640Z",
+        "1,000,000,000 -> 20010909T014640Z",
+    );
 
     // Test for Y2038 problem
     let f_epoch = Datetime::from_ymd(2039, 1, 1);
@@ -929,44 +4284,348 @@ fn datetime_t(t: &mut UnitTest) {
     t.ok(f_epoch.to_epoch() > 2147483647, "9/01/2039 > 2,147,483,647");
 
     let f_iso = Datetime::from_epoch(2147483650);
-    t.is(f_iso.to_iso(), "20380119T031410Z", "2147483650 -> 20380119T031410Z");
+    t.is(
+        f_iso.to_iso(),
+        "20380119T031410Z",
+        "2147483650 -> 20380119T031410Z",
+    );
 
     // Test known-overlapped ISO8601 year boundaries, including leap year 1980.
     // Only makes sense for weekstart == 1 which activates the ISO8601 algorithm.
     // Dates are taken from the table at https://en.wikipedia.org/wiki/ISO_week_date
     Datetime::set_weekstart(1);
     //  input         y   m     mo  wk wd jul d sec tz utc    time_t
-    p(t, "1976-W53-6", 10, 1976, 0, 53, 6, 0, 0, 0, 0, false, Datetime::from_ymd(1977, 1, 1).to_epoch());
-    p(t, "1976-W53-6", 10, 1976, 0, 53, 6, 0, 0, 0, 0, false, Datetime::from_ymd(1977, 1, 1).to_epoch());
-    p(t, "1976-W53-7", 10, 1976, 0, 53, 7, 0, 0, 0, 0, false, Datetime::from_ymd(1977, 1, 2).to_epoch());
-    p(t, "1977-W52-6", 10, 1977, 0, 52, 6, 0, 0, 0, 0, false, Datetime::from_ymd(1977, 12, 31).to_epoch());
-    p(t, "1977-W52-7", 10, 1977, 0, 52, 7, 0, 0, 0, 0, false, Datetime::from_ymd(1978, 1, 1).to_epoch());
-    p(t, "1978-W01-1", 10, 1978, 0, 1, 1, 0, 0, 0, 0, false, Datetime::from_ymd(1978, 1, 2).to_epoch());
-    p(t, "1978-W52-7", 10, 1978, 0, 52, 7, 0, 0, 0, 0, false, Datetime::from_ymd(1978, 12, 31).to_epoch());
-    p(t, "1979-W01-1", 10, 1979, 0, 1, 1, 0, 0, 0, 0, false, Datetime::from_ymd(1979, 1, 1).to_epoch());
-    p(t, "1979-W52-7", 10, 1979, 0, 52, 7, 0, 0, 0, 0, false, Datetime::from_ymd(1979, 12, 30).to_epoch());
-    p(t, "1980-W01-1", 10, 1980, 0, 1, 1, 0, 0, 0, 0, false, Datetime::from_ymd(1979, 12, 31).to_epoch());
-    p(t, "1980-W01-2", 10, 1980, 0, 1, 2, 0, 0, 0, 0, false, Datetime::from_ymd(1980, 1, 1).to_epoch());
-    p(t, "1980-W52-7", 10, 1980, 0, 52, 7, 0, 0, 0, 0, false, Datetime::from_ymd(1980, 12, 28).to_epoch());
-    p(t, "1981-W01-1", 10, 1981, 0, 1, 1, 0, 0, 0, 0, false, Datetime::from_ymd(1980, 12, 29).to_epoch());
-    p(t, "1981-W01-2", 10, 1981, 0, 1, 2, 0, 0, 0, 0, false, Datetime::from_ymd(1980, 12, 30).to_epoch());
-    p(t, "1981-W01-3", 10, 1981, 0, 1, 3, 0, 0, 0, 0, false, Datetime::from_ymd(1980, 12, 31).to_epoch());
-    p(t, "1981-W01-4", 10, 1981, 0, 1, 4, 0, 0, 0, 0, false, Datetime::from_ymd(1981, 1, 1).to_epoch());
-    p(t, "1981-W53-4", 10, 1981, 0, 53, 4, 0, 0, 0, 0, false, Datetime::from_ymd(1981, 12, 31).to_epoch());
-    p(t, "1981-W53-5", 10, 1981, 0, 53, 5, 0, 0, 0, 0, false, Datetime::from_ymd(1982, 1, 1).to_epoch());
-    p(t, "1981-W53-6", 10, 1981, 0, 53, 6, 0, 0, 0, 0, false, Datetime::from_ymd(1982, 1, 2).to_epoch());
-    p(t, "1981-W53-7", 10, 1981, 0, 53, 7, 0, 0, 0, 0, false, Datetime::from_ymd(1982, 1, 3).to_epoch());
+    p(
+        t,
+        "1976-W53-6",
+        10,
+        1976,
+        0,
+        53,
+        6,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1977, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1976-W53-6",
+        10,
+        1976,
+        0,
+        53,
+        6,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1977, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1976-W53-7",
+        10,
+        1976,
+        0,
+        53,
+        7,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1977, 1, 2).to_epoch(),
+    );
+    p(
+        t,
+        "1977-W52-6",
+        10,
+        1977,
+        0,
+        52,
+        6,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1977, 12, 31).to_epoch(),
+    );
+    p(
+        t,
+        "1977-W52-7",
+        10,
+        1977,
+        0,
+        52,
+        7,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1978, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1978-W01-1",
+        10,
+        1978,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1978, 1, 2).to_epoch(),
+    );
+    p(
+        t,
+        "1978-W52-7",
+        10,
+        1978,
+        0,
+        52,
+        7,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1978, 12, 31).to_epoch(),
+    );
+    p(
+        t,
+        "1979-W01-1",
+        10,
+        1979,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1979, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1979-W52-7",
+        10,
+        1979,
+        0,
+        52,
+        7,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1979, 12, 30).to_epoch(),
+    );
+    p(
+        t,
+        "1980-W01-1",
+        10,
+        1980,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1979, 12, 31).to_epoch(),
+    );
+    p(
+        t,
+        "1980-W01-2",
+        10,
+        1980,
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1980, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1980-W52-7",
+        10,
+        1980,
+        0,
+        52,
+        7,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1980, 12, 28).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W01-1",
+        10,
+        1981,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1980, 12, 29).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W01-2",
+        10,
+        1981,
+        0,
+        1,
+        2,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1980, 12, 30).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W01-3",
+        10,
+        1981,
+        0,
+        1,
+        3,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1980, 12, 31).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W01-4",
+        10,
+        1981,
+        0,
+        1,
+        4,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1981, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W53-4",
+        10,
+        1981,
+        0,
+        53,
+        4,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1981, 12, 31).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W53-5",
+        10,
+        1981,
+        0,
+        53,
+        5,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1982, 1, 1).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W53-6",
+        10,
+        1981,
+        0,
+        53,
+        6,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1982, 1, 2).to_epoch(),
+    );
+    p(
+        t,
+        "1981-W53-7",
+        10,
+        1981,
+        0,
+        53,
+        7,
+        0,
+        0,
+        0,
+        0,
+        false,
+        Datetime::from_ymd(1982, 1, 3).to_epoch(),
+    );
 
     // Quantization.
     let quant = Datetime::from_epoch(1234526400);
     // Deviation: 1234526400 is 2009-02-13 12:00:00 UTC, which is already
     // 2009-02-14 east of UTC+12 (Chatham); startOfDay is the local date.
     let quant_day = format!("{}000000", quant.to_string("YMD"));
-    let expected_day = if quant.day() == 13 { "20090213000000" } else { quant_day.as_str() };
-    t.is(quant.start_of_day().to_string("YMDHNS"), expected_day, "1234526400 -> 2/13/2009 12:00:00 UTC -> 2/13/2009 0:00:00");
-    t.is(quant.start_of_week().to_string("YMDHNS"), "20090208000000", "1234526400 -> 2/13/2009 12:00:00 UTC -> 2/8/2009 0:00:00");
-    t.is(quant.start_of_month().to_string("YMDHNS"), "20090201000000", "1234526400 -> 2/13/2009 12:00:00 UTC -> 2/1/2009 0:00:00");
-    t.is(quant.start_of_year().to_string("YMDHNS"), "20090101000000", "1234526400 -> 2/13/2009 12:00:00 UTC -> 1/1/2009 0:00:00");
+    let expected_day = if quant.day() == 13 {
+        "20090213000000"
+    } else {
+        quant_day.as_str()
+    };
+    t.is(
+        quant.start_of_day().to_string("YMDHNS"),
+        expected_day,
+        "1234526400 -> 2/13/2009 12:00:00 UTC -> 2/13/2009 0:00:00",
+    );
+    t.is(
+        quant.start_of_week().to_string("YMDHNS"),
+        "20090208000000",
+        "1234526400 -> 2/13/2009 12:00:00 UTC -> 2/8/2009 0:00:00",
+    );
+    t.is(
+        quant.start_of_month().to_string("YMDHNS"),
+        "20090201000000",
+        "1234526400 -> 2/13/2009 12:00:00 UTC -> 2/1/2009 0:00:00",
+    );
+    t.is(
+        quant.start_of_year().to_string("YMDHNS"),
+        "20090101000000",
+        "1234526400 -> 2/13/2009 12:00:00 UTC -> 1/1/2009 0:00:00",
+    );
 
     // Format parsing.
     let from_string1 = dt(t, "1/1/2008", "m/d/Y");
@@ -1044,7 +4703,15 @@ fn datetime_t(t: &mut UnitTest) {
     let doy = dt(t, "12/31/2011", "m/d/Y").day_of_year();
     t.is(doy, 365, "dayOfYear (12/31/2011) -> 365");
 
-    let day_names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    let day_names = [
+        "sunday",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+    ];
 
     // Relative dates - look ahead
     {
@@ -1059,9 +4726,15 @@ fn datetime_t(t: &mut UnitTest) {
             let r = dt(t, name, "");
             let dow = now.day_of_week() as i64;
             if dow >= day {
-                t.ok(r.same_day(&plus_days(&now, day - dow + 7)), format!("{name} -> next {name}"));
+                t.ok(
+                    r.same_day(&plus_days(&now, day - dow + 7)),
+                    format!("{name} -> next {name}"),
+                );
             } else {
-                t.ok(r.same_day(&plus_days(&now, day - dow)), format!("{name} -> next {name}"));
+                t.ok(
+                    r.same_day(&plus_days(&now, day - dow)),
+                    format!("{name} -> next {name}"),
+                );
             }
         }
     }
@@ -1078,9 +4751,15 @@ fn datetime_t(t: &mut UnitTest) {
             let r = dt(t, name, "");
             let dow = now.day_of_week() as i64;
             if dow >= day {
-                t.ok(r.same_day(&plus_days(&now, day - dow)), format!("{name} -> previous {name}"));
+                t.ok(
+                    r.same_day(&plus_days(&now, day - dow)),
+                    format!("{name} -> previous {name}"),
+                );
             } else {
-                t.ok(r.same_day(&plus_days(&now, day - dow - 7)), format!("{name} -> previous {name}"));
+                t.ok(
+                    r.same_day(&plus_days(&now, day - dow - 7)),
+                    format!("{name} -> previous {name}"),
+                );
             }
         }
     }
@@ -1125,7 +4804,11 @@ fn datetime_t(t: &mut UnitTest) {
         Datetime::set_time_relative(true);
 
         let first = dt(t, "1st", "");
-        t.diag(format!("actual (first - relative:true): {} now: {}", first.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (first - relative:true): {} now: {}",
+            first.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 1 {
             t.notok(first.same_month(&now), "1st not in same month as now");
         } else {
@@ -1134,7 +4817,11 @@ fn datetime_t(t: &mut UnitTest) {
         t.is(first.day(), 1, "1st day is 1");
 
         let second = dt(t, "2nd", "");
-        t.diag(format!("actual (second - relative:true): {} now: {}", second.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (second - relative:true): {} now: {}",
+            second.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 2 {
             t.notok(second.same_month(&now), "2nd not in same month as now");
         } else {
@@ -1143,7 +4830,11 @@ fn datetime_t(t: &mut UnitTest) {
         t.is(second.day(), 2, "2nd day is 2");
 
         let third = dt(t, "3rd", "");
-        t.diag(format!("actual (third - relative:true): {} now: {}", third.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (third - relative:true): {} now: {}",
+            third.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 3 {
             t.notok(third.same_month(&now), "3rd not in same month as now");
         } else {
@@ -1152,7 +4843,11 @@ fn datetime_t(t: &mut UnitTest) {
         t.is(third.day(), 3, "3rd day is 3");
 
         let fourth = dt(t, "4th", "");
-        t.diag(format!("actual (fourth - relative:true): {} now: {}", fourth.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (fourth - relative:true): {} now: {}",
+            fourth.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 4 {
             t.notok(fourth.same_month(&now), "4th not in same month as now");
         } else {
@@ -1165,38 +4860,66 @@ fn datetime_t(t: &mut UnitTest) {
         Datetime::set_time_relative(false);
 
         let first = dt(t, "1st", "");
-        t.diag(format!("actual (first - relative:false): {} now: {}", first.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (first - relative:false): {} now: {}",
+            first.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 1 {
             t.ok(first.month() == now.month(), "1st in same month as now");
         } else {
-            t.ok((first.month() - now.month() - 12) % 12 == -1, "1st in previous month");
+            t.ok(
+                (first.month() - now.month() - 12) % 12 == -1,
+                "1st in previous month",
+            );
         }
         t.is(first.day(), 1, "1st day is 1");
 
         let second = dt(t, "2nd", "");
-        t.diag(format!("actual (second - relative:false): {} now: {}", second.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (second - relative:false): {} now: {}",
+            second.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 2 {
             t.ok(second.month() == now.month(), "2nd in same month as now");
         } else {
-            t.ok((second.month() - now.month() - 12) % 12 == -1, "2nd in previous month");
+            t.ok(
+                (second.month() - now.month() - 12) % 12 == -1,
+                "2nd in previous month",
+            );
         }
         t.is(second.day(), 2, "2nd day is 2");
 
         let third = dt(t, "3rd", "");
-        t.diag(format!("actual (third - relative:false): {} now: {}", third.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (third - relative:false): {} now: {}",
+            third.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 3 {
             t.ok(third.month() == now.month(), "3rd in same month as now");
         } else {
-            t.ok((third.month() - now.month() - 12) % 12 == -1, "3rd in previous month");
+            t.ok(
+                (third.month() - now.month() - 12) % 12 == -1,
+                "3rd in previous month",
+            );
         }
         t.is(third.day(), 3, "3rd day is 3");
 
         let fourth = dt(t, "4th", "");
-        t.diag(format!("actual (fourth - relative:false): {} now: {}", fourth.to_iso(), now.to_iso()));
+        t.diag(format!(
+            "actual (fourth - relative:false): {} now: {}",
+            fourth.to_iso(),
+            now.to_iso()
+        ));
         if now.day() >= 4 {
             t.ok(fourth.month() == now.month(), "4th in same month as now");
         } else {
-            t.ok((fourth.month() - now.month() - 12) % 12 == -1, "4th in previous month");
+            t.ok(
+                (fourth.month() - now.month() - 12) % 12 == -1,
+                "4th in previous month",
+            );
         }
         t.is(fourth.day(), 4, "4th day is 4");
     }
@@ -1230,25 +4953,45 @@ fn datetime_t(t: &mut UnitTest) {
 
     // Datetime::operator-
     let r25 = Datetime::from_epoch(1234567890);
-    t.is((r25 - 1).to_epoch(), 1234567889i64, "1234567890 - 1 = 1234567889");
+    t.is(
+        (r25 - 1).to_epoch(),
+        1234567889i64,
+        "1234567890 - 1 = 1234567889",
+    );
 
     // Datetime::operator--
     let mut r26 = Datetime::from_ymdhms(2010, 11, 7, 23, 59, 59);
     r26.dec();
-    t.is(r26.to_string("YMDHNS"), "20101106235959", "decrement across fall DST boundary");
+    t.is(
+        r26.to_string("YMDHNS"),
+        "20101106235959",
+        "decrement across fall DST boundary",
+    );
 
     let mut r27 = Datetime::from_ymdhms(2010, 3, 14, 23, 59, 59);
     r27.dec();
-    t.is(r27.to_string("YMDHNS"), "20100313235959", "decrement across spring DST boundary");
+    t.is(
+        r27.to_string("YMDHNS"),
+        "20100313235959",
+        "decrement across spring DST boundary",
+    );
 
     // Datetime::operator++
     let mut r28 = Datetime::from_ymdhms(2010, 11, 6, 23, 59, 59);
     r28.inc();
-    t.is(r28.to_string("YMDHNS"), "20101107235959", "increment across fall DST boundary");
+    t.is(
+        r28.to_string("YMDHNS"),
+        "20101107235959",
+        "increment across fall DST boundary",
+    );
 
     let mut r29 = Datetime::from_ymdhms(2010, 3, 13, 23, 59, 59);
     r29.inc();
-    t.is(r29.to_string("YMDHNS"), "20100314235959", "increment across spring DST boundary");
+    t.is(
+        r29.to_string("YMDHNS"),
+        "20100314235959",
+        "increment across spring DST boundary",
+    );
 
     // int Datetime::length (const std::string&);
     t.is(Datetime::length("m"), 2, "length 'm' --> 2");
@@ -1275,34 +5018,126 @@ fn datetime_t(t: &mut UnitTest) {
 
     // Depletion requirement.
     let r30 = dt(t, "Mon Jun 30 2014", "a b D Y");
-    t.is(r30.to_string("YMDHNS"), "20140630000000", "Depletion required on complex format with spaces");
+    t.is(
+        r30.to_string("YMDHNS"),
+        "20140630000000",
+        "Depletion required on complex format with spaces",
+    );
 
     let r31 = dt(t, "Mon Jun 30 2014 xxx", "a b D Y");
-    t.is(r31.to_string("YMDHNS"), "20140630000000", "Depletion not required on complex format with spaces");
+    t.is(
+        r31.to_string("YMDHNS"),
+        "20140630000000",
+        "Depletion not required on complex format with spaces",
+    );
 
     // Test all format options.
     let r32 = dt(t, "2015-10-28T12:55:00", "");
-    t.is(r32.to_string("Y"), "2015", "2015-10-28T12:55:01 -> Y ->      2015");
-    t.is(r32.to_string("y"), "15", "2015-10-28T12:55:01 -> y ->        15");
-    t.is(r32.to_string("M"), "10", "2015-10-28T12:55:01 -> M ->        10");
-    t.is(r32.to_string("m"), "10", "2015-10-28T12:55:01 -> m ->        10");
-    t.is(r32.to_string("D"), "28", "2015-10-28T12:55:01 -> D ->        28");
-    t.is(r32.to_string("d"), "28", "2015-10-28T12:55:01 -> d ->        28");
-    t.is(r32.to_string("H"), "12", "2015-10-28T12:55:01 -> H ->        12");
-    t.is(r32.to_string("h"), "12", "2015-10-28T12:55:01 -> h ->        12");
-    t.is(r32.to_string("N"), "55", "2015-10-28T12:55:01 -> N ->        55");
-    t.is(r32.to_string("n"), "55", "2015-10-28T12:55:01 -> n ->        55");
-    t.is(r32.to_string("S"), "00", "2015-10-28T12:55:01 -> S ->        01");
-    t.is(r32.to_string("s"), "0", "2015-10-28T12:55:01 -> s ->         1");
-    t.is(r32.to_string("A"), "Wednesday", "2015-10-28T12:55:01 -> A -> Wednesday");
-    t.is(r32.to_string("a"), "Wed", "2015-10-28T12:55:01 -> a ->       Wed");
-    t.is(r32.to_string("B"), "October", "2015-10-28T12:55:01 -> B ->   October");
-    t.is(r32.to_string("b"), "Oct", "2015-10-28T12:55:01 -> b ->       Oct");
-    t.is(r32.to_string("V"), "44", "2015-10-28T12:55:01 -> V ->        44");
-    t.is(r32.to_string("v"), "44", "2015-10-28T12:55:01 -> v ->        44");
-    t.is(r32.to_string("J"), "301", "2015-10-28T12:55:01 -> J ->       301");
-    t.is(r32.to_string("j"), "301", "2015-10-28T12:55:01 -> j ->       301");
-    t.is(r32.to_string("w"), "3", "2015-10-28T12:55:01 -> w ->         3");
+    t.is(
+        r32.to_string("Y"),
+        "2015",
+        "2015-10-28T12:55:01 -> Y ->      2015",
+    );
+    t.is(
+        r32.to_string("y"),
+        "15",
+        "2015-10-28T12:55:01 -> y ->        15",
+    );
+    t.is(
+        r32.to_string("M"),
+        "10",
+        "2015-10-28T12:55:01 -> M ->        10",
+    );
+    t.is(
+        r32.to_string("m"),
+        "10",
+        "2015-10-28T12:55:01 -> m ->        10",
+    );
+    t.is(
+        r32.to_string("D"),
+        "28",
+        "2015-10-28T12:55:01 -> D ->        28",
+    );
+    t.is(
+        r32.to_string("d"),
+        "28",
+        "2015-10-28T12:55:01 -> d ->        28",
+    );
+    t.is(
+        r32.to_string("H"),
+        "12",
+        "2015-10-28T12:55:01 -> H ->        12",
+    );
+    t.is(
+        r32.to_string("h"),
+        "12",
+        "2015-10-28T12:55:01 -> h ->        12",
+    );
+    t.is(
+        r32.to_string("N"),
+        "55",
+        "2015-10-28T12:55:01 -> N ->        55",
+    );
+    t.is(
+        r32.to_string("n"),
+        "55",
+        "2015-10-28T12:55:01 -> n ->        55",
+    );
+    t.is(
+        r32.to_string("S"),
+        "00",
+        "2015-10-28T12:55:01 -> S ->        01",
+    );
+    t.is(
+        r32.to_string("s"),
+        "0",
+        "2015-10-28T12:55:01 -> s ->         1",
+    );
+    t.is(
+        r32.to_string("A"),
+        "Wednesday",
+        "2015-10-28T12:55:01 -> A -> Wednesday",
+    );
+    t.is(
+        r32.to_string("a"),
+        "Wed",
+        "2015-10-28T12:55:01 -> a ->       Wed",
+    );
+    t.is(
+        r32.to_string("B"),
+        "October",
+        "2015-10-28T12:55:01 -> B ->   October",
+    );
+    t.is(
+        r32.to_string("b"),
+        "Oct",
+        "2015-10-28T12:55:01 -> b ->       Oct",
+    );
+    t.is(
+        r32.to_string("V"),
+        "44",
+        "2015-10-28T12:55:01 -> V ->        44",
+    );
+    t.is(
+        r32.to_string("v"),
+        "44",
+        "2015-10-28T12:55:01 -> v ->        44",
+    );
+    t.is(
+        r32.to_string("J"),
+        "301",
+        "2015-10-28T12:55:01 -> J ->       301",
+    );
+    t.is(
+        r32.to_string("j"),
+        "301",
+        "2015-10-28T12:55:01 -> j ->       301",
+    );
+    t.is(
+        r32.to_string("w"),
+        "3",
+        "2015-10-28T12:55:01 -> w ->         3",
+    );
 
     // Test all parse options.
     let r33 = dt(t, "2015 10 28 19 28 01", "Y M D H N S");
@@ -1338,27 +5173,111 @@ fn datetime_t(t: &mut UnitTest) {
 
     // Test all format options for a future date
     let r38 = dt(t, "9015-10-28T12:55:00", "");
-    t.is(r38.to_string("Y"), "9015", "9015-10-28T12:55:01 -> Y ->      9015");
-    t.is(r38.to_string("y"), "15", "9015-10-28T12:55:01 -> y ->        15");
-    t.is(r38.to_string("M"), "10", "9015-10-28T12:55:01 -> M ->        10");
-    t.is(r38.to_string("m"), "10", "9015-10-28T12:55:01 -> m ->        10");
-    t.is(r38.to_string("D"), "28", "9015-10-28T12:55:01 -> D ->        28");
-    t.is(r38.to_string("d"), "28", "9015-10-28T12:55:01 -> d ->        28");
-    t.is(r38.to_string("H"), "12", "9015-10-28T12:55:01 -> H ->        12");
-    t.is(r38.to_string("h"), "12", "9015-10-28T12:55:01 -> h ->        12");
-    t.is(r38.to_string("N"), "55", "9015-10-28T12:55:01 -> N ->        55");
-    t.is(r38.to_string("n"), "55", "9015-10-28T12:55:01 -> n ->        55");
-    t.is(r38.to_string("S"), "00", "9015-10-28T12:55:01 -> S ->        01");
-    t.is(r38.to_string("s"), "0", "9015-10-28T12:55:01 -> s ->         1");
-    t.is(r38.to_string("A"), "Saturday", "9015-10-28T12:55:01 -> A ->  Saturday");
-    t.is(r38.to_string("a"), "Sat", "9015-10-28T12:55:01 -> a ->       Sat");
-    t.is(r38.to_string("B"), "October", "9015-10-28T12:55:01 -> B ->   October");
-    t.is(r38.to_string("b"), "Oct", "9015-10-28T12:55:01 -> b ->       Oct");
-    t.is(r38.to_string("V"), "43", "9015-10-28T12:55:01 -> V ->        43");
-    t.is(r38.to_string("v"), "43", "9015-10-28T12:55:01 -> v ->        43");
-    t.is(r38.to_string("J"), "301", "9015-10-28T12:55:01 -> J ->       301");
-    t.is(r38.to_string("j"), "301", "9015-10-28T12:55:01 -> j ->       301");
-    t.is(r38.to_string("w"), "6", "9015-10-28T12:55:01 -> w ->         6");
+    t.is(
+        r38.to_string("Y"),
+        "9015",
+        "9015-10-28T12:55:01 -> Y ->      9015",
+    );
+    t.is(
+        r38.to_string("y"),
+        "15",
+        "9015-10-28T12:55:01 -> y ->        15",
+    );
+    t.is(
+        r38.to_string("M"),
+        "10",
+        "9015-10-28T12:55:01 -> M ->        10",
+    );
+    t.is(
+        r38.to_string("m"),
+        "10",
+        "9015-10-28T12:55:01 -> m ->        10",
+    );
+    t.is(
+        r38.to_string("D"),
+        "28",
+        "9015-10-28T12:55:01 -> D ->        28",
+    );
+    t.is(
+        r38.to_string("d"),
+        "28",
+        "9015-10-28T12:55:01 -> d ->        28",
+    );
+    t.is(
+        r38.to_string("H"),
+        "12",
+        "9015-10-28T12:55:01 -> H ->        12",
+    );
+    t.is(
+        r38.to_string("h"),
+        "12",
+        "9015-10-28T12:55:01 -> h ->        12",
+    );
+    t.is(
+        r38.to_string("N"),
+        "55",
+        "9015-10-28T12:55:01 -> N ->        55",
+    );
+    t.is(
+        r38.to_string("n"),
+        "55",
+        "9015-10-28T12:55:01 -> n ->        55",
+    );
+    t.is(
+        r38.to_string("S"),
+        "00",
+        "9015-10-28T12:55:01 -> S ->        01",
+    );
+    t.is(
+        r38.to_string("s"),
+        "0",
+        "9015-10-28T12:55:01 -> s ->         1",
+    );
+    t.is(
+        r38.to_string("A"),
+        "Saturday",
+        "9015-10-28T12:55:01 -> A ->  Saturday",
+    );
+    t.is(
+        r38.to_string("a"),
+        "Sat",
+        "9015-10-28T12:55:01 -> a ->       Sat",
+    );
+    t.is(
+        r38.to_string("B"),
+        "October",
+        "9015-10-28T12:55:01 -> B ->   October",
+    );
+    t.is(
+        r38.to_string("b"),
+        "Oct",
+        "9015-10-28T12:55:01 -> b ->       Oct",
+    );
+    t.is(
+        r38.to_string("V"),
+        "43",
+        "9015-10-28T12:55:01 -> V ->        43",
+    );
+    t.is(
+        r38.to_string("v"),
+        "43",
+        "9015-10-28T12:55:01 -> v ->        43",
+    );
+    t.is(
+        r38.to_string("J"),
+        "301",
+        "9015-10-28T12:55:01 -> J ->       301",
+    );
+    t.is(
+        r38.to_string("j"),
+        "301",
+        "9015-10-28T12:55:01 -> j ->       301",
+    );
+    t.is(
+        r38.to_string("w"),
+        "6",
+        "9015-10-28T12:55:01 -> w ->         6",
+    );
 
     // Phrases (commented out upstream):
     //   Datetime r42 ("4th thursday in november");
@@ -1559,17 +5478,28 @@ fn datetime_t(t: &mut UnitTest) {
         // 0:00:01 is not earlier than now, so it is today even when relative.
         let first_second = today.hour() == 0 && today.minute() == 0 && today.second() <= 1;
         if first_second {
-            t.ok(today.same_day(&r38), "Datetime::timeRelative=true 0:00:01 --> tomorrow");
+            t.ok(
+                today.same_day(&r38),
+                "Datetime::timeRelative=true 0:00:01 --> tomorrow",
+            );
         } else {
-            t.notok(today.same_day(&r38), "Datetime::timeRelative=true 0:00:01 --> tomorrow");
+            t.notok(
+                today.same_day(&r38),
+                "Datetime::timeRelative=true 0:00:01 --> tomorrow",
+            );
         }
         Datetime::set_time_relative(false);
         let r39 = dt(t, "0:00:01", "");
-        t.ok(today.same_day(&r39), "Datetime::timeRelative=false 0:00:01 --> today");
+        t.ok(
+            today.same_day(&r39),
+            "Datetime::timeRelative=false 0:00:01 --> today",
+        );
         Datetime::set_time_relative(true);
     }
 
-    let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    let months = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
 
     {
         // Verify Datetime::timeRelative=true puts months before and including current month into next year
@@ -1584,7 +5514,10 @@ fn datetime_t(t: &mut UnitTest) {
                 "Datetime::timeRelative=true --> {month} in {} year",
                 if is_after { "same" } else { "next" }
             );
-            t.ok(test.year() == today.year() + if is_after { 0 } else { 1 }, message);
+            t.ok(
+                test.year() == today.year() + if is_after { 0 } else { 1 },
+                message,
+            );
         }
     }
 
@@ -1919,7 +5852,8 @@ fn dates_t(t: &mut UnitTest) {
     let today_tm = afton;
     Datetime::new().midsommarafton(&mut afton);
     localtime::mktime(&mut afton);
-    let on_midsommarafton = (afton.tm_year, afton.tm_mon, afton.tm_mday) == (today_tm.tm_year, today_tm.tm_mon, today_tm.tm_mday);
+    let on_midsommarafton = (afton.tm_year, afton.tm_mon, afton.tm_mday)
+        == (today_tm.tm_year, today_tm.tm_mon, today_tm.tm_mday);
     if on_midsommarafton {
         t.ok(
             midsommarafton > midsommar && midsommarafton.year() == midsommar.year() + 1,

@@ -224,7 +224,12 @@ fn suite(t: &mut UnitTest) -> Result<()> {
     let v55 = v5.op_div(&v5)?;
     t.is(v55.type_(), Type::Real, "1200 / 1200 --> real");
     t.is(v55.get_real(), 1.0, "1200 / 1200 --> 1.0");
-    t.is_tol(v5.op_div(&v52)?.get_real(), 3.14136, EPSILON, "1200 / 382 --> 3.14136");
+    t.is_tol(
+        v5.op_div(&v52)?.get_real(),
+        3.14136,
+        EPSILON,
+        "1200 / 382 --> 3.14136",
+    );
 
     Ok(())
 }

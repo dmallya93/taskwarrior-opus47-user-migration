@@ -150,7 +150,9 @@ impl Pig {
     /// C++ `Pig::skipLiteral`.
     pub fn skip_literal(&mut self, literal: &str) -> bool {
         // C++ `_text->find (literal, _cursor) == _cursor`.
-        if self.cursor <= self.bytes().len() && self.bytes()[self.cursor..].starts_with(literal.as_bytes()) {
+        if self.cursor <= self.bytes().len()
+            && self.bytes()[self.cursor..].starts_with(literal.as_bytes())
+        {
             self.cursor += literal.len();
             return true;
         }
@@ -162,7 +164,12 @@ impl Pig {
     /// the longest (byte) prefix of `reference` found at the cursor. With
     /// `ignore_case`, the text byte is lower-cased (C locale `tolower`) and
     /// compared with the unchanged reference byte.
-    pub fn skip_partial(&mut self, reference: &str, result: &mut String, ignore_case: bool) -> bool {
+    pub fn skip_partial(
+        &mut self,
+        reference: &str,
+        result: &mut String,
+        ignore_case: bool,
+    ) -> bool {
         let reference = reference.as_bytes();
         let reference_at = |pos: usize| reference.get(pos).copied().unwrap_or(0);
 
@@ -171,7 +178,8 @@ impl Pig {
         while reference_at(pos) != 0
             && self.byte(self.cursor + pos) != 0
             && ((reference_at(pos) == self.byte(self.cursor + pos) && !ignore_case)
-                || (reference_at(pos) == self.byte(self.cursor + pos).to_ascii_lowercase() && ignore_case))
+                || (reference_at(pos) == self.byte(self.cursor + pos).to_ascii_lowercase()
+                    && ignore_case))
         {
             pos += 1;
         }
@@ -195,7 +203,10 @@ impl Pig {
         let len = self.bytes().len();
         let from = self.cursor + 1;
         let found = if from <= len {
-            self.bytes()[from..].iter().position(|&b| b == end).map(|p| p + from)
+            self.bytes()[from..]
+                .iter()
+                .position(|&b| b == end)
+                .map(|p| p + from)
         } else {
             None
         };
@@ -624,7 +635,10 @@ impl Pig {
     pub fn get_hms(&mut self, hours: &mut i32, minutes: &mut i32, seconds: &mut i32) -> bool {
         let save = self.cursor;
 
-        if (self.get_digit2(hours) || self.get_digit(hours)) && self.skip(':') && self.get_digit2(minutes) {
+        if (self.get_digit2(hours) || self.get_digit(hours))
+            && self.skip(':')
+            && self.get_digit2(minutes)
+        {
             *seconds = 0;
             if self.skip(':') && !self.get_digit2(seconds) {
                 return false;
@@ -799,7 +813,10 @@ mod tests {
     fn skip_literal() {
         // Pig::skipLiteral
         let mut p2 = Pig::new("onetwo");
-        assert!(!p2.skip_literal("two"), "skipLiteral=two 'onetwo' --> false");
+        assert!(
+            !p2.skip_literal("two"),
+            "skipLiteral=two 'onetwo' --> false"
+        );
         assert!(p2.skip_literal("one"), "skipLiteral=one 'onetwo' --> true");
         assert!(dump_has(&p2, " 3/6"), "dump: {}", p2.dump());
     }
@@ -809,12 +826,24 @@ mod tests {
         // Pig::skipPartial
         let mut p2a = Pig::new("wonderfully");
         let mut value = String::new();
-        assert!(!p2a.skip_partial("foo", &mut value, false), "skipPartial=wonderfully 'foo' --> false");
-        assert!(p2a.skip_partial("wonder", &mut value, false), "skipPartial=wonderfully 'wonder' --> true");
-        assert_eq!(value, "wonder", "skipPartial=wonderfully 'wonder' --> 'wonder'");
+        assert!(
+            !p2a.skip_partial("foo", &mut value, false),
+            "skipPartial=wonderfully 'foo' --> false"
+        );
+        assert!(
+            p2a.skip_partial("wonder", &mut value, false),
+            "skipPartial=wonderfully 'wonder' --> true"
+        );
+        assert_eq!(
+            value, "wonder",
+            "skipPartial=wonderfully 'wonder' --> 'wonder'"
+        );
 
         value = String::new();
-        assert!(p2a.skip_partial("fun", &mut value, false), "skipPartial=fully 'fun' --> true");
+        assert!(
+            p2a.skip_partial("fun", &mut value, false),
+            "skipPartial=fully 'fun' --> true"
+        );
         assert_eq!(value, "fu", "skipPartial=fully 'fun' --> 'fu'");
     }
 
@@ -824,13 +853,19 @@ mod tests {
 
         // Pig::getUntilWS
         let mut p3 = Pig::new("one two three  ");
-        assert!(p3.get_until_ws(&mut value), "getUntilWS 'one two three  ' --> true");
+        assert!(
+            p3.get_until_ws(&mut value),
+            "getUntilWS 'one two three  ' --> true"
+        );
         assert_eq!(value, "one", "getUntilWS 'one two three  ' --> 'one'");
         assert!(dump_has(&p3, " 3/15"), "dump: {}", p3.dump());
 
         assert!(p3.skip_ws(), "skipWS ' two three  ' --> true");
 
-        assert!(p3.get_until_ws(&mut value), "getUntilWS 'two three  ' --> true");
+        assert!(
+            p3.get_until_ws(&mut value),
+            "getUntilWS 'two three  ' --> true"
+        );
         assert_eq!(value, "two", "getUntilWS 'two three  ' --> 'two'");
         assert!(dump_has(&p3, " 7/15"), "dump: {}", p3.dump());
 
@@ -894,8 +929,14 @@ mod tests {
 
         let mut p10 = Pig::new("2.34e-5");
         let mut dvalue = 0.0;
-        assert!(p10.get_number_f64(&mut dvalue), "getNumber '2.34e-5' --> true");
-        assert!((dvalue - 2.34e-5).abs() <= 1e-6, "getNumber '2.34e-5' --> 2.34e-5 +/- 1e-6");
+        assert!(
+            p10.get_number_f64(&mut dvalue),
+            "getNumber '2.34e-5' --> true"
+        );
+        assert!(
+            (dvalue - 2.34e-5).abs() <= 1e-6,
+            "getNumber '2.34e-5' --> 2.34e-5 +/- 1e-6"
+        );
         assert!(dump_has(&p10, " 7/7"), "dump: {}", p10.dump());
     }
 
@@ -951,14 +992,23 @@ mod tests {
             p14.get_one_of(&["fourteen", "four"], &mut value),
             "getOneOf={{fourteen,four}} 'fourteenfour five' --> true"
         );
-        assert_eq!(value, "fourteen", "getOneOf={{fourteen,four}} 'fourteenfour five' --> 'fourteen'");
+        assert_eq!(
+            value, "fourteen",
+            "getOneOf={{fourteen,four}} 'fourteenfour five' --> 'fourteen'"
+        );
         assert!(
             p14.get_one_of(&["fourteen", "four"], &mut value),
             "getOneOf={{fourteen,four}} 'fourteenfour five' --> true"
         );
-        assert_eq!(value, "four", "getOneOf={{fourteen,four}} 'fourteenfour five' --> 'four'");
+        assert_eq!(
+            value, "four",
+            "getOneOf={{fourteen,four}} 'fourteenfour five' --> 'four'"
+        );
         assert!(dump_has(&p14, " 12/17"), "dump: {}", p14.dump());
-        assert!(!p14.get_one_of(&["five"], &mut value), "getOneOf={{five}} 'fourteenfour five' --> false");
+        assert!(
+            !p14.get_one_of(&["five"], &mut value),
+            "getOneOf={{five}} 'fourteenfour five' --> false"
+        );
         assert!(dump_has(&p14, " 12/17"), "dump: {}", p14.dump());
     }
 
@@ -990,34 +1040,73 @@ mod tests {
 
         // Pig::getQuoted
         let mut p16 = Pig::new("");
-        assert!(!p16.get_quoted('"', &mut value), "      \"\"   :      getQuoted ('\"')     --> false");
+        assert!(
+            !p16.get_quoted('"', &mut value),
+            "      \"\"   :      getQuoted ('\"')     --> false"
+        );
 
         let mut p17 = Pig::new("''");
-        assert!(p17.get_quoted('\'', &mut value), "      \"''\" :      getQuoted ('\\'')   --> true");
+        assert!(
+            p17.get_quoted('\'', &mut value),
+            "      \"''\" :      getQuoted ('\\'')   --> true"
+        );
         assert_eq!(value, "", "      \"''\" :      getQuoted ('\\'')   --> ''");
 
         let mut p18 = Pig::new("'\"'");
-        assert!(p18.get_quoted('\'', &mut value), "     \"'\"'\" :      getQuoted ('\\'')   --> true");
-        assert_eq!(value, "\"", "     \"'\"'\" :      getQuoted ('\\'')   --> '\"'");
+        assert!(
+            p18.get_quoted('\'', &mut value),
+            "     \"'\"'\" :      getQuoted ('\\'')   --> true"
+        );
+        assert_eq!(
+            value, "\"",
+            "     \"'\"'\" :      getQuoted ('\\'')   --> '\"'"
+        );
 
         let mut p19 = Pig::new("'x'");
-        assert!(p19.get_quoted('\'', &mut value), "     \"'x'\" :      getQuoted ('\\'')   --> true");
-        assert_eq!(value, "x", "     \"'x'\" :      getQuoted ('\\'')   --> \"x\"");
+        assert!(
+            p19.get_quoted('\'', &mut value),
+            "     \"'x'\" :      getQuoted ('\\'')   --> true"
+        );
+        assert_eq!(
+            value, "x",
+            "     \"'x'\" :      getQuoted ('\\'')   --> \"x\""
+        );
 
         let mut p20 = Pig::new("'x");
-        assert!(!p20.get_quoted('\'', &mut value), "      \"'x\" :      getQuoted ('\\'')   --> false");
+        assert!(
+            !p20.get_quoted('\'', &mut value),
+            "      \"'x\" :      getQuoted ('\\'')   --> false"
+        );
 
         let mut p21 = Pig::new("x");
-        assert!(!p21.get_quoted('\'', &mut value), "       'x' :      getQuoted ('\\'')   --> false");
+        assert!(
+            !p21.get_quoted('\'', &mut value),
+            "       'x' :      getQuoted ('\\'')   --> false"
+        );
 
         let mut p22 = Pig::new("\"one\\\"two\"");
-        assert!(!p22.get_quoted('\'', &mut value), " \"one\\\"two\" :     getQuoted ('\\'')   --> false");
-        assert!(p22.get_quoted('"', &mut value), " \"one\\\"two\" :     getQuoted ('\"')    --> true");
-        assert_eq!(value, "one\\\"two", " \"one\\\"two\" :     getQuoted ('\"')    --> \"one\\\"two\"");
+        assert!(
+            !p22.get_quoted('\'', &mut value),
+            " \"one\\\"two\" :     getQuoted ('\\'')   --> false"
+        );
+        assert!(
+            p22.get_quoted('"', &mut value),
+            " \"one\\\"two\" :     getQuoted ('\"')    --> true"
+        );
+        assert_eq!(
+            value, "one\\\"two",
+            " \"one\\\"two\" :     getQuoted ('\"')    --> \"one\\\"two\""
+        );
 
         let mut p23 = Pig::new("\"one\\\\\"");
-        assert!(p23.get_quoted('"', &mut value), "  \"one\\\\\"\" :     getQuoted ('\"')    --> true");
-        assert_eq!(value, "one\\\\", "  \"one\\\\\"\" :     getQuoted ('\"')    --> \"one\\\\\"");
+        assert!(
+            p23.get_quoted('"', &mut value),
+            "  \"one\\\\\"\" :     getQuoted ('\"')    --> true"
+        );
+        assert_eq!(
+            value, "one\\\\",
+            "  \"one\\\\\"\" :     getQuoted ('\"')    --> \"one\\\\\""
+        );
     }
 
     #[test]
@@ -1030,23 +1119,38 @@ mod tests {
         // Pig::getDigit4
         // Pig::getDigits
         let mut p24 = Pig::new("122333444455555555");
-        assert!(p24.get_digit(&mut n), "getDigit   '122333444455555555' --> true");
+        assert!(
+            p24.get_digit(&mut n),
+            "getDigit   '122333444455555555' --> true"
+        );
         assert_eq!(n, 1, "getDigit   '122333444455555555' --> 1");
         assert!(dump_has(&p24, " 1/18"), "dump: {}", p24.dump());
 
-        assert!(p24.get_digit2(&mut n), "getDigit2   '22333444455555555' --> true");
+        assert!(
+            p24.get_digit2(&mut n),
+            "getDigit2   '22333444455555555' --> true"
+        );
         assert_eq!(n, 22, "getDigit2   '22333444455555555' --> 22");
         assert!(dump_has(&p24, " 3/18"), "dump: {}", p24.dump());
 
-        assert!(p24.get_digit3(&mut n), "getDigit3   '22333444455555555' --> true");
+        assert!(
+            p24.get_digit3(&mut n),
+            "getDigit3   '22333444455555555' --> true"
+        );
         assert_eq!(n, 333, "getDigit3   '22333444455555555' --> 333");
         assert!(dump_has(&p24, " 6/18"), "dump: {}", p24.dump());
 
-        assert!(p24.get_digit4(&mut n), "getDigit4   '22333444455555555' --> true");
+        assert!(
+            p24.get_digit4(&mut n),
+            "getDigit4   '22333444455555555' --> true"
+        );
         assert_eq!(n, 4444, "getDigit4   '22333444455555555' --> 4444");
         assert!(dump_has(&p24, " 10/18"), "dump: {}", p24.dump());
 
-        assert!(p24.get_digits(&mut n), "getDigits   '22333444455555555' --> true");
+        assert!(
+            p24.get_digits(&mut n),
+            "getDigits   '22333444455555555' --> true"
+        );
         assert_eq!(n, 55555555, "getDigits   '22333444455555555' --> 55555555");
         assert!(dump_has(&p24, " 18/18"), "dump: {}", p24.dump());
 
@@ -1059,25 +1163,37 @@ mod tests {
 
         // Pig::getUntil
         let mut p25 = Pig::new("one two three");
-        assert!(p25.get_until(' ', &mut value), "getUntil ' ', 'one two three' --> true");
+        assert!(
+            p25.get_until(' ', &mut value),
+            "getUntil ' ', 'one two three' --> true"
+        );
         assert_eq!(value, "one", "getUntil ' ', 'one two three' --> 'one'");
         assert!(dump_has(&p25, " 3/13"), "dump: {}", p25.dump());
 
         assert!(p25.skip_ws(), "skipWS ' two three' --> true");
 
-        assert!(p25.get_until(' ', &mut value), "getUntil ' ', 'two three' --> true");
+        assert!(
+            p25.get_until(' ', &mut value),
+            "getUntil ' ', 'two three' --> true"
+        );
         assert_eq!(value, "two", "getUntil ' ', 'two three' --> 'two'");
         assert!(dump_has(&p25, " 7/13"), "dump: {}", p25.dump());
 
         assert!(p25.skip_ws(), "skipWS ' three' --> true");
 
-        assert!(p25.get_until(' ', &mut value), "getUntil ' ', 'three' --> true");
+        assert!(
+            p25.get_until(' ', &mut value),
+            "getUntil ' ', 'three' --> true"
+        );
         assert_eq!(value, "three", "getUntil ' ', 'three' --> 'three'");
         assert!(dump_has(&p25, " 13/13"), "dump: {}", p25.dump());
 
         let mut p25a = Pig::new("[foo]");
         assert!(p25a.skip('['), "Pig::skip [, [foo] --> foo] --> true");
-        assert!(p25a.get_until(']', &mut value), "Pig::getUntil ], foo] --> true");
+        assert!(
+            p25a.get_until(']', &mut value),
+            "Pig::getUntil ], foo] --> true"
+        );
         assert_eq!(value, "foo", "Pig::getUntil ], foo] --> foo");
         assert!(p25a.skip(']'), "Pig::skip ], ] --> true");
         assert!(p25a.eos(), "Pig::eos --> true");
@@ -1113,13 +1229,19 @@ mod tests {
         let (mut h, mut m, mut s) = (0, 0, 0);
 
         let mut p29 = Pig::new("1:23:45");
-        assert!(p29.get_hms(&mut h, &mut m, &mut s), "getHMS '1:23:45' --> true");
+        assert!(
+            p29.get_hms(&mut h, &mut m, &mut s),
+            "getHMS '1:23:45' --> true"
+        );
         assert_eq!(h, 1, "getHMS '1:23:45' h --> 1");
         assert_eq!(m, 23, "getHMS '1:23:45' m --> 23");
         assert_eq!(s, 45, "getHMS '1:23:45' s --> 45");
 
         let mut p30 = Pig::new("12:34:56");
-        assert!(p30.get_hms(&mut h, &mut m, &mut s), "getHMS '12:34:56' --> true");
+        assert!(
+            p30.get_hms(&mut h, &mut m, &mut s),
+            "getHMS '12:34:56' --> true"
+        );
         assert_eq!(h, 12, "getHMS '12:34:56' h --> 12");
         assert_eq!(m, 34, "getHMS '12:34:56' m --> 34");
         assert_eq!(s, 56, "getHMS '12:34:56' s --> 56");
@@ -1164,16 +1286,28 @@ mod tests {
     #[test]
     fn dump_format() {
         let mut p = Pig::new("ab\ncd");
-        assert_eq!(p.dump(), "\x1b[37;41mab\\ncd\x1b[0m 0/5", "dump at 0 has no matched part");
+        assert_eq!(
+            p.dump(),
+            "\x1b[37;41mab\\ncd\x1b[0m 0/5",
+            "dump at 0 has no matched part"
+        );
         assert!(p.skip_n(3));
-        assert_eq!(p.dump(), "\x1b[37;42mab\\n\x1b[0m\x1b[37;41mcd\x1b[0m 3/5", "dump shows newlines as \\n");
+        assert_eq!(
+            p.dump(),
+            "\x1b[37;42mab\\n\x1b[0m\x1b[37;41mcd\x1b[0m 3/5",
+            "dump shows newlines as \\n"
+        );
     }
 
     #[test]
     fn utf8_cursor_is_a_byte_offset() {
         let mut p = Pig::new("\u{e9}t\u{e9} x");
         assert!(p.skip_n(2), "skipN=2 'été x' --> true");
-        assert_eq!(p.cursor(), 3, "skipN counts characters, cursor counts bytes");
+        assert_eq!(
+            p.cursor(),
+            3,
+            "skipN counts characters, cursor counts bytes"
+        );
         let mut value = String::new();
         p.restore_to(0);
         assert!(p.get_until_ws(&mut value));
@@ -1187,20 +1321,36 @@ mod tests {
         assert!(p.get_until('b', &mut value));
         assert_eq!(value, "a\u{e9}");
         assert_eq!(p.cursor(), 3);
-        assert!(!Pig::new("\u{e9}").skip('\u{e9}'), "skip compares one byte, so never matches non-ASCII");
+        assert!(
+            !Pig::new("\u{e9}").skip('\u{e9}'),
+            "skip compares one byte, so never matches non-ASCII"
+        );
         let mut c = 0;
         assert!(Pig::new("\u{e9}").get_character(&mut c));
-        assert_eq!(c, 0xC3u8 as i8 as i32, "getCharacter yields the signed char");
-        assert_eq!(Pig::new("\u{e9}").peek(), 0xC3u8 as i8 as i32, "peek yields the signed char");
+        assert_eq!(
+            c, 0xC3u8 as i8 as i32,
+            "getCharacter yields the signed char"
+        );
+        assert_eq!(
+            Pig::new("\u{e9}").peek(),
+            0xC3u8 as i8 as i32,
+            "peek yields the signed char"
+        );
     }
 
     #[test]
     fn get_until_edges() {
         let mut value = String::from("unchanged");
-        assert!(!Pig::new("").get_until('x', &mut value), "getUntil '' --> false");
+        assert!(
+            !Pig::new("").get_until('x', &mut value),
+            "getUntil '' --> false"
+        );
         assert_eq!(value, "unchanged");
         let mut p = Pig::new("xab");
-        assert!(p.get_until('x', &mut value), "getUntil at the end char --> true, empty");
+        assert!(
+            p.get_until('x', &mut value),
+            "getUntil at the end char --> true, empty"
+        );
         assert_eq!(value, "");
         assert_eq!(p.cursor(), 0);
     }
@@ -1217,10 +1367,16 @@ mod tests {
         assert_eq!(value, ",cd");
         assert_eq!(p.cursor(), 5);
         let mut p = Pig::new("abc");
-        assert!(p.get_until_ascii(b',', &mut value), "no end char --> rest of text");
+        assert!(
+            p.get_until_ascii(b',', &mut value),
+            "no end char --> rest of text"
+        );
         assert_eq!(value, "abc");
         assert!(p.eos());
-        assert!(p.get_until_ascii(b',', &mut value), "at eos --> true, empty");
+        assert!(
+            p.get_until_ascii(b',', &mut value),
+            "at eos --> true, empty"
+        );
         assert_eq!(value, "");
     }
 
@@ -1231,9 +1387,15 @@ mod tests {
         assert!(p.skip_partial("monday", &mut value, true));
         assert_eq!(value, "MONday");
         let mut p = Pig::new("Mon");
-        assert!(!p.skip_partial("MON", &mut value, true), "reference is not lower-cased");
+        assert!(
+            !p.skip_partial("MON", &mut value, true),
+            "reference is not lower-cased"
+        );
         let mut p = Pig::new("Mon");
-        assert!(!p.skip_partial("mon", &mut value, false), "case-sensitive by default");
+        assert!(
+            !p.skip_partial("mon", &mut value, false),
+            "case-sensitive by default"
+        );
     }
 
     #[test]
@@ -1252,7 +1414,10 @@ mod tests {
         let mut d = 0.0;
 
         let mut p = Pig::new("1e");
-        assert!(!p.get_number(&mut value), "exponent without digits --> false");
+        assert!(
+            !p.get_number(&mut value),
+            "exponent without digits --> false"
+        );
         assert_eq!(p.cursor(), 0);
         let mut p = Pig::new("1.e+5x");
         assert!(p.get_number(&mut value));
@@ -1270,7 +1435,10 @@ mod tests {
         assert!(Pig::new("0.1").get_number_f64(&mut d));
         assert_eq!(d.to_bits(), 0.1f64.to_bits());
         assert!(!Pig::new("-x").get_number(&mut value));
-        assert!(!Pig::new(".5").get_number(&mut value), "leading digit required");
+        assert!(
+            !Pig::new(".5").get_number(&mut value),
+            "leading digit required"
+        );
 
         let mut p = Pig::new("-12.e3");
         assert!(p.get_decimal(&mut value));
@@ -1301,7 +1469,10 @@ mod tests {
     fn get_quoted_edges() {
         let mut value = String::new();
         let mut p = Pig::new("\"a\\\\\\\"b\" rest");
-        assert!(p.get_quoted('"', &mut value), "three backslashes escape the quote");
+        assert!(
+            p.get_quoted('"', &mut value),
+            "three backslashes escape the quote"
+        );
         assert_eq!(value, "a\\\\\\\"b");
         assert_eq!(p.str(), " rest");
         let mut p = Pig::new("'abc' x");
@@ -1319,7 +1490,10 @@ mod tests {
         assert!(p.get_hms(&mut h, &mut m, &mut s));
         assert_eq!((h, m, s), (1, 23, 0));
         let mut p = Pig::new("1:23:4");
-        assert!(!p.get_hms(&mut h, &mut m, &mut s), "':' without two digits --> false");
+        assert!(
+            !p.get_hms(&mut h, &mut m, &mut s),
+            "':' without two digits --> false"
+        );
         assert_eq!(p.cursor(), 5, "cursor is not restored after the second ':'");
         let mut p = Pig::new("123");
         assert!(!p.get_hms(&mut h, &mut m, &mut s));
@@ -1359,7 +1533,10 @@ mod tests {
     fn non_ascii_split_is_lossy() {
         let mut value = String::new();
         let mut p = Pig::new("\u{e9}");
-        assert!(p.skip_partial("\u{e8}", &mut value, false), "shared lead byte");
+        assert!(
+            p.skip_partial("\u{e8}", &mut value, false),
+            "shared lead byte"
+        );
         assert_eq!(value, "\u{fffd}");
         assert_eq!(p.cursor(), 1);
     }
