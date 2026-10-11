@@ -3504,3 +3504,78 @@ fn import_v2_reads_data_files() {
     );
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn undo_reverts_one_invocation_at_a_time() {
+    let env = Env::new("confirmation=off\nverbose=nothing\n");
+    quiet(&env, &["add", "one"]);
+    quiet(&env, &["add", "two"]);
+    quiet(&env, &["1-2", "modify", "+tagged", "priority:H"]);
+
+    // Declining keeps the change.
+    let output = task_input(&env, &["rc.confirmation=on", "undo"], "no\n");
+    let out = stdout(&output);
+    assert!(
+        out.starts_with("The following 8 operations would be reverted:\nUuid "),
+        "{out}"
+    );
+    assert!(out.contains("Add tag 'tagged'\n"), "{out}");
+    assert!(
+        out.contains("Add property 'priority' with value 'H'\n"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with(
+            "\nThe undo command is not reversible.  Are you sure you want to revert to the previous state? (yes/no) "
+        ),
+        "{out}"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(export(&env, &["+tagged"]).len(), 2);
+
+    // One undo reverts the whole bulk modification, and nothing else.
+    let output = env.task(&["undo"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(export(&env, &["+tagged"]).len(), 0);
+    assert_eq!(export(&env, &[]).len(), 2);
+
+    // Then the adds, one per invocation.
+    let output = env.task(&["undo"]);
+    assert!(stdout(&output).contains(" Create task\n"));
+    assert_eq!(export(&env, &[]).len(), 1);
+    env.task(&["undo"]);
+    assert_eq!(export(&env, &[]).len(), 0);
+
+    let output = env.task(&["undo"]);
+    assert_eq!(
+        stdout(&output),
+        "No operations to undo.\nCould not undo: other operations have occurred."
+    );
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn undo_reverts_an_import_and_recurrence_generation_as_one() {
+    let env = Env::new("confirmation=off\nverbose=nothing\n");
+    task_input(
+        &env,
+        &["import"],
+        r#"[{"description":"a"},{"description":"b"}]"#,
+    );
+    assert_eq!(export(&env, &[]).len(), 2);
+    env.task(&["undo"]);
+    assert_eq!(export(&env, &[]).len(), 0);
+
+    quiet(&env, &["add", "rec", "due:tomorrow", "recur:daily"]);
+    quiet(&env, &["list"]);
+    assert_eq!(
+        export(&env, &["rc.recurrence=off", "status:pending"]).len(),
+        1
+    );
+    env.task(&["rc.recurrence=off", "undo"]);
+    let tasks = export(&env, &["rc.recurrence=off"]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["status"], "recurring");
+    assert!(tasks[0].get("mask").is_none(), "{:?}", tasks[0]);
+}

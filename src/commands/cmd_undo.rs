@@ -150,9 +150,9 @@ fn confirm_revert(context: &mut Context, undo_ops: &[Operation]) -> bool {
                 (Some(old_value), None) => mods.push_str(&format!(
                     "Delete property '{property}' (was '{old_value}')\n"
                 )),
-                (None, Some(value)) => mods.push_str(&format!(
-                    "Add property '{property}' with value '{value}'\n"
-                )),
+                (None, Some(value)) => {
+                    mods.push_str(&format!("Add property '{property}' with value '{value}'\n"))
+                }
                 (None, None) => {}
             }
         }
@@ -214,7 +214,10 @@ mod tests {
         assert!(stored(&mut f, ONE));
         let shown = undo(&mut f, "");
         assert!(shown.starts_with("The following "), "{shown}");
-        assert!(shown.contains(" operations would be reverted:\n"), "{shown}");
+        assert!(
+            shown.contains(" operations would be reverted:\n"),
+            "{shown}"
+        );
         assert!(shown.contains(&format!("{ONE} Create task\n")), "{shown}");
         assert!(!shown.contains("Are you sure"), "{shown}");
         assert!(!stored(&mut f, ONE));
@@ -249,15 +252,14 @@ mod tests {
         let mut f = CommandFixture::new(&[], "confirmation=off\n", &["undo"]);
         let u1 = Uuid::parse_str(ONE).unwrap();
         let u2 = Uuid::parse_str("aaaaaaaa-0000-4000-8000-000000000002").unwrap();
-        let update = |uuid, property: &str, old: Option<&str>, value: Option<&str>| {
-            TcOperation::Update {
+        let update =
+            |uuid, property: &str, old: Option<&str>, value: Option<&str>| TcOperation::Update {
                 uuid,
                 property: property.into(),
                 old_value: old.map(String::from),
                 value: value.map(String::from),
                 timestamp: Utc::now(),
-            }
-        };
+            };
         let ops: TcOperations = vec![
             TcOperation::UndoPoint,
             TcOperation::Create { uuid: u1 },

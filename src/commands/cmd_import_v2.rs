@@ -218,7 +218,9 @@ mod tests {
         );
         assert_eq!(
             f.ctx.footnotes,
-            vec!["Imported 2 tasks from `*.data` files. You may now delete these files.".to_string()]
+            vec![
+                "Imported 2 tasks from `*.data` files. You may now delete these files.".to_string()
+            ]
         );
 
         let bing = f.task(NEW1);
@@ -257,7 +259,9 @@ mod tests {
         assert_eq!(out, "");
         assert_eq!(
             f.ctx.footnotes,
-            vec!["Imported 0 tasks from `*.data` files. You may now delete these files.".to_string()]
+            vec![
+                "Imported 0 tasks from `*.data` files. You may now delete these files.".to_string()
+            ]
         );
     }
 

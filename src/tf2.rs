@@ -273,8 +273,9 @@ mod tests {
 
     #[test]
     fn load_task_decodes_json_and_brackets() {
-        let task = parse(r#"[description:"a &open;b&close; \"q\" \u00e9\tx" annotation_1:"&amp;"]"#)
-            .unwrap();
+        let task =
+            parse(r#"[description:"a &open;b&close; \"q\" \u00e9\tx" annotation_1:"&amp;"]"#)
+                .unwrap();
         assert_eq!(task["description"], "a [b] \"q\" \u{e9}\tx");
         // Only &open; and &close; are decoded.
         assert_eq!(task["annotation_1"], "&amp;");
@@ -351,7 +352,10 @@ mod tests {
         let tasks = tf2.get_tasks(true).unwrap().to_vec();
         assert_eq!(
             tasks,
-            vec![map(&[("description", "one")]), map(&[("description", "two")])]
+            vec![
+                map(&[("description", "one")]),
+                map(&[("description", "two")])
+            ]
         );
         assert!(tf2.loaded_lines && tf2.loaded_tasks);
         // Cached: a second call does not re-read.
