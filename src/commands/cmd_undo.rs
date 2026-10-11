@@ -66,6 +66,11 @@ impl Command for CmdUndo {
     /// Messages go straight to standard output, as the C++ writes them with
     /// `std::cout` (the output buffer stays empty). "Could not undo: other
     /// operations have occurred." has no trailing newline, as in C++.
+    ///
+    /// With nothing to undo, `confirm_revert` returns true and taskchampion's
+    /// `commit_reversed_operations` returns false for an empty list, so both
+    /// "No operations to undo." and "Could not undo: ..." are printed, as in
+    /// C++ (both link taskchampion 3.1).
     fn execute(&self, context: &mut Context, _output: &mut String) -> Result<i32> {
         let undo_ops = context.tdb2.get_undo_operations()?;
         if confirm_revert(context, &Operation::operations(&undo_ops)) {
@@ -162,4 +167,132 @@ fn confirm_revert(context: &mut Context, undo_ops: &[Operation]) -> bool {
             "The undo command is not reversible.  Are you sure you want to revert to the previous \
              state?",
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::shared::{begin_console_override, end_console_override};
+    use crate::test_util::CommandFixture;
+    use taskchampion::chrono::Utc;
+    use taskchampion::{Operation as TcOperation, Operations as TcOperations, Uuid};
+
+    const ONE: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const SEED: &[&str] = &[
+        r#"{"uuid":"aaaaaaaa-0000-4000-8000-000000000001","description":"one","status":"pending","entry":"20260101T000000Z"}"#,
+    ];
+
+    fn stored(f: &mut CommandFixture, uuid: &str) -> bool {
+        f.ctx
+            .tdb2
+            .get_task_data(Uuid::parse_str(uuid).unwrap())
+            .unwrap()
+            .is_some()
+    }
+
+    /// Runs `undo` with the scripted console `input`, returning its stdout.
+    fn undo(f: &mut CommandFixture, input: &str) -> String {
+        begin_console_override(input);
+        let rc = f.run(&CmdUndo::new()).unwrap();
+        let shown = end_console_override();
+        assert_eq!(rc, 0);
+        shown
+    }
+
+    #[test]
+    fn nothing_to_undo() {
+        let mut f = CommandFixture::new(&[], "confirmation=off\n", &["undo"]);
+        assert_eq!(
+            undo(&mut f, ""),
+            "No operations to undo.\nCould not undo: other operations have occurred."
+        );
+    }
+
+    #[test]
+    fn reverts_the_last_invocation() {
+        let mut f = CommandFixture::new(SEED, "confirmation=off\n", &["undo"]);
+        assert!(stored(&mut f, ONE));
+        let shown = undo(&mut f, "");
+        assert!(shown.starts_with("The following "), "{shown}");
+        assert!(shown.contains(" operations would be reverted:\n"), "{shown}");
+        assert!(shown.contains(&format!("{ONE} Create task\n")), "{shown}");
+        assert!(!shown.contains("Are you sure"), "{shown}");
+        assert!(!stored(&mut f, ONE));
+
+        // The seed was the only undo point.
+        assert_eq!(
+            undo(&mut f, ""),
+            "No operations to undo.\nCould not undo: other operations have occurred."
+        );
+    }
+
+    #[test]
+    fn declined_confirmation_keeps_the_task() {
+        let mut f = CommandFixture::new(SEED, "confirmation=on\n", &["undo"]);
+        let shown = undo(&mut f, "no\n");
+        assert!(
+            shown.ends_with(
+                "\nThe undo command is not reversible.  Are you sure you want to revert to the \
+                 previous state? (yes/no) "
+            ),
+            "{shown}"
+        );
+        assert!(stored(&mut f, ONE));
+
+        let shown = undo(&mut f, "yes\n");
+        assert!(shown.ends_with("(yes/no) "), "{shown}");
+        assert!(!stored(&mut f, ONE));
+    }
+
+    #[test]
+    fn confirm_revert_lists_operations_grouped_by_uuid() {
+        let mut f = CommandFixture::new(&[], "confirmation=off\n", &["undo"]);
+        let u1 = Uuid::parse_str(ONE).unwrap();
+        let u2 = Uuid::parse_str("aaaaaaaa-0000-4000-8000-000000000002").unwrap();
+        let update = |uuid, property: &str, old: Option<&str>, value: Option<&str>| {
+            TcOperation::Update {
+                uuid,
+                property: property.into(),
+                old_value: old.map(String::from),
+                value: value.map(String::from),
+                timestamp: Utc::now(),
+            }
+        };
+        let ops: TcOperations = vec![
+            TcOperation::UndoPoint,
+            TcOperation::Create { uuid: u1 },
+            update(u1, "description", None, Some("one")),
+            update(u1, "description", Some("one"), Some("uno")),
+            update(u1, "priority", Some("H"), None),
+            update(u1, "tag_foo", None, Some("x")),
+            update(u1, "tag_bar", Some("x"), None),
+            update(u1, "tag_baz", Some("y"), Some("z")),
+            update(u1, "nothing", None, None),
+            TcOperation::Delete {
+                uuid: u2,
+                old_task: Default::default(),
+            },
+            update(u2, "status", None, Some("pending")),
+        ];
+
+        begin_console_override("");
+        assert!(confirm_revert(&mut f.ctx, &Operation::operations(&ops)));
+        let shown = end_console_override();
+        assert_eq!(
+            shown,
+            "The following 10 operations would be reverted:\n\
+             Uuid                                 Modification\n\
+             aaaaaaaa-0000-4000-8000-000000000001 Create task\n\
+             \x20                                    Add property 'description' with value 'one'\n\
+             \x20                                    Update property 'description' from 'one' to\n\
+             \x20                                    'uno'\n\
+             \x20                                    Delete property 'priority' (was 'H')\n\
+             \x20                                    Add tag 'foo'\n\
+             \x20                                    Remove tag 'bar'\n\
+             \x20                                    Update property 'tag_baz' from 'y' to 'z'\n\
+             aaaaaaaa-0000-4000-8000-000000000002 Delete (purge) taskAdd property 'status'\n\
+             \x20                                    with value 'pending'\n\
+             \n"
+        );
+    }
 }
