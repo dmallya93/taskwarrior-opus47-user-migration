@@ -3455,3 +3455,52 @@ fn import_stdin_files_update_and_errors() {
     );
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn import_v2_reads_data_files() {
+    let env = Env::new("");
+    std::fs::write(
+        env.data().join("pending.data"),
+        "[description:\"bing\" entry:\"1734397061\" status:\"pending\" uuid:\"ad7f7585-bff3-4b57-a116-abfc9f71ee4a\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        env.data().join("completed.data"),
+        "[description:\"bar\" end:\"1734397065\" entry:\"1734397056\" status:\"completed\" uuid:\"51921813-7abb-412d-8ada-7c1417d01209\"]\n[description:\"orphan\"]\n",
+    )
+    .unwrap();
+    let output = env.task(&["import-v2"]);
+    assert_eq!(
+        stdout(&output),
+        " add ad7f7585-bff3-4b57-a116-abfc9f71ee4a bing\n add 51921813-7abb-412d-8ada-7c1417d01209 bar\n err  - Task with no UUID\n"
+    );
+    assert_eq!(
+        stderr(&output),
+        env.override_headers()
+            + "Imported 2 tasks from `*.data` files. You may now delete these files.\n"
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let tasks = export(&env, &["51921813-7abb-412d-8ada-7c1417d01209"]);
+    assert_eq!(tasks[0]["status"], "completed");
+
+    // A second run updates the same tasks.
+    std::fs::remove_file(env.data().join("completed.data")).unwrap();
+    let output = env.task(&["import-v2"]);
+    assert_eq!(
+        stdout(&output),
+        " mod ad7f7585-bff3-4b57-a116-abfc9f71ee4a bing\n"
+    );
+
+    std::fs::write(env.data().join("pending.data"), "oops\n").unwrap();
+    let output = env.task(&["import-v2"]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        env.override_headers()
+            + &format!(
+                "Record not recognized as format 4. in {} at line 1\n",
+                env.data().join("pending.data").display()
+            )
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
