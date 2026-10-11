@@ -999,12 +999,15 @@ mod tests {
     /// `_version`, `_show`, `_config`, `config`; milestone 3: `calc`;
     /// milestone 5: `add`, `log`, `export`, `_get`, `count`); every other
     /// one must still be a stub.
-    const PORTED: [&str; 56] = [
+    const PORTED: [&str; 62] = [
         "_columns",
         "_config",
         "_get",
         "_ids",
+        "_projects",
         "_show",
+        "_tags",
+        "_udas",
         "_unique",
         "_urgency",
         "_uuids",
@@ -1027,8 +1030,8 @@ mod tests {
         "count",
         "delete",
         "denotate",
-        "duplicate",
         "done",
+        "duplicate",
         "export",
         "ghistory.annual",
         "ghistory.daily",
@@ -1045,6 +1048,7 @@ mod tests {
         "log",
         "modify",
         "prepend",
+        "projects",
         "purge",
         "reports",
         "start",
@@ -1052,7 +1056,9 @@ mod tests {
         "stop",
         "summary",
         "synchronize",
+        "tags",
         "timesheet",
+        "udas",
         "undo",
         "uuids",
         "version",
@@ -1341,6 +1347,11 @@ mod tests {
                     | "summary"
                     | "timesheet"
                     | "stats"
+                    | "projects"
+                    | "_projects"
+                    | "tags"
+                    | "_tags"
+                    | "udas"
             ) {
                 // These read the replica (or, for `_zshattributes` and
                 // `_columns`, the column registry Context::initialize builds);

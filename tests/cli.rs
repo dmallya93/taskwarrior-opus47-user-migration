@@ -4685,3 +4685,136 @@ fn stats_database_statistics() {
         "{out}"
     );
 }
+
+/// The `projects`/`tags`/`udas` scenario: pending tasks in `a.b`, `a` and
+/// no project, a completed `c` and a deleted `d` (in `completed_tasks`), tags
+/// `foo`/`next`, the UDAs `size` and `extra` (default `x`) and an orphan
+/// `gone`.
+fn inventory_env() -> Env {
+    let env = Env::new(
+        "defaultwidth=80\nconfirmation=off\nuda.size.type=numeric\nuda.size.label=Size\n\
+         uda.size.values=1,2,3\nuda.extra.type=string\nuda.extra.default=x\n",
+    );
+    for args in [
+        &["add", "one", "project:a.b", "+foo", "size:2"][..],
+        &["add", "two", "project:a", "+foo", "+next"],
+        &["add", "three"],
+        &["add", "four", "project:c", "+old"],
+        &["4", "done"],
+        &["add", "five", "project:d"],
+        &["5", "delete"],
+        &["add", "six", "rc.uda.gone.type=string", "gone:1"],
+    ] {
+        let mut all = vec!["rc.verbose=nothing"];
+        all.extend_from_slice(args);
+        let output = env.task(&all);
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    }
+    env
+}
+
+/// `projects`, `_projects` and `list.all.projects`: the indented tree with
+/// counts, "(none)", the "N projects (M tasks)" line and rc 1 with
+/// "No projects.".
+#[test]
+fn projects_and_completion_projects() {
+    let env = inventory_env();
+    let output = env.task(&["rc.verbose=blank", "projects"]);
+    assert_eq!((stderr(&output).as_str(), output.status.code()), ("", Some(0)));
+    assert_eq!(
+        stdout(&output),
+        "
+Project Tasks
+------- -----
+(none)      2
+a           2
+  b         1
+
+2 projects (4 tasks)
+"
+    );
+
+    let output = env.task(&["rc.verbose=nothing", "rc.list.all.projects=1", "projects"]);
+    assert_eq!(
+        stdout(&output),
+        "Project Tasks\n------- -----\n(none)      2\na           2\n  b         1\nc           1\n3 projects (5 tasks)\n"
+    );
+
+    let output = env.task(&["rc.verbose=nothing", "project:zzz", "projects"]);
+    assert_eq!((stdout(&output).as_str(), output.status.code()), ("No projects.\n", Some(1)));
+
+    let output = env.task(&["_projects"]);
+    assert_eq!((stdout(&output).as_str(), output.status.code()), ("a\na.b\n", Some(0)));
+    // Unlike `projects`, `_projects` does not skip the deleted task.
+    let output = env.task(&["rc.list.all.projects=1", "_projects"]);
+    assert_eq!(stdout(&output), "a\na.b\nc\nd\n");
+}
+
+/// `tags` (counts, bold special tags under colour, footnotes counting the
+/// unfiltered tasks, "No tags." + rc 1) and `_tags` (with the built-ins).
+#[test]
+fn tags_and_completion_tags() {
+    let env = inventory_env();
+    let output = env.task(&["rc.verbose=footnote", "rc.fontunderline=0", "tags"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(stdout(&output), "Tag  Count\n---- -----\nfoo      2\nnext     1\n\n");
+    assert_eq!(stderr(&output), "2 tags\n(4 tasks)\n");
+
+    let output = env.task(&["rc.verbose=footnote", "rc.fontunderline=0", "+next", "tags"]);
+    assert_eq!(stdout(&output), "Tag  Count\n---- -----\nfoo      1\nnext     1\n\n");
+    assert_eq!(stderr(&output), "2 tags\n(4 tasks)\n");
+
+    let output = env.task(&["rc.verbose=footnote", "rc.list.all.tags=1", "+old", "tags"]);
+    // The count includes the completed and the deleted task.
+    assert_eq!(stderr(&output), "1 tag\n(6 tasks)\n");
+
+    let output = env.task(&["rc.verbose=footnote", "rc._forcecolor=on", "rc.color.alternate=", "tags"]);
+    assert!(stdout(&output).contains("\u{1b}[1mnext\u{1b}[0m"), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("\u{1b}[1mfoo"), "{}", stdout(&output));
+
+    let output = env.task(&["rc.verbose=footnote", "project:zzz", "tags"]);
+    assert_eq!((stdout(&output).as_str(), output.status.code()), ("", Some(1)));
+    assert_eq!(stderr(&output), "No tags.\n");
+
+    let output = env.task(&["_tags"]);
+    assert_eq!(output.status.code(), Some(0));
+    let out = stdout(&output);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 37, "{out}");
+    assert_eq!(&lines[32..], ["foo", "next", "nocal", "nocolor", "nonag"]);
+    let output = env.task(&["rc.complete.all.tags=1", "_tags"]);
+    assert!(stdout(&output).contains("\nold\n"));
+}
+
+/// `udas` (the definition table with usage counts over all tasks, deleted
+/// included, and the orphan table) and `_udas`.
+#[test]
+fn udas_and_completion_udas() {
+    let env = inventory_env();
+    let output = env.task(&["rc.verbose=blank", "rc.fontunderline=0", "udas"]);
+    assert_eq!((stderr(&output).as_str(), output.status.code()), ("", Some(0)));
+    assert_eq!(
+        stdout(&output),
+        "
+Name     Type    Label    Allowed Values Default Usage Count
+-------- ------- -------- -------------- ------- -----------
+extra    string  extra                   x       6
+priority string  Priority H,M,L,                 0
+size     numeric Size     1,2,3                  1
+
+3 UDAs defined
+
+Orphan UDA Usage Count
+---------- -----------
+gone       1
+
+1 Orphan UDAs
+"
+    );
+
+    let output = env.task(&["_udas"]);
+    assert_eq!(
+        (stdout(&output).as_str(), output.status.code()),
+        ("extra\npriority\nsize\n", Some(0))
+    );
+}
